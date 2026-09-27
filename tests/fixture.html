@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Duplex Fixture</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        padding: 40px;
+      }
+      button {
+        padding: 12px 24px;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      input,
+      select {
+        padding: 8px 12px;
+        font-size: 16px;
+        display: block;
+        margin-top: 16px;
+      }
+      #hovertarget {
+        display: inline-block;
+        margin-top: 16px;
+        padding: 8px 16px;
+        background: #eee;
+        border-radius: 6px;
+      }
+      #dragme {
+        width: 80px;
+        height: 80px;
+        background: #4da3ff;
+        border-radius: 8px;
+        margin-top: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Duplex 测试页</h1>
+    <button id="hello">点我</button>
+    <p id="out">not clicked</p>
+    <input id="field" placeholder="输入测试" />
+    <select id="sel">
+      <option value="apple">苹果</option>
+      <option value="banana">香蕉</option>
+      <option value="cherry">樱桃</option>
+    </select>
+    <div id="hovertarget">悬停我</div>
+    <p id="hovertip" style="display: none">hovered!</p>
+    <p id="dbl">双击我</p>
+    <div id="dragme"></div>
+    <p id="dragpos">not moved</p>
+    <div style="height: 2000px"></div>
+    <p id="bottom">页面底部</p>
+    <script>
+      document.getElementById('hello').addEventListener('click', function () {
+        document.getElementById('out').textContent = 'clicked!'
+      })
+      document.getElementById('hovertarget').addEventListener('mouseenter', function () {
+        document.getElementById('hovertip').style.display = 'block'
+      })
+      document.getElementById('dbl').addEventListener('dblclick', function () {
+        this.textContent = 'double-clicked!'
+      })
+      var drag = document.getElementById('dragme')
+      var dragging = false
+      drag.addEventListener('mousedown', function (e) {
+        dragging = true
+        document.getElementById('dragpos').textContent = 'mdown ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
+      })
+      document.addEventListener('mousemove', function (e) {
+        if (dragging) {
+          drag.style.transform =
+            'translate(' + Math.round(e.clientX - 40) + 'px,' + Math.round(e.clientY - 40) + 'px)'
+          document.getElementById('dragpos').textContent = 'moved ' + Math.round(e.clientX) + ',' + Math.round(e.clientY)
+        }
+      })
+      document.addEventListener('mouseup', function () {
+        dragging = false
+      })
+      console.log('fixture-loaded')
+    </script>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist-bridge/
+release/
+*.log
+.DS_Store
+tests/*.png
+tests/*.txt
+logs/
+opencode.json
+NVIDIA Corporation/

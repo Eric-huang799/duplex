@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "duplex": {
+      "type": "local",
+      "command": ["node", "C:\\path\\to\\Duplex\\dist-bridge\\index.cjs"],
+      "cwd": "C:\\path\\to\\Duplex",
+      "enabled": true,
+      "timeout": 20000
+    }
+  }
+}
