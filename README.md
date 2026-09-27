@@ -22,6 +22,12 @@
 
 > **A feasibility demo, not a recommended workflow.** With no task-specific skill to lean on, Duplex worked with the stock API plus a few simple automation skills alone — improvising clipboard read/write channels, DOM probing and the like to push a whole grade sheet into Excel for the web. It got there, but the process wasted a lot of time and tokens. 😅
 
+## ⚠️ Usage notes
+
+- **Security boundaries (high stakes — please read).** Duplex lets the AI drive your **real browser session**, including login state, cookies and local data. Under this architecture, a wrong AI move can touch real accounts and data (sending messages, submitting forms, modifying or deleting content), potentially with serious consequences. Don't leave the agent running unattended in environments where sensitive accounts are signed in. `Esc` takeover is a last-resort human brake — it is **no substitute for your own judgement about what the AI should be allowed to touch**.
+
+- **The tooling layer is still being tuned.** The goal is for **the human to stay in command of the AI's tools**, rather than have AI tooling and the human's own actions crowd each other out of the pipeline (contending for the same page, interrupting input, interleaving conflicting actions). The trade-offs here are still evolving — feedback on human/agent contention is welcome via Issues.
+
 ## Highlights
 
 - **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes (light / dark / follow system) and a wallpaper start page with a clock and search.
