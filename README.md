@@ -157,6 +157,12 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 - The mirror store holds the recent event stream in memory; it resets on browser restart.
 - The built-in agent is a convenience option: local / smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
 
+## Roadmap
+
+- **Codex / Claude Code compatibility (next up)** — more first-class AI client integrations:
+  - The bridge is client-agnostic (standard stdio MCP), so the *tool layer* is not opencode-specific by design.
+  - Planned: official adapters and **session mirroring** for **Codex**, **Claude Code** and other AI clients, so their conversations appear in the side panel the same way opencode's do.
+
 ## Development
 
 ```bash
