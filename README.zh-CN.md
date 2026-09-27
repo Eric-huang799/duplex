@@ -8,6 +8,14 @@
 
 *Duplex 起始页（暗色主题），另附[亮色主题](docs/screenshots/start-page-light.png)。*
 
+## 演示
+
+![用 Duplex 操控网页版 Excel](docs/screenshots/excel-web-demo.png)
+
+*操控微软网页版 Excel——未安装任何表格编辑专用 skill，仅靠原厂 API 与少量简单自动化 skill 完成* 😅
+
+> **这是可行性演示，不是推荐用法。** 由于没有专用 skill 可用，Duplex 只用原厂 API 和少量简单自动化 skill，临时摸索出剪贴板读写通道、DOM 探测等办法，把一整张成绩表写进了网页版 Excel。效果是有的，但过程非常费时、消耗了大量 token。😅
+
 ## 特性一览
 
 - **一个真正的浏览器** —— 多标签、地址栏（支持百度 / Bing / Google 搜索）、前进 / 后退 / 刷新、加载状态、主题（亮色 / 暗色 / 跟随系统）、带时钟与搜索的壁纸起始页。
