@@ -141,15 +141,7 @@ npm start      # 预览生产构建
 
 ## 工作原理
 
-```
-┌────────────────────────────┐         ┌─────────────────────────────┐
-│  Duplex（Electron）          │  HTTP   │  AI 侧                       │
-│                             │ 127.0.  │                              │
-│  WebContentsView（标签页）    │ 0.1 +   │  mcp-bridge（stdio MCP）     │
-│  React 侧边面板               │ token   │  opencode + cobrowse-mirror  │
-│  本地 HTTP 服务               │◄───────►│  插件                        │
-└────────────────────────────┘         └─────────────────────────────┘
-```
+![架构图](docs/screenshots/architecture.jpg)
 
 - Electron 主进程在 `127.0.0.1` 上提供一个本地 HTTP API，使用每次启动生成的 bearer token 鉴权（端点信息写入 `~/.cobrowse/endpoint.json`）。
 - `dist-bridge/index.cjs` 是一个 stdio MCP 服务，把工具调用代理到该 API，并在应用未运行时自动拉起。

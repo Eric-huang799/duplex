@@ -141,15 +141,7 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 
 ## How it works
 
-```
-┌────────────────────────────┐         ┌─────────────────────────────┐
-│  Duplex (Electron)          │  HTTP   │  AI side                     │
-│                             │ 127.0. │                              │
-│  WebContentsViews (tabs)    │ 0.1 +   │  mcp-bridge (stdio MCP)      │
-│  React side panel           │ token   │  opencode + cobrowse-mirror  │
-│  local HTTP server          │◄───────►│  plugin                      │
-└────────────────────────────┘         └─────────────────────────────┘
-```
+![Architecture](docs/screenshots/architecture.jpg)
 
 - The Electron main process serves a small local HTTP API on `127.0.0.1` protected by a per-launch bearer token (endpoint info is written to `~/.cobrowse/endpoint.json`).
 - `dist-bridge/index.cjs` is a stdio MCP server that proxies tool calls to that API and auto-launches the app when it is not running.
