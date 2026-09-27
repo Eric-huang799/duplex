@@ -10,6 +10,12 @@
 
 ## 演示
 
+### 第一幕：让 Duplex 在 B 站搜索并播放论文解读视频
+
+[![点击播放演示视频](docs/screenshots/demo-video-cover.jpg)](docs/videos/act1-bilibili-demo.mp4)
+
+*内置模型自主完成：切换模型 → 输入指令 → B 站搜索 → 挑选并播放视频。当前为无声先导版，配音版制作中。*
+
 ![用 Duplex 操控网页版 Excel](docs/screenshots/excel-web-demo.png)
 
 *操控微软网页版 Excel——未安装任何表格编辑专用 skill，仅靠原厂 API 与少量简单自动化 skill 完成* 😅

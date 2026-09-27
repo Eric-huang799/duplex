@@ -10,6 +10,12 @@
 
 ## Demo
 
+### Act 1: Searching Bilibili and playing a paper-explainer video
+
+[![Click to play the demo](docs/screenshots/demo-video-cover.jpg)](docs/videos/act1-bilibili-demo.mp4)
+
+*The built-in agent does it all on its own: switch model → type the instruction → search Bilibili → pick and play a video. This is a silent preview — a narrated version is in the works.*
+
 ![Controlling Excel for the web with Duplex](docs/screenshots/excel-web-demo.png)
 
 *Controlling Microsoft Excel for the web — no dedicated spreadsheet-editing skill installed; only the stock API and a few simple automation skills* 😅
