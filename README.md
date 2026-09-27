@@ -1,5 +1,7 @@
 # Duplex
 
+<p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex mascot"></p>
+
 **One browser shared by a human and an AI** — the human sees the rendered page, the AI reads the DOM and page source. Same tabs, same live session, at the same time.
 
 **English** | [中文](README.zh-CN.md)

@@ -1,5 +1,7 @@
 # Duplex
 
+<p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex 吉祥物"></p>
+
 **一个人与 AI 共用的浏览器** —— 人看渲染后的页面，AI 读 DOM 与源码；同一个标签、同一个实时会话，同时进行。
 
 [English](README.md) | **中文**
