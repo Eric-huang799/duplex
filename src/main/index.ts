@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import crypto from 'node:crypto'
+import { spawn, spawnSync } from 'node:child_process'
 import { TabManager } from './tabs'
 import { MirrorStore } from './mirror'
 import { createToolExecutor, type ToolExecutor } from './tool-handlers'
@@ -18,7 +19,9 @@ import { cobrowseDir, removeEndpoint, writeEndpoint } from '../shared/endpoint'
 import {
   activeAgentConfig,
   loadSettings,
+  saveEmergencyStopKeys,
   saveProviders,
+  saveSearchEngine,
   saveSession,
   saveTheme,
   type ThemeSetting
@@ -32,11 +35,43 @@ import {
 } from './agent/providers'
 import { SessionBus } from './session-bus'
 import { AgentRuntime } from './agent/runtime'
+import { createSkillToolHandlers } from './agent/skill-tools'
+import { createFsToolHandlers } from './agent/fs-tools'
+import { importSkillFromFolder, listSkills, removeSkill, setSkillEnabled } from './agent/skills'
+import { importStatus } from './agent/auth-import'
+import {
+  claudeDesktopConfigHint,
+  claudeMcpCommand,
+  codexConfigStatus,
+  installCodexMcp
+} from './integrations/setup'
+import {
+  addCustomAgent,
+  buildStartPlan,
+  findAgentTool,
+  listAgentTools,
+  removeCustomAgent
+} from './integrations/agents'
+import {
+  claudeLineMessages,
+  codexLineMessages,
+  customLineMessages,
+  listClaudeSessions,
+  listCodexSessions,
+  listCustomSessions,
+  listGeminiSessions,
+  readClaudeSession,
+  readCodexSession,
+  readCustomSession,
+  readGeminiSession,
+  type TranscriptMessage
+} from './integrations/transcripts'
 import { resolveAddress } from '../shared/url'
-import { searchUrl } from '../shared/search'
+import { SEARCH_ENGINES, searchUrl } from '../shared/search'
 import type { ContentBounds } from '../shared/protocol'
+import { isLlmProtocol } from '../shared/llm'
 
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 const TOKEN = crypto.randomBytes(24).toString('hex')
 const LOG_FILE = path.join(cobrowseDir(), 'app.log')
 
@@ -58,6 +93,241 @@ let win: BrowserWindow | null = null
 let tabs: TabManager | null = null
 let httpServer: RunningHttpServer | null = null
 let annotationSubmitHandler: AnnotationSubmitHandler | null = null
+
+// script-execution confirmation round trip (run_skill_script → renderer dialog);
+// module scope so both the agent wiring and the IPC handlers can reach it
+const pendingConfirms = new Map<number, (ok: boolean) => void>()
+let confirmSeq = 0
+const confirmScript = (payload: {
+  command: string
+  cwd: string
+  skill: string
+}): Promise<boolean> =>
+  new Promise((resolve) => {
+    const id = ++confirmSeq
+    pendingConfirms.set(id, resolve)
+    win?.webContents.send('agent:confirm-request', { id, ...payload })
+    setTimeout(() => {
+      if (pendingConfirms.delete(id)) resolve(false)
+    }, 120_000)
+  })
+const skillHandlers = createSkillToolHandlers(confirmScript)
+
+const fsHandlers = createFsToolHandlers((payload) =>
+  new Promise<boolean>((resolve) => {
+    const id = ++confirmSeq
+    pendingConfirms.set(id, resolve)
+    win?.webContents.send('agent:confirm-request', {
+      id,
+      command: payload.kind === 'write' ? `写入文件：${payload.detail}` : payload.detail,
+      cwd: payload.cwd,
+      skill: payload.kind === 'write' ? 'write_file（写文件）' : 'run_command（执行命令）'
+    })
+    setTimeout(() => {
+      if (pendingConfirms.delete(id)) resolve(false)
+    }, 120_000)
+  })
+)
+
+// external agent transcript tailing (read-only mirror of Codex / Claude Code / custom CLI logs)
+let agentWatch: { timer: ReturnType<typeof setInterval> } | null = null
+let externalEvtSeq = 5_000_000
+/** While an external transcript is open, opencode pushes are muted. */
+let mirrorSource: 'opencode' | 'external' = 'opencode'
+
+function stopAgentWatch(): void {
+  if (agentWatch) {
+    clearInterval(agentWatch.timer)
+    agentWatch = null
+  }
+}
+
+function externalEvent(o: Record<string, unknown>): Record<string, unknown> {
+  return { ...o, id: externalEvtSeq++ }
+}
+
+function transcriptToMirrorEvent(m: TranscriptMessage, sessionID: string): Record<string, unknown> {
+  return externalEvent({
+    kind: 'text',
+    sessionID,
+    messageID: sessionID,
+    partID: `x${externalEvtSeq}`,
+    role: m.role,
+    text: m.text,
+    done: true,
+    ts: m.ts
+  })
+}
+
+function parseTranscriptChunk(kind: string, chunk: string): TranscriptMessage[] {
+  const mapper =
+    kind === 'codex' ? codexLineMessages : kind === 'claude' ? claudeLineMessages : customLineMessages
+  const out: TranscriptMessage[] = []
+  for (const line of chunk.split('\n')) {
+    const t = line.trim()
+    if (!t) continue
+    try {
+      out.push(...mapper(JSON.parse(t)))
+    } catch {
+      /* skip malformed line */
+    }
+  }
+  return out
+}
+
+/** Tail a transcript file; stream newly appended messages into the panel. */
+function startAgentWatch(
+  kind: string,
+  file: string,
+  sessionID: string,
+  baselineSize?: number
+): void {
+  stopAgentWatch()
+  let lastSize = 0
+  try {
+    lastSize = baselineSize ?? fs.statSync(file).size
+  } catch {
+    return
+  }
+  let missCount = 0
+  const timer = setInterval(() => {
+    try {
+      const st = fs.statSync(file)
+      missCount = 0
+      if (st.size < lastSize) {
+        // file was truncated or rotated — restart from the beginning
+        lastSize = 0
+      }
+      if (st.size <= lastSize) return
+      const fd = fs.openSync(file, 'r')
+      let text = ''
+      try {
+        const len = st.size - lastSize
+        const buf = Buffer.alloc(len)
+        const n = fs.readSync(fd, buf, 0, len, lastSize)
+        text = buf.subarray(0, n).toString('utf8')
+      } finally {
+        fs.closeSync(fd)
+      }
+      const cut = text.lastIndexOf('\n')
+      if (cut < 0) return // wait for a complete line
+      const complete = text.slice(0, cut + 1)
+      lastSize += Buffer.byteLength(complete, 'utf8')
+      for (const m of parseTranscriptChunk(kind, complete)) {
+        win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, sessionID))
+      }
+    } catch {
+      missCount++
+      if (missCount >= 20) stopAgentWatch()
+    }
+  }, 1500)
+  agentWatch = { timer }
+}
+
+/** Open a transcript file: reset the panel, stream history, then tail live. */
+function openExternalSession(
+  tool: { id: string; kind: string; sessionsDir?: string },
+  sessionId: string,
+  file: string
+): { ok: boolean; count?: number; title?: string; error?: string } {
+  const root = path.resolve(tool.sessionsDir ?? '')
+  if (!path.resolve(file).startsWith(root)) return { ok: false, error: '非法路径' }
+  stopAgentWatch()
+  mirrorSource = 'external'
+  const sid = `${tool.id}:${String(sessionId)}`
+  // capture the tail baseline BEFORE reading history so nothing in between
+  // is lost (messages appended during the read will still be tailed)
+  let baseline = 0
+  try {
+    baseline = fs.statSync(file).size
+  } catch {
+    /* ignore */
+  }
+  const msgs =
+    tool.kind === 'codex'
+      ? readCodexSession(file)
+      : tool.kind === 'claude'
+        ? readClaudeSession(file)
+        : tool.kind === 'gemini' || tool.kind === 'qwen'
+          ? readGeminiSession(file)
+          : readCustomSession(file)
+  win?.webContents.send(
+    'mirror:event',
+    externalEvent({
+      kind: 'session-info',
+      activeSessionID: sid,
+      activeTitle: path.basename(file),
+      reason: 'selected',
+      ts: Date.now()
+    })
+  )
+  for (const m of msgs) {
+    win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, sid))
+  }
+  startAgentWatch(tool.kind, file, sid, baseline)
+  return { ok: true, count: msgs.length, title: path.basename(file) }
+}
+
+/** Live child processes spawned for external sessions (killed on quit). */
+const liveChildren = new Set<ReturnType<typeof spawn>>()
+let startSessionCancelled = false
+
+function broadcastChildren(): void {
+  win?.webContents.send('agents:children', liveChildren.size)
+}
+
+/** Kill a child and its whole process tree (Windows grandchildren included). */
+function killChildTree(child: ReturnType<typeof spawn>): void {
+  try {
+    if (process.platform === 'win32' && child.pid) {
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      child.kill('SIGKILL')
+    }
+  } catch {
+    try {
+      child.kill()
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** Spawn a headless CLI run that starts a brand-new session (generalized). */
+function startExternalSessionSpawn(
+  tool: { kind: string; command?: string },
+  message: string
+): { ok: boolean; error?: string } {
+  const plan = buildStartPlan(tool as never, message)
+  if ('error' in plan) return { ok: false, error: plan.error }
+  try {
+    const child = spawn(plan.file, plan.args, {
+      cwd: plan.cwd,
+      windowsHide: true,
+      stdio: ['pipe', 'ignore', 'ignore']
+    })
+    liveChildren.add(child)
+    broadcastChildren()
+    child.on('exit', () => {
+      liveChildren.delete(child)
+      broadcastChildren()
+    })
+    // a broken pipe / missing binary must never crash the main process
+    child.stdin?.on('error', () => undefined)
+    child.on('error', () => undefined)
+    if (plan.useStdin) {
+      try {
+        child.stdin?.write(message)
+      } catch {
+        /* child may already be gone */
+      }
+    }
+    child.stdin?.end()
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? '启动失败' }
+  }
+}
 let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
 const mirror = new MirrorStore()
@@ -98,7 +368,9 @@ async function start(): Promise<void> {
     logLine(`[session] restored ${settings.session.id}`)
   }
 
-  const execute = createToolExecutor(tabs!)
+  const execute = createToolExecutor(tabs!, {
+    getSearchEngine: () => loadSettings().searchEngine
+  })
   const executeWithWake: ToolExecutor = async (name, args) => {
     if (consumeTakeover()) {
       logLine('[takeover] pending takeover consumed; tool call blocked')
@@ -120,9 +392,17 @@ async function start(): Promise<void> {
     }
   }
 
+  // skill tools (read_skill / run_skill_script …) are only wired into the
+  // built-in agent path (handlers + confirmation live at module scope)
+  const executeWithSkills: ToolExecutor = async (name, args) => {
+    const h = skillHandlers[name] ?? fsHandlers[name]
+    if (h) return h(args)
+    return executeWithWake(name, args)
+  }
+
   // built-in agent mode (optional alternative to the opencode path)
   agentRuntime = new AgentRuntime(
-    executeWithWake,
+    executeWithSkills,
     () => activeAgentConfig(),
     (ev) => {
       win?.webContents.send('agent:event', ev)
@@ -140,6 +420,7 @@ async function start(): Promise<void> {
       await agentRuntime?.send(text)
     },
     agentBusy: () => agentRuntime?.isRunning ?? false,
+    mirrorGate: () => mirrorSource === 'opencode',
     captureUI: async () => {
       try {
         const img = await win?.webContents.capturePage()
@@ -303,7 +584,8 @@ function setupIpc(): void {
             const tab = tabs.requireTab(null)
             if (action.url) {
               const addr = resolveAddress(action.url)
-              const url = addr.kind === 'url' ? addr.url : searchUrl(addr.query)
+              const url =
+                addr.kind === 'url' ? addr.url : searchUrl(addr.query, loadSettings().searchEngine)
               void tab.view.webContents.loadURL(url)
             }
             break
@@ -329,7 +611,8 @@ function setupIpc(): void {
             let url: string | undefined
             if (action.url) {
               const addr = resolveAddress(action.url)
-              url = addr.kind === 'url' ? addr.url : searchUrl(addr.query)
+              url =
+                addr.kind === 'url' ? addr.url : searchUrl(addr.query, loadSettings().searchEngine)
             }
             tabs.createTab(url)
             break
@@ -389,7 +672,7 @@ function setupIpc(): void {
     return { ok: true, id: inj.id }
   })
 
-  ipcMain.handle('theme:get', () => loadSettings())
+  ipcMain.handle('theme:get', () => ({ theme: loadSettings().theme }))
 
   ipcMain.handle(
     'session:command',
@@ -487,7 +770,16 @@ function setupIpc(): void {
     'agent:provider-save',
     (
       _e,
-      input: { id?: string; name?: string; baseUrl?: string; apiKey?: string; model?: string }
+      input: {
+        id?: string
+        name?: string
+        baseUrl?: string
+        apiKey?: string
+        model?: string
+        protocol?: string
+        authType?: string
+        authSource?: string
+      }
     ) => {
       const s = loadSettings()
       const baseUrl = String(input?.baseUrl ?? '').trim()
@@ -502,7 +794,16 @@ function setupIpc(): void {
           name: String(input?.name ?? '').trim() || prev.name || deriveName(baseUrl),
           baseUrl,
           model: String(input?.model ?? '').trim(),
-          apiKey: apiKeyInput || prev.apiKey
+          apiKey: apiKeyInput || prev.apiKey,
+          protocol: isLlmProtocol(input?.protocol) ? input.protocol : prev.protocol,
+          authType:
+            input?.authType === 'import' ? 'import' : input?.authType === 'key' ? 'key' : prev.authType,
+          authSource:
+            input?.authSource === 'codex' || input?.authSource === 'opencode'
+              ? input.authSource
+              : input?.authType === 'key'
+                ? undefined
+                : prev.authSource
         }
         saveProviders(list, s.activeProviderId)
         logLine(`[agent] provider updated: ${deriveName(baseUrl)}`)
@@ -514,7 +815,13 @@ function setupIpc(): void {
         name: String(input?.name ?? '').trim() || deriveName(baseUrl),
         baseUrl,
         model: String(input?.model ?? '').trim(),
-        apiKey: apiKeyInput
+        apiKey: apiKeyInput,
+        protocol: isLlmProtocol(input?.protocol) ? input.protocol : 'openai-chat',
+        authType: input?.authType === 'import' ? 'import' : 'key',
+        authSource:
+          input?.authSource === 'codex' || input?.authSource === 'opencode'
+            ? input.authSource
+            : undefined
       })
       const active = s.activeProviderId ?? id
       saveProviders(list, active)
@@ -561,6 +868,201 @@ function setupIpc(): void {
       return { ok: false, error: `读取 opencode 配置失败：${(e as Error)?.message ?? String(e)}` }
     }
   })
+
+  ipcMain.handle('agent:confirm-respond', (_e, id: number, ok: boolean) => {
+    const r = pendingConfirms.get(Number(id))
+    if (r) {
+      pendingConfirms.delete(Number(id))
+      r(!!ok)
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('agent:import-status', (_e, source: string) =>
+    importStatus(source === 'codex' ? 'codex' : 'opencode')
+  )
+
+  ipcMain.handle('skills:list', () => listSkills())
+  ipcMain.handle('skills:toggle', (_e, id: string, enabled: boolean) => {
+    setSkillEnabled(String(id), !!enabled)
+    return { ok: true }
+  })
+  ipcMain.handle('skills:remove', (_e, id: string) => removeSkill(String(id)))
+  ipcMain.handle('skills:import-folder', async () => {
+    if (!win) return { ok: false, error: '窗口未就绪' }
+    const r = await dialog.showOpenDialog(win, {
+      title: '选择要导入的 Skill 文件夹（需包含 SKILL.md）',
+      properties: ['openDirectory']
+    })
+    if (r.canceled || r.filePaths.length === 0) return { ok: false, error: '已取消' }
+    return importSkillFromFolder(r.filePaths[0])
+  })
+
+  ipcMain.handle('setup:codex-status', () => codexConfigStatus())
+  ipcMain.handle('setup:codex-install', () =>
+    installCodexMcp(path.join(app.getAppPath(), 'dist-bridge', 'index.cjs'))
+  )
+  ipcMain.handle('setup:claude-command', () => {
+    const bridgePath = path.join(app.getAppPath(), 'dist-bridge', 'index.cjs')
+    return {
+      command: claudeMcpCommand(bridgePath),
+      hint: claudeDesktopConfigHint(bridgePath),
+      bridgeFound: fs.existsSync(bridgePath)
+    }
+  })
+
+  ipcMain.handle('agents:list', () => listAgentTools())
+
+  ipcMain.handle('agents:add', (_e, name: string, dir: string, command?: string) =>
+    addCustomAgent(String(name ?? ''), String(dir ?? ''), String(command ?? ''))
+  )
+
+  ipcMain.handle('agents:remove', (_e, id: string) => {
+    stopAgentWatch()
+    return removeCustomAgent(String(id))
+  })
+
+  ipcMain.handle('agents:sessions', (_e, toolId: string) => {
+    const tool = findAgentTool(String(toolId))
+    if (!tool?.sessionsDir) return []
+    if (tool.kind === 'codex') return listCodexSessions(tool.sessionsDir)
+    if (tool.kind === 'claude') return listClaudeSessions(tool.sessionsDir)
+    if (tool.kind === 'gemini' || tool.kind === 'qwen') return listGeminiSessions(tool.sessionsDir)
+    if (tool.kind === 'custom') return listCustomSessions(tool.sessionsDir)
+    return []
+  })
+
+  ipcMain.handle('agents:session-open', (_e, toolId: string, sessionId: string, filePath: string) => {
+    const tool = findAgentTool(String(toolId))
+    if (!tool?.sessionsDir) return { ok: false, error: '工具不可用（未找到会话目录）' }
+    return openExternalSession(tool, String(sessionId), String(filePath ?? ''))
+  })
+
+  let startSessionBusy = false
+  ipcMain.handle('agents:start-session', async (_e, toolId: string, message: string) => {
+    if (startSessionBusy || liveChildren.size > 0) {
+      return { ok: false, error: '有任务正在运行：请等待完成，或点「停止」后再发送' }
+    }
+    startSessionCancelled = false
+    const tool = findAgentTool(String(toolId))
+    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+    if (!tool.available) return { ok: false, error: `未检测到「${tool.name}」（命令或配置目录不存在）` }
+    const probe = buildStartPlan(tool, '')
+    if ('error' in probe) return { ok: false, error: probe.error }
+    if (!tool.sessionsDir) return { ok: false, error: '未找到该工具的会话目录，无法跟随新会话' }
+    const msg = String(message ?? '').trim()
+    if (!msg) return { ok: false, error: '消息不能为空' }
+    if (tool.kind === 'custom') {
+      // custom commands run whatever the user configured — confirm exact plan
+      const approved = await confirmScript({
+        command: `${probe.file} ${probe.args.join(' ')}`,
+        cwd: probe.cwd,
+        skill: '启动自定义工具'
+      })
+      if (!approved) return { ok: false, error: '用户拒绝了这次启动' }
+    }
+    startSessionBusy = true
+    try {
+      const before = Date.now()
+      const spawnResult = startExternalSessionSpawn(tool, msg)
+      if (!spawnResult.ok) return spawnResult
+      const listFn =
+        tool.kind === 'codex'
+          ? listCodexSessions
+          : tool.kind === 'claude'
+            ? listClaudeSessions
+            : tool.kind === 'gemini' || tool.kind === 'qwen'
+              ? listGeminiSessions
+              : listCustomSessions
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 1000))
+        if (startSessionCancelled) {
+          startSessionCancelled = false
+          return { ok: false, error: '已取消' }
+        }
+        const newest = listFn(tool.sessionsDir)[0]
+        if (newest && newest.updatedAt > before) {
+          return openExternalSession(tool, newest.id, newest.file)
+        }
+      }
+      return { ok: false, error: '已启动，但未在 20 秒内检测到新会话文件；可点 ⟳ 刷新会话列表' }
+    } finally {
+      startSessionBusy = false
+    }
+  })
+
+  ipcMain.handle('agents:stop', () => {
+    startSessionCancelled = true
+    let killed = 0
+    for (const child of liveChildren) {
+      killChildTree(child)
+      killed++
+    }
+    liveChildren.clear()
+    broadcastChildren()
+    return { ok: true, killed }
+  })
+
+  ipcMain.handle('agents:session-close', () => {
+    stopAgentWatch()
+    mirrorSource = 'opencode'
+    return { ok: true }
+  })
+
+  ipcMain.handle('search:engine-get', () => ({
+    engine: loadSettings().searchEngine,
+    engines: Object.entries(SEARCH_ENGINES).map(([key, v]) => ({ key, name: v.name }))
+  }))
+
+  ipcMain.handle('search:engine-set', (_e, engine: string) => {
+    if (typeof engine === 'string' && engine in SEARCH_ENGINES) {
+      saveSearchEngine(engine as keyof typeof SEARCH_ENGINES)
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('emergency:keys-get', () => ({ keys: loadSettings().emergencyStopKeys }))
+
+  ipcMain.handle('emergency:keys-set', (_e, keys: unknown) => {
+    const list = Array.isArray(keys)
+      ? keys
+          .filter((k): k is string => typeof k === 'string' && k.length > 0 && k.length <= 20)
+          .slice(0, 5)
+      : []
+    const unique = [...new Set(list)]
+    if (unique.length === 0) return { ok: false, error: '至少需要一个按键' }
+    saveEmergencyStopKeys(unique)
+    return { ok: true, keys: unique }
+  })
+
+  ipcMain.handle('agents:mirror-source', (_e, source: string) => {
+    const next = source === 'external' ? 'external' : 'opencode'
+    if (next === 'opencode' && mirrorSource === 'external') {
+      // resume after an external-tool gap: reset the panel stream to the
+      // opencode session (clears external leftovers + stale busy state)
+      win?.webContents.send(
+        'mirror:event',
+        externalEvent({
+          kind: 'session-info',
+          activeSessionID: sessionBus.state.activeSessionID,
+          activeTitle: sessionBus.state.activeTitle ?? undefined,
+          reason: 'selected',
+          ts: Date.now()
+        })
+      )
+      win?.webContents.send(
+        'mirror:event',
+        externalEvent({
+          kind: 'session',
+          sessionID: sessionBus.state.activeSessionID ?? 'opencode',
+          status: 'idle',
+          ts: Date.now()
+        })
+      )
+    }
+    mirrorSource = next
+    return { ok: true }
+  })
 }
 
 app.on('window-all-closed', () => {
@@ -568,6 +1070,10 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  for (const child of liveChildren) {
+    killChildTree(child)
+  }
+  liveChildren.clear()
   removeEndpoint(process.pid)
   httpServer?.close()
 })

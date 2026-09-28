@@ -23,7 +23,38 @@ export class TabManager {
     private win: BrowserWindow,
     private overlayPreload: string | null,
     private onChanged: () => void
-  ) {}
+  ) {
+    // Chromium can leave a WebContentsView "hidden" (suspended rendering,
+    // rAF stopped) after the window was minimized/occluded. Nudge the active
+    // view back alive on window-state events, plus a periodic watchdog.
+    this.win.on('show', () => this.activateView())
+    this.win.on('restore', () => this.activateView())
+    this.win.on('focus', () => this.activateView())
+    setInterval(() => void this.reviveActiveView(), 30_000)
+  }
+
+  /** If the active view lost its visibility (Electron quirk after occlusion),
+   *  re-kick it so Chromium resumes painting and rAF. */
+  private async reviveActiveView(): Promise<void> {
+    try {
+      if (!this.win.isVisible() || this.win.isMinimized()) return
+      const active = this.activeId != null ? this.tabs.get(this.activeId) : null
+      if (!active || this.isBlank(active)) return
+      const state = await active.view.webContents.executeJavaScript(
+        'document.visibilityState',
+        true
+      )
+      if (state === 'hidden') {
+        active.view.setVisible(false)
+        setTimeout(() => {
+          active.view.setVisible(true)
+          active.view.setBounds(this.bounds)
+        }, 80)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
 
   createTab(url?: string): Tab {
     const view = new WebContentsView({

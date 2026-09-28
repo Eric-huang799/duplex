@@ -23,7 +23,7 @@ import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
-const VERSION = '0.1.0'
+const VERSION = '0.2.0'
 
 function log(...args: unknown[]): void {
   console.error('[duplex-bridge]', ...args)
@@ -198,6 +198,7 @@ async function callRemote(name: string, args: Record<string, unknown>): Promise<
 async function main(): Promise<void> {
   const server = new McpServer({ name: 'duplex', version: VERSION })
   for (const def of toolDefs) {
+    if (def.internal) continue
     server.registerTool(
       def.name,
       { description: def.description, inputSchema: def.input },

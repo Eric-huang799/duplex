@@ -3,6 +3,10 @@
  * (CC-Switch-style: keep several API configs and switch between them).
  * Pure logic here so it is unit-testable.
  */
+import { isLlmProtocol, type LlmProtocol } from '../../shared/llm'
+
+export type AuthType = 'key' | 'import'
+export type AuthSource = 'codex' | 'opencode'
 
 export interface AgentProvider {
   id: string
@@ -10,6 +14,11 @@ export interface AgentProvider {
   baseUrl: string
   apiKey: string
   model: string
+  /** Wire protocol of the chat API (defaults to 'openai-chat'). */
+  protocol: LlmProtocol
+  /** 'key' = apiKey stored locally; 'import' = read from a local CLI login. */
+  authType: AuthType
+  authSource?: AuthSource
 }
 
 export interface MaskedProvider {
@@ -18,6 +27,9 @@ export interface MaskedProvider {
   baseUrl: string
   model: string
   hasKey: boolean
+  protocol: LlmProtocol
+  authType: AuthType
+  authSource?: AuthSource
 }
 
 export function newProviderId(): string {
@@ -38,7 +50,10 @@ export function maskProviders(list: AgentProvider[]): MaskedProvider[] {
     name: p.name,
     baseUrl: p.baseUrl,
     model: p.model,
-    hasKey: p.apiKey.length > 0
+    hasKey: p.apiKey.length > 0,
+    protocol: p.protocol,
+    authType: p.authType,
+    authSource: p.authSource
   }))
 }
 
@@ -65,7 +80,11 @@ export function normalizeProviderState(input: {
             : deriveName(o.baseUrl),
         baseUrl: o.baseUrl.trim(),
         apiKey: typeof o.apiKey === 'string' ? o.apiKey : '',
-        model: typeof o.model === 'string' ? o.model.trim() : ''
+        model: typeof o.model === 'string' ? o.model.trim() : '',
+        protocol: isLlmProtocol(o.protocol) ? o.protocol : 'openai-chat',
+        authType: o.authType === 'import' ? 'import' : 'key',
+        authSource:
+          o.authSource === 'codex' || o.authSource === 'opencode' ? o.authSource : undefined
       })
     }
   }
@@ -85,7 +104,9 @@ export function normalizeProviderState(input: {
         name: '默认',
         baseUrl: legacy.baseUrl.trim(),
         apiKey: typeof legacy.apiKey === 'string' ? legacy.apiKey : '',
-        model: typeof legacy.model === 'string' ? legacy.model.trim() : ''
+        model: typeof legacy.model === 'string' ? legacy.model.trim() : '',
+        protocol: 'openai-chat',
+        authType: 'key'
       })
       active = providers[0].id
     }
@@ -94,6 +115,14 @@ export function normalizeProviderState(input: {
   if (active && !providers.some((p) => p.id === active)) active = null
   if (!active && providers.length > 0) active = providers[0].id
   return { providers, activeProviderId: active }
+}
+
+/** Best-effort protocol mapping from an opencode provider's npm package. */
+function protocolFromNpm(npm: string): LlmProtocol {
+  const n = npm.toLowerCase()
+  if (n.includes('anthropic')) return 'anthropic-messages'
+  if (n.includes('google') || n.includes('gemini')) return 'gemini'
+  return 'openai-chat'
 }
 
 /** Extract every usable provider from an opencode config object (key optional — local services like Ollama need none). */
@@ -115,7 +144,11 @@ export function providersFromOpencode(config: unknown): AgentProvider[] {
       name: name,
       baseUrl: baseUrl.trim(),
       apiKey,
-      model: models[0] ?? ''
+      model: models[0] ?? '',
+      protocol: protocolFromNpm(
+        typeof (raw as { npm?: unknown }).npm === 'string' ? (raw as { npm: string }).npm : ''
+      ),
+      authType: 'key'
     })
   }
   return out

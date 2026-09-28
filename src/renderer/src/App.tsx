@@ -35,9 +35,20 @@ export default function App(): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(false)
   const [panelMode, setPanelMode] = useState<PanelMode>(() => {
     const saved = localStorage.getItem('duplex-panel-mode')
-    return saved === 'agent' ? 'agent' : 'opencode'
+    return saved === 'agent' || saved === 'external' ? saved : 'opencode'
   })
+  const [externalTool, setExternalTool] = useState<string>(
+    () => localStorage.getItem('duplex-external-tool') ?? 'codex'
+  )
   const [agentEvents, setAgentEvents] = useState<MirrorEvent[]>([])
+  const [confirmReq, setConfirmReq] = useState<{
+    id: number
+    command: string
+    cwd: string
+    skill: string
+  } | null>(null)
+  const [stopKeys, setStopKeys] = useState<string[]>(['Escape', 'F2'])
+  const [stopToast, setStopToast] = useState('')
   const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -48,7 +59,12 @@ export default function App(): React.JSX.Element {
     })
     // built-in agent stream (restored across panel reloads)
     void window.cobrowse.agentEvents().then((evs) => {
-      if (Array.isArray(evs) && evs.length > 0) setAgentEvents(evs)
+      if (Array.isArray(evs) && evs.length > 0) {
+        // collapse by (kind, partID) — legacy logs may contain streaming snapshots
+        setAgentEvents(
+          (evs as MirrorEvent[]).reduce((acc, ev) => mergeMirror(acc, ev), [] as MirrorEvent[])
+        )
+      }
     })
     const offTabs = window.cobrowse.onTabs((t, active) => {
       setTabs(t)
@@ -68,21 +84,66 @@ export default function App(): React.JSX.Element {
       const info = (ev as { info?: string }).info
       if (info === 'reset' || info === 'switched') {
         // session created/switched: reload the full event log for that session
-        void window.cobrowse.agentEvents().then((evs) => setAgentEvents(evs))
+        void window.cobrowse.agentEvents().then((evs) =>
+          setAgentEvents(
+            (evs as MirrorEvent[]).reduce((acc, ev) => mergeMirror(acc, ev), [] as MirrorEvent[])
+          )
+        )
         return
       }
       setAgentEvents((prev) => mergeMirror(prev, ev))
+    })
+    const offConfirm = window.cobrowse.onAgentConfirm((req) => {
+      setConfirmReq(req)
+      // the main process auto-denies after 120s — clear the dialog to match
+      const id = req.id
+      setTimeout(() => {
+        setConfirmReq((cur) => (cur && cur.id === id ? null : cur))
+      }, 125_000)
     })
     return () => {
       offTabs()
       offMirror()
       offAgent()
+      offConfirm()
     }
   }, [])
+
+  useEffect(() => {
+    void window.cobrowse.emergencyKeysGet().then((s) => {
+      if (Array.isArray(s.keys) && s.keys.length > 0) setStopKeys(s.keys)
+    })
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!stopKeys.includes(e.key)) return
+      // let the capture input in the hotkey settings dialog record keys instead
+      const t = e.target as HTMLElement | null
+      if (t?.closest?.('.stopkey-capture')) return
+      e.preventDefault()
+      e.stopPropagation()
+      // emergency stop: abort built-in agent, kill external children, take over
+      void window.cobrowse.agentAbort()
+      void window.cobrowse.agentsStop()
+      window.cobrowse.emergencyTakeover()
+      setStopToast('已急停：已中断当前任务并接管浏览器')
+      window.setTimeout(() => setStopToast(''), 2600)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [stopKeys])
 
   const changeMode = (m: PanelMode): void => {
     setPanelMode(m)
     localStorage.setItem('duplex-panel-mode', m)
+    if (m !== 'external') void window.cobrowse.agentsSetMirrorSource('opencode')
+  }
+
+  const changeExternalTool = (id: string): void => {
+    setExternalTool(id)
+    localStorage.setItem('duplex-external-tool', id)
+    changeMode('external')
   }
 
   // Remove optimistic local messages once the same user message arrives through the mirror.
@@ -160,7 +221,11 @@ export default function App(): React.JSX.Element {
           onClose={(id) => void window.cobrowse.tabAction({ type: 'closeTab', tabId: id })}
           onNew={() => void window.cobrowse.tabAction({ type: 'newTab' })}
         />
-        <Toolbar active={activeTab} onAction={(a, url) => void window.cobrowse.tabAction({ type: a, url })} />
+        <Toolbar
+          active={activeTab}
+          onAction={(a, url) => void window.cobrowse.tabAction({ type: a, url })}
+          onStopKeysChanged={(keys) => setStopKeys(keys)}
+        />
         <div className="content" ref={contentRef}>
           {showStartPage && (
             <StartPage
@@ -187,8 +252,42 @@ export default function App(): React.JSX.Element {
             mode={panelMode}
             onModeChange={changeMode}
             agentEvents={agentEvents}
+            externalTool={externalTool}
+            onExternalToolChange={changeExternalTool}
           />
         </>
+      )}
+
+      {stopToast && <div className="stop-toast">{stopToast}</div>}
+
+      {confirmReq && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <div className="confirm-title">AI 请求执行操作（{confirmReq.skill}）</div>
+            <pre className="confirm-cmd">{confirmReq.command}</pre>
+            <div className="confirm-cwd">工作目录：{confirmReq.cwd}</div>
+            <div className="confirm-row">
+              <button
+                className="import-btn"
+                onClick={() => {
+                  void window.cobrowse.agentConfirmRespond(confirmReq.id, false)
+                  setConfirmReq(null)
+                }}
+              >
+                拒绝
+              </button>
+              <button
+                className="send-btn"
+                onClick={() => {
+                  void window.cobrowse.agentConfirmRespond(confirmReq.id, true)
+                  setConfirmReq(null)
+                }}
+              >
+                允许执行
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

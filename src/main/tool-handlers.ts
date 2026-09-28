@@ -72,10 +72,13 @@ async function visualizeTarget(
   return { r, label }
 }
 
-export function createToolExecutor(tabs: TabManager): ToolExecutor {
+export function createToolExecutor(
+  tabs: TabManager,
+  opts?: { getSearchEngine?: () => string | undefined }
+): ToolExecutor {
   return async (name, args) => {
     try {
-      return await dispatch(tabs, name, args ?? {})
+      return await dispatch(tabs, name, args ?? {}, opts?.getSearchEngine)
     } catch (e) {
       return errorText(`Error in ${name}: ${(e as Error)?.message ?? String(e)}`)
     }
@@ -85,7 +88,8 @@ export function createToolExecutor(tabs: TabManager): ToolExecutor {
 async function dispatch(
   tabs: TabManager,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  getEngine?: () => string | undefined
 ): Promise<ToolResult> {
   switch (name) {
     case 'list_tabs': {
@@ -95,7 +99,11 @@ async function dispatch(
     case 'new_tab': {
       const raw = typeof args.url === 'string' && args.url ? args.url : null
       const addr = raw ? resolveAddress(raw) : null
-      const url = addr ? (addr.kind === 'url' ? addr.url : searchUrl(addr.query)) : undefined
+      const url = addr
+        ? addr.kind === 'url'
+          ? addr.url
+          : searchUrl(addr.query, getEngine?.())
+        : undefined
       const tab = tabs.createTab(url)
       if (url) await cdp.waitForLoad(tab)
       const wc = tab.view.webContents
@@ -119,7 +127,7 @@ async function dispatch(
       const tab = tabs.requireTab(args.tabId as number | undefined)
       const raw = String(args.url)
       const addr = resolveAddress(raw)
-      const url = addr.kind === 'url' ? addr.url : searchUrl(addr.query)
+      const url = addr.kind === 'url' ? addr.url : searchUrl(addr.query, getEngine?.())
       markAiActive(10000)
       overlaySend(tab, {
         kind: 'status',
@@ -151,7 +159,7 @@ async function dispatch(
       const tab = tabs.requireTab(args.tabId as number | undefined)
       const query = String(args.query)
       const engine = typeof args.engine === 'string' ? args.engine : undefined
-      const url = searchUrl(query, engine)
+      const url = searchUrl(query, engine ?? getEngine?.())
       markAiActive(10000)
       overlaySend(tab, {
         kind: 'status',

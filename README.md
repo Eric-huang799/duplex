@@ -30,6 +30,14 @@
 
 - **The tooling layer is still being tuned.** The goal is for **the human to stay in command of the AI's tools**, rather than have AI tooling and the human's own actions crowd each other out of the pipeline (contending for the same page, interrupting input, interleaving conflicting actions). The trade-offs here are still evolving — feedback on human/agent contention is welcome via Issues.
 
+## What's new in v0.2
+
+- **Skills** — Claude Code-compatible skill format (`SKILL.md`): indexes your existing `~/.claude/skills` and supports importing or authoring duplex-only skills under `~/.cobrowse/skills`. The built-in agent reads and follows them on demand (every script run asks for confirmation first).
+- **Multi-protocol model APIs** — beyond OpenAI-compatible, native support for Anthropic Messages, OpenAI Responses and Google Gemini.
+- **Credential import** — reuse your local Codex (ChatGPT subscription) and opencode logins directly; no API key typing needed.
+- **External agent tools** — switch the panel between opencode / Codex / Claude Code / Gemini CLI / Qwen Code / custom CLIs: transcripts mirror into the panel (history + live) and new sessions can be started right from the panel; custom tools can be added manually (session directory + start command).
+- **Safety & robustness** — global emergency-stop hotkeys (default `Esc` / `F2`, customizable from the ⌨ button), triple-confirm deletes, task watchdog with automatic render recovery, process-tree termination, and more.
+
 ## Highlights
 
 - **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes (light / dark / follow system) and a wallpaper start page with a clock and search.

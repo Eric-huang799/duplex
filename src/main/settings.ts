@@ -2,7 +2,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { cobrowseDir } from '../shared/endpoint'
-import { normalizeProviderState, type AgentProvider } from './agent/providers'
+import {
+  normalizeProviderState,
+  type AgentProvider,
+  type AuthSource,
+  type AuthType
+} from './agent/providers'
+import type { LlmProtocol } from '../shared/llm'
+import { DEFAULT_ENGINE, SEARCH_ENGINES, type SearchEngine } from '../shared/search'
+
+/** Default global emergency-stop hotkeys (matched against KeyboardEvent.key). */
+export const DEFAULT_STOP_KEYS = ['Escape', 'F2']
 
 export type ThemeSetting = 'system' | 'light' | 'dark'
 
@@ -16,6 +26,11 @@ export interface AgentConfig {
   baseUrl: string
   apiKey: string
   model: string
+  protocol: LlmProtocol
+  authType: AuthType
+  authSource?: AuthSource
+  /** Provider display name (used to select an opencode credential entry). */
+  providerName: string
 }
 
 const cache: {
@@ -23,11 +38,15 @@ const cache: {
   session: SavedSession | null
   agentProviders: AgentProvider[]
   activeProviderId: string | null
+  searchEngine: SearchEngine
+  emergencyStopKeys: string[]
 } = {
   theme: 'system',
   session: null,
   agentProviders: [],
-  activeProviderId: null
+  activeProviderId: null,
+  searchEngine: DEFAULT_ENGINE,
+  emergencyStopKeys: [...DEFAULT_STOP_KEYS]
 }
 
 function settingsPath(): string {
@@ -51,9 +70,20 @@ export function loadSettings(): {
   session: SavedSession | null
   agentProviders: AgentProvider[]
   activeProviderId: string | null
+  searchEngine: SearchEngine
+  emergencyStopKeys: string[]
 } {
   const raw = readRaw()
   if (isValidTheme(raw.theme)) cache.theme = raw.theme
+  if (typeof raw.searchEngine === 'string' && raw.searchEngine in SEARCH_ENGINES) {
+    cache.searchEngine = raw.searchEngine as SearchEngine
+  }
+  if (Array.isArray(raw.emergencyStopKeys)) {
+    const keys = raw.emergencyStopKeys
+      .filter((k): k is string => typeof k === 'string' && k.length > 0 && k.length <= 20)
+      .slice(0, 5)
+    if (keys.length > 0) cache.emergencyStopKeys = [...new Set(keys)]
+  }
   const s = raw.session as { id?: unknown; title?: unknown } | undefined
   if (s && typeof s.id === 'string' && s.id) {
     cache.session = { id: s.id, title: typeof s.title === 'string' ? s.title : '' }
@@ -71,7 +101,9 @@ export function loadSettings(): {
     theme: cache.theme,
     session: cache.session,
     agentProviders: cache.agentProviders,
-    activeProviderId: cache.activeProviderId
+    activeProviderId: cache.activeProviderId,
+    searchEngine: cache.searchEngine,
+    emergencyStopKeys: cache.emergencyStopKeys
   }
 }
 
@@ -80,8 +112,24 @@ export function activeAgentConfig(): AgentConfig {
   const s = loadSettings()
   const p =
     s.agentProviders.find((x) => x.id === s.activeProviderId) ?? s.agentProviders[0] ?? null
-  if (!p) return { baseUrl: '', apiKey: '', model: '' }
-  return { baseUrl: p.baseUrl, apiKey: p.apiKey, model: p.model }
+  if (!p)
+    return {
+      baseUrl: '',
+      apiKey: '',
+      model: '',
+      protocol: 'openai-chat',
+      authType: 'key',
+      providerName: ''
+    }
+  return {
+    baseUrl: p.baseUrl,
+    apiKey: p.apiKey,
+    model: p.model,
+    protocol: p.protocol,
+    authType: p.authType,
+    authSource: p.authSource,
+    providerName: p.name
+  }
 }
 
 export function saveTheme(theme: ThemeSetting): void {
@@ -89,6 +137,28 @@ export function saveTheme(theme: ThemeSetting): void {
   try {
     fs.mkdirSync(cobrowseDir(), { recursive: true })
     const next = { ...readRaw(), theme }
+    fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf8')
+  } catch {
+    /* settings must never crash the app */
+  }
+}
+
+export function saveSearchEngine(engine: SearchEngine): void {
+  cache.searchEngine = engine
+  try {
+    fs.mkdirSync(cobrowseDir(), { recursive: true })
+    const next = { ...readRaw(), searchEngine: engine }
+    fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf8')
+  } catch {
+    /* settings must never crash the app */
+  }
+}
+
+export function saveEmergencyStopKeys(keys: string[]): void {
+  cache.emergencyStopKeys = keys
+  try {
+    fs.mkdirSync(cobrowseDir(), { recursive: true })
+    const next = { ...readRaw(), emergencyStopKeys: keys }
     fs.writeFileSync(settingsPath(), JSON.stringify(next, null, 2), 'utf8')
   } catch {
     /* settings must never crash the app */

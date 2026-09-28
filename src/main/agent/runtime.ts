@@ -5,6 +5,8 @@
  */
 import type { AgentConfig } from '../settings'
 import { chatStream, parseToolArguments, type ChatMessage } from './llm'
+import { resolveImportedKey } from './auth-import'
+import { skillsPromptSection } from './skills'
 import { buildOpenAiTools } from './tools-schema'
 import { loadAgentSessions, saveAgentSessions, type AgentSession } from './store'
 import type { ToolExecutor, ToolResult } from '../tool-handlers'
@@ -36,6 +38,19 @@ const SYSTEM_PROMPT = `你是 Duplex 浏览器的内置操作 agent。你可以�
 - 如果用户按 Esc 接管了浏览器（工具结果里会提示"用户已接管"），立即停止操作并简短告知用户，等待其指示。
 - 涉及提交表单、发送消息、下单等敏感操作前，如果用户没有明确要求，先说明你将要做什么。`
 
+/** Base prompt plus the currently enabled skills (progressive disclosure:
+ *  only name + description here; full instructions come from read_skill). */
+function buildSystemPrompt(): string {
+  const base = SYSTEM_PROMPT
+  try {
+    const skills = skillsPromptSection()
+    if (!skills) return base
+    return `${base}\n\n可用的 Skills（当任务与某个 skill 匹配时，先用 read_skill 读取完整说明，再按说明执行；skill 附带的脚本用 run_skill_script 运行；需要写脚本/文件时用 write_file，需要运行命令时用 run_command——脚本与命令执行前都会请求用户确认）：\n${skills}`
+  } catch {
+    return base
+  }
+}
+
 function extractResultText(res: ToolResult): string {
   const parts: string[] = []
   for (const c of res.content) {
@@ -65,6 +80,8 @@ export class AgentRuntime {
   private loadFn: () => AgentSession[]
   private saveFn: (sessions: AgentSession[]) => void
   private persistTimer: ReturnType<typeof setTimeout> | null = null
+  /** Messages sent while the agent was busy — auto-sent after the current run. */
+  private queued: string[] = []
 
   constructor(
     private executeTool: ToolExecutor,
@@ -215,20 +232,72 @@ export class AgentRuntime {
       id: this.nextId++,
       ts: Date.now()
     }
-    this.uiLog.push(full)
+    // collapse streaming updates: replace the previous event with the same
+    // (kind, partID) instead of appending every delta snapshot (otherwise a
+    // long task persists hundreds of copies of the same growing message)
+    const pid = (full as { partID?: string }).partID
+    let replaced = false
+    if (pid && (full.kind === 'text' || full.kind === 'tool')) {
+      for (let i = this.uiLog.length - 1; i >= 0; i--) {
+        const e = this.uiLog[i] as { kind?: string; partID?: string }
+        if (e.kind === full.kind && e.partID === pid) {
+          this.uiLog[i] = full
+          replaced = true
+          break
+        }
+      }
+    }
+    if (!replaced) this.uiLog.push(full)
     if (this.uiLog.length > 600) this.uiLog.splice(0, this.uiLog.length - 600)
     this.schedulePersist()
-    this.emitRaw(full)
+    try {
+      this.emitRaw(full)
+    } catch {
+      /* the window may be gone; never let emitting break the agent loop */
+    }
   }
 
   async send(text: string): Promise<void> {
-    if (this.running) throw new Error('agent 正在运行中，请先停止或等待完成')
+    if (this.running) {
+      // busy: queue the message and let the user see it — it will be sent
+      // automatically when the current run finishes
+      this.queued.push(text)
+      this.emit({
+        kind: 'text',
+        role: 'user',
+        partID: `q${++this.seq}`,
+        text: `${text}\n\n（已排队：将在当前任务完成后自动发送）`,
+        done: true
+      })
+      return
+    }
     const cfg = this.getConfig()
     if (!cfg.baseUrl || !cfg.model) {
       throw new Error('尚未配置模型（请在设置中填写 Base URL 和模型名）')
     }
+    // resolve the runtime key: stored key, or imported from a local CLI login
+    let apiKey = cfg.apiKey
+    if (cfg.authType === 'import') {
+      if (!cfg.authSource) {
+        throw new Error('该模型配置选择了「导入凭据」，但未指定来源（codex / opencode）')
+      }
+      const r = resolveImportedKey(cfg.authSource, cfg.providerName)
+      if (!r.ok || !r.apiKey) throw new Error(`导入凭据不可用：${r.error ?? '未知错误'}`)
+      apiKey = r.apiKey
+    }
     this.running = true
     this.abortCtl = new AbortController()
+    // global watchdog: a run must never leave the panel stuck on "working"
+    const watchdogMs = 15 * 60_000
+    let watchdogFired = false
+    const watchdog = setTimeout(() => {
+      watchdogFired = true
+      try {
+        this.abortCtl?.abort()
+      } catch {
+        /* ignore */
+      }
+    }, watchdogMs)
     this.emit({ kind: 'session', status: 'busy' })
     // name the conversation after its first user message
     const cur = this.currentSession()
@@ -236,9 +305,12 @@ export class AgentRuntime {
       const t = text.replace(/\s+/g, ' ').trim().slice(0, 30)
       if (t) cur.title = t
     }
+    // refresh the system prompt so newly enabled/installed skills are visible
+    if (this.messages[0]?.role === 'system') {
+      this.messages[0] = { role: 'system', content: buildSystemPrompt() }
+    }
     this.messages.push({ role: 'user', content: text })
     this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
-
     const tools = buildOpenAiTools()
     try {
       const MAX_STEPS = 60
@@ -248,8 +320,9 @@ export class AgentRuntime {
         const partID = `a${++this.seq}`
         let acc = ''
         const { text: assistantText, toolCalls } = await this.chatFn({
+          protocol: cfg.protocol,
           baseUrl: cfg.baseUrl,
-          apiKey: cfg.apiKey,
+          apiKey,
           model: cfg.model,
           messages: this.messages,
           tools,
@@ -265,6 +338,17 @@ export class AgentRuntime {
         if (acc) this.emit({ kind: 'text', role: 'assistant', partID, text: acc, done: true })
 
         if (toolCalls.length === 0) {
+          if (!assistantText || !assistantText.trim()) {
+            // the model ended the turn with neither text nor tool calls —
+            // surface it instead of silently stopping (looks like a hang)
+            this.emit({
+              kind: 'text',
+              role: 'assistant',
+              partID,
+              text: '（模型返回了空响应，本次任务已结束。可以重试或换个模型。）',
+              done: true
+            })
+          }
           this.messages.push({ role: 'assistant', content: assistantText || '' })
           break
         }
@@ -340,7 +424,12 @@ export class AgentRuntime {
       }
     } catch (e) {
       const err = e as Error
-      if (err?.name === 'AbortError' || this.abortCtl.signal.aborted) {
+      if (watchdogFired) {
+        const msg = '任务运行超过 15 分钟，已自动中断（模型或工具可能卡住），面板状态已复位。'
+        this.patchIncompleteToolCalls()
+        this.messages.push({ role: 'assistant', content: `（${msg}）` })
+        this.emit({ kind: 'session', status: 'idle', error: msg })
+      } else if (err?.name === 'AbortError' || this.abortCtl.signal.aborted) {
         this.patchIncompleteToolCalls()
       } else {
         const msg = err?.message ?? String(e)
@@ -348,10 +437,18 @@ export class AgentRuntime {
         this.emit({ kind: 'session', status: 'idle', error: msg })
       }
     } finally {
+      clearTimeout(watchdog)
       this.running = false
       this.abortCtl = null
       this.emit({ kind: 'session', status: 'idle' })
       this.persistNow()
+      // auto-send the next queued message (if any)
+      const next = this.queued.shift()
+      if (next) {
+        setTimeout(() => {
+          void this.send(next).catch(() => undefined)
+        }, 60)
+      }
     }
   }
 

@@ -8,6 +8,31 @@ export function StartPage({ onNavigate }: Props): React.JSX.Element {
   const [value, setValue] = useState('')
   const [now, setNow] = useState(() => new Date())
   const [bgFailed, setBgFailed] = useState(false)
+  const [engineKey, setEngineKey] = useState('baidu')
+  const [engines, setEngines] = useState<Array<{ key: string; name: string }>>([])
+  const [engineMenu, setEngineMenu] = useState(false)
+
+  useEffect(() => {
+    void window.cobrowse.searchEngineGet().then((s) => {
+      setEngineKey(s.engine)
+      setEngines(s.engines)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!engineMenu) return
+    const close = (): void => setEngineMenu(false)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [engineMenu])
+
+  const applyEngine = (k: string): void => {
+    setEngineKey(k)
+    void window.cobrowse.searchEngineSet(k)
+    setEngineMenu(false)
+  }
+
+  const engineName = engines.find((e) => e.key === engineKey)?.name ?? '百度'
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -78,7 +103,31 @@ export function StartPage({ onNavigate }: Props): React.JSX.Element {
               if (e.key === 'Enter') submit()
             }}
           />
-          <span className="start-engine">百度</span>
+          <div className="start-engine-wrap">
+            <button
+              className="start-engine"
+              title="点击切换搜索引擎"
+              onClick={(e) => {
+                e.stopPropagation()
+                setEngineMenu((v) => !v)
+              }}
+            >
+              {engineName}
+            </button>
+            {engineMenu && (
+              <div className="theme-menu start-engine-menu" onClick={(e) => e.stopPropagation()}>
+                {engines.map((en) => (
+                  <button
+                    key={en.key}
+                    className={engineKey === en.key ? 'on' : ''}
+                    onClick={() => applyEngine(en.key)}
+                  >
+                    {en.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

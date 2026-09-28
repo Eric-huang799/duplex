@@ -8,8 +8,10 @@ import type { LocalMessage } from '../App'
 import { ToolCard } from './ToolCard'
 import { MarkdownProse } from './Markdown'
 import { ProvidersPanel } from './ProvidersPanel'
+import { SkillsPanel } from './SkillsPanel'
+import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 
-export type PanelMode = 'opencode' | 'agent'
+export type PanelMode = 'opencode' | 'agent' | 'external'
 
 interface Props {
   width: number
@@ -20,6 +22,8 @@ interface Props {
   mode: PanelMode
   onModeChange: (m: PanelMode) => void
   agentEvents: MirrorEvent[]
+  externalTool: string
+  onExternalToolChange: (id: string) => void
 }
 
 function timeAgo(ts: number): string {
@@ -90,19 +94,89 @@ export function SidePanel({
   onCollapse,
   mode,
   onModeChange,
-  agentEvents
+  agentEvents,
+  externalTool,
+  onExternalToolChange
 }: Props): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
   const [sessionMenu, setSessionMenu] = useState(false)
   const [showProviders, setShowProviders] = useState(false)
+  const [showSkills, setShowSkills] = useState(false)
+  const [tools, setTools] = useState<AgentToolInfo[]>([])
+  const [externalErr, setExternalErr] = useState('')
+  const [externalPending, setExternalPending] = useState(false)
+  const [creatingSession, setCreatingSession] = useState(false)
+  const [agentChildren, setAgentChildren] = useState(0)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addName, setAddName] = useState('')
+  const [addDir, setAddDir] = useState('')
+  const [addCmd, setAddCmd] = useState('')
+  const [addErr, setAddErr] = useState('')
+  const [addBusy, setAddBusy] = useState(false)
+
+  const refreshTools = async (): Promise<void> => {
+    try {
+      const list = (await window.cobrowse.agentsList()) as AgentToolInfo[]
+      setTools(Array.isArray(list) ? list : [])
+      // if the selected external tool disappeared, fall back to opencode
+      if (
+        mode === 'external' &&
+        externalTool &&
+        Array.isArray(list) &&
+        !list.some((t) => t.id === externalTool)
+      ) {
+        onModeChange('opencode')
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const addToolFlow = (): void => {
+    setAddName('')
+    setAddDir('')
+    setAddCmd('')
+    setAddErr('')
+    setAddOpen(true)
+  }
+
+  const submitAddTool = async (): Promise<void> => {
+    const name = addName.trim()
+    const dir = addDir.trim()
+    if (!name || !dir) return
+    setAddBusy(true)
+    setAddErr('')
+    const r = await window.cobrowse.agentsAdd(name, dir, addCmd.trim() || undefined)
+    setAddBusy(false)
+    if (!r.ok) {
+      setAddErr(r.error ?? '添加失败')
+      return
+    }
+    setAddOpen(false)
+    await refreshTools()
+    if (r.id) onExternalToolChange(r.id)
+  }
+
+  useEffect(() => {
+    void refreshTools()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const off = window.cobrowse.onAgentsChildren((n) => setAgentChildren(n))
+    return off
+  }, [])
   const [agentReady, setAgentReady] = useState(false)
   const [agentError, setAgentError] = useState('')
   const [agentSessionMenu, setAgentSessionMenu] = useState(false)
   const [agentSessions, setAgentSessions] = useState<
     Array<{ id: string; title: string; updatedAt: number; current: boolean }>
   >([])
-  const [confirmAgentDel, setConfirmAgentDel] = useState<string | null>(null)
+  const [confirmAgentDel, setConfirmAgentDel] = useState<{
+    id: string
+    stage: number
+  } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
   const isAgent = mode === 'agent'
@@ -122,13 +196,17 @@ export function SidePanel({
   }
 
   const deleteAgentSession = (id: string): void => {
-    if (confirmAgentDel !== id) {
-      setConfirmAgentDel(id)
-      setTimeout(() => setConfirmAgentDel((c) => (c === id ? null : c)), 3000)
+    if (!confirmAgentDel || confirmAgentDel.id !== id) {
+      setConfirmAgentDel({ id, stage: 1 })
+      setTimeout(() => setConfirmAgentDel((c) => (c && c.id === id ? null : c)), 4000)
       return
     }
+    if (confirmAgentDel.stage === 1) {
+      setConfirmAgentDel({ id, stage: 2 })
+      return
+    }
+    setConfirmAgentDel(null)
     void window.cobrowse.agentDeleteSession(id).then(() => {
-      setConfirmAgentDel(null)
       void window.cobrowse.agentSessions().then(setAgentSessions)
     })
   }
@@ -157,9 +235,30 @@ export function SidePanel({
     setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 60)
   }
 
+  const extToolInfo = mode === 'external' ? tools.find((t) => t.id === externalTool) : undefined
+  const extKind = extToolInfo?.kind
+  const externalCanStart =
+    !!extToolInfo?.available &&
+    (extKind === 'codex' ||
+      extKind === 'claude' ||
+      extKind === 'gemini' ||
+      extKind === 'qwen' ||
+      (extKind === 'custom' && !!extToolInfo?.command))
+
   const send = (): void => {
     const t = draft.trim()
     if (!t) return
+    if (mode === 'external') {
+      if (!externalCanStart || externalPending) return
+      setDraft('')
+      setExternalErr('')
+      setExternalPending(true)
+      void window.cobrowse.agentsStartSession(externalTool, t).then((r) => {
+        setExternalPending(false)
+        if (!r.ok) setExternalErr(r.error ?? '启动失败')
+      })
+      return
+    }
     setDraft('')
     if (isAgent) {
       setAgentError('')
@@ -172,9 +271,22 @@ export function SidePanel({
   }
 
   // ------- opencode-mode derived state -------
-  const busy = events.some(
-    (e) => e.kind === 'tool' && (e.status === 'running' || e.status === 'pending')
-  )
+  // Busy = the most recent state-defining event (tool status or session
+  // status). Later events override older stuck states — e.g. a tool whose
+  // "completed" event was dropped while the panel was mirroring an external
+  // tool would otherwise keep this permanently "working".
+  let busy = false
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    if (e.kind === 'tool') {
+      busy = e.status === 'running' || e.status === 'pending'
+      break
+    }
+    if (e.kind === 'session') {
+      busy = e.status === 'busy'
+      break
+    }
+  }
   const lastTs = events.length ? events[events.length - 1].ts : 0
   const connected = Date.now() - lastTs < 120_000
 
@@ -198,6 +310,12 @@ export function SidePanel({
     }
   }
 
+  // once the newly created session shows up, clear the "creating" state
+  useEffect(() => {
+    if (creatingSession && sessionInfo?.activeSessionID) setCreatingSession(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [creatingSession, sessionInfo?.activeSessionID])
+
   const toggleSessionMenu = (): void => {
     const next = !sessionMenu
     setSessionMenu(next)
@@ -210,8 +328,12 @@ export function SidePanel({
   }
 
   const createSession = (): void => {
-    void window.cobrowse.sessionCommand({ action: 'create' })
+    if (creatingSession) return
+    setCreatingSession(true)
     setSessionMenu(false)
+    void window.cobrowse.sessionCommand({ action: 'create' })
+    // safety net: never leave the pending state stuck
+    window.setTimeout(() => setCreatingSession(false), 8000)
   }
 
   // ------- agent-mode derived state -------
@@ -232,19 +354,45 @@ export function SidePanel({
     <div className="panel" style={{ width }}>
       <div className="mode-bar">
         <button
-          className={mode === 'opencode' ? 'on' : ''}
-          onClick={() => onModeChange('opencode')}
-          title="通过 opencode 会话工作（镜像对话 + 会话选择）"
-        >
-          opencode
-        </button>
-        <button
           className={mode === 'agent' ? 'on' : ''}
           onClick={() => onModeChange('agent')}
           title="浏览器内置模型直接工作（API 直连，可选功能）"
         >
           内置模型
         </button>
+        <select
+          className="tool-select"
+          title="切换要镜像的外部 agent 工具"
+          onMouseDown={() => void refreshTools()}
+          value={mode === 'agent' ? '__placeholder__' : mode === 'external' ? externalTool : 'opencode'}
+          onChange={(e) => {
+            const v = e.target.value
+            if (v === '__placeholder__') return
+            if (v === '__add__') {
+              addToolFlow()
+              return
+            }
+            if (v === 'opencode') {
+              onModeChange('opencode')
+              return
+            }
+            onExternalToolChange(v)
+          }}
+        >
+          <option value="__placeholder__" disabled>
+            外部工具…
+          </option>
+          <option value="opencode">opencode（双向镜像）</option>
+          {tools
+            .filter((t) => t.id !== 'opencode')
+            .map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+                {t.available ? '' : '（未检测到）'}
+              </option>
+            ))}
+          <option value="__add__">＋ 添加自定义工具…</option>
+        </select>
       </div>
 
       {isAgent ? (
@@ -260,21 +408,37 @@ export function SidePanel({
           <button className="session-btn" onClick={() => setShowProviders((v) => !v)} title="模型配置">
             ⚙
           </button>
+          <button className="session-btn" onClick={() => setShowSkills((v) => !v)} title="Skills 与 CLI 接入">
+            ✦
+          </button>
           <button className="session-btn" onClick={toggleAgentSessions} title="历史对话">
             ☰
-          </button>
-          <button className="session-btn" onClick={newAgentSession} title="新对话">
-            ＋
           </button>
           <button className="panel-collapse" title="收起面板" onClick={onCollapse}>
             »
           </button>
         </div>
+      ) : mode === 'external' ? (
+        <ExternalToolPanel
+          toolId={externalTool}
+          tool={tools.find((t) => t.id === externalTool) ?? null}
+          onCollapse={onCollapse}
+          onToolRemoved={() => {
+            void refreshTools()
+            onModeChange('opencode')
+          }}
+        />
       ) : (
         <div className="panel-header">
           <span className={`dot ${busy ? 'busy' : connected ? 'ok' : 'idle'}`} />
           <span className="panel-status">
-            {busy ? 'AI 正在工作…' : connected ? 'AI 已连接' : '等待 AI 连接'}
+            {creatingSession
+              ? '正在创建对话…'
+              : busy
+                ? 'AI 正在工作…'
+                : connected
+                  ? 'AI 已连接'
+                  : '等待 AI 连接'}
           </span>
           <button
             className="session-btn"
@@ -292,11 +456,14 @@ export function SidePanel({
         </div>
       )}
 
-      {!isAgent && sessionMenu && (
+      {!isAgent && mode !== 'external' && sessionMenu && (
         <>
           <div className="session-menu-backdrop" onClick={() => setSessionMenu(false)} />
           <div className="session-menu">
             <div className="session-menu-title">连接的 opencode 对话</div>
+            <button className="session-item session-new-top" onClick={createSession}>
+              ＋ 新建对话
+            </button>
             <button
               className={`session-item ${!sessionInfo?.activeSessionID ? 'on' : ''}`}
               onClick={() => pickSession(null)}
@@ -314,11 +481,8 @@ export function SidePanel({
               </button>
             ))}
             {(sessionInfo?.sessions ?? []).length === 0 && (
-              <div className="session-empty">暂无对话列表 — 可新建一个</div>
+              <div className="session-empty">暂无对话列表 — 可在顶部新建一个</div>
             )}
-            <button className="session-new" onClick={createSession}>
-              ＋ 新建对话
-            </button>
           </div>
         </>
       )}
@@ -328,6 +492,9 @@ export function SidePanel({
           <div className="session-menu-backdrop" onClick={() => setAgentSessionMenu(false)} />
           <div className="session-menu">
             <div className="session-menu-title">历史对话（保存在本机）</div>
+            <button className="session-item session-new-top" onClick={newAgentSession}>
+              ＋ 新建对话
+            </button>
             {agentSessions.length === 0 && <div className="session-empty">暂无历史对话</div>}
             {agentSessions.map((s) => (
               <button
@@ -338,21 +505,22 @@ export function SidePanel({
                 <span className="session-item-title">{s.title}</span>
                 <span className="session-item-time">{timeAgo(s.updatedAt)}</span>
                 <span
-                  className={`session-del ${confirmAgentDel === s.id ? 'danger' : ''}`}
-                  title="删除对话"
+                  className={`session-del ${confirmAgentDel?.id === s.id ? 'danger' : ''}`}
+                  title="删除对话（需连续确认三次）"
                   onClick={(e) => {
                     e.stopPropagation()
                     e.preventDefault()
                     deleteAgentSession(s.id)
                   }}
                 >
-                  {confirmAgentDel === s.id ? '确认' : '✕'}
+                  {confirmAgentDel?.id === s.id
+                    ? confirmAgentDel.stage === 1
+                      ? '确认?'
+                      : '再确认!'
+                    : '✕'}
                 </span>
               </button>
             ))}
-            <button className="session-new" onClick={newAgentSession}>
-              ＋ 新对话
-            </button>
           </div>
         </>
       )}
@@ -360,6 +528,8 @@ export function SidePanel({
       {isAgent && showProviders && (
         <ProvidersPanel onClose={() => setShowProviders(false)} onChanged={refreshAgentReady} />
       )}
+
+      {isAgent && showSkills && <SkillsPanel onClose={() => setShowSkills(false)} />}
 
       <div className="panel-list" ref={listRef} onScroll={onScroll}>
         {isAgent ? (
@@ -401,20 +571,75 @@ export function SidePanel({
         )}
       </div>
 
-      {(agentError || agentSessionError) && (
-        <div className="agent-error">{agentError || agentSessionError}</div>
+      {(agentError || agentSessionError || externalErr) && (
+        <div className="agent-error">{agentError || agentSessionError || externalErr}</div>
+      )}
+
+      {addOpen && (
+        <div className="confirm-overlay">
+          <div className="confirm-box">
+            <div className="confirm-title">添加自定义 Agent 工具</div>
+            <label className="add-tool-field">
+              <span>工具名称</span>
+              <input
+                value={addName}
+                spellCheck={false}
+                placeholder="例如：Gemini CLI"
+                onChange={(e) => setAddName(e.target.value)}
+              />
+            </label>
+            <label className="add-tool-field">
+              <span>会话记录目录（包含 .jsonl / .json 会话文件）</span>
+              <input
+                value={addDir}
+                spellCheck={false}
+                placeholder="例如：C:\Users\me\.gemini\tmp"
+                onChange={(e) => setAddDir(e.target.value)}
+              />
+            </label>
+            <label className="add-tool-field">
+              <span>
+                启动命令（可选——填了才能从面板发消息；默认从 stdin 读，支持 {'{prompt}'} 占位）
+              </span>
+              <input
+                value={addCmd}
+                spellCheck={false}
+                placeholder="例如：gemini   或   my-agent --prompt {prompt}"
+                onChange={(e) => setAddCmd(e.target.value)}
+              />
+            </label>
+            {addErr && <div className="agent-form-err">{addErr}</div>}
+            <div className="confirm-row">
+              <button className="import-btn" onClick={() => setAddOpen(false)}>
+                取消
+              </button>
+              <button
+                className="send-btn"
+                disabled={!addName.trim() || !addDir.trim() || addBusy}
+                onClick={() => void submitAddTool()}
+              >
+                {addBusy ? '添加中…' : '添加'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="composer">
         <textarea
           rows={2}
           value={draft}
+          disabled={mode === 'external' && (!externalCanStart || externalPending)}
           placeholder={
             isAgent
               ? agentConfigured
                 ? '给内置模型下指令（Enter 发送）'
                 : '请先配置模型'
-              : '给 AI 发消息（Enter 发送，Shift+Enter 换行）'
+              : mode === 'external'
+                ? externalCanStart
+                  ? '输入第一条消息，以无头模式启动新会话（Enter 发送）'
+                  : '只读镜像：请在对应的 CLI 中继续对话'
+                : '给 AI 发消息（Enter 发送，Shift+Enter 换行）'
           }
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -428,9 +653,28 @@ export function SidePanel({
           <button className="send-btn stop" onClick={() => void window.cobrowse.agentAbort()}>
             停止
           </button>
+        ) : mode === 'external' && (externalPending || agentChildren > 0) ? (
+          <button
+            className="send-btn stop"
+            title="紧急停止：终止从面板发起的任务进程"
+            onClick={() => {
+              setExternalPending(false)
+              void window.cobrowse.agentsStop()
+            }}
+          >
+            停止
+          </button>
         ) : (
-          <button className="send-btn" onClick={send} disabled={!draft.trim() || (isAgent && !agentConfigured)}>
-            发送
+          <button
+            className="send-btn"
+            onClick={send}
+            disabled={
+              !draft.trim() ||
+              (isAgent && !agentConfigured) ||
+              (mode === 'external' && (!externalCanStart || externalPending))
+            }
+          >
+            {externalPending ? '启动中…' : '发送'}
           </button>
         )}
       </div>

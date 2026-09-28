@@ -18,13 +18,19 @@ const THEME_ICON: Record<ThemeSetting, string> = {
 interface Props {
   active: TabInfo | null
   onAction: (action: string, url?: string) => void
+  onStopKeysChanged?: (keys: string[]) => void
 }
 
-export function Toolbar({ active, onAction }: Props): React.JSX.Element {
+export function Toolbar({ active, onAction, onStopKeysChanged }: Props): React.JSX.Element {
   const [input, setInput] = useState('')
   const [editing, setEditing] = useState(false)
   const [theme, setTheme] = useState<ThemeSetting>('system')
   const [themeMenu, setThemeMenu] = useState(false)
+  const [engine, setEngine] = useState('baidu')
+  const [engines, setEngines] = useState<Array<{ key: string; name: string }>>([])
+  const [engineMenu, setEngineMenu] = useState(false)
+  const [stopKeys, setStopKeys] = useState<string[]>([])
+  const [stopKeysOpen, setStopKeysOpen] = useState(false)
 
   useEffect(() => {
     if (!editing) {
@@ -38,6 +44,20 @@ export function Toolbar({ active, onAction }: Props): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    void window.cobrowse.searchEngineGet().then((s) => {
+      setEngine(s.engine)
+      setEngines(s.engines)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!engineMenu) return
+    const close = (): void => setEngineMenu(false)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [engineMenu])
+
+  useEffect(() => {
     if (!themeMenu) return
     const close = (): void => setThemeMenu(false)
     window.addEventListener('click', close)
@@ -48,6 +68,12 @@ export function Toolbar({ active, onAction }: Props): React.JSX.Element {
     setTheme(t)
     void window.cobrowse.setTheme(t)
     setThemeMenu(false)
+  }
+
+  const applyEngine = (k: string): void => {
+    setEngine(k)
+    void window.cobrowse.searchEngineSet(k)
+    setEngineMenu(false)
   }
 
   const submit = (): void => {
@@ -68,6 +94,31 @@ export function Toolbar({ active, onAction }: Props): React.JSX.Element {
       <button className="tb-btn" onClick={() => onAction('reload')} title="刷新">
         ⟳
       </button>
+      <div className="theme-wrap engine-wrap">
+        <button
+          className="tb-engine"
+          title={`搜索引擎：${engines.find((e) => e.key === engine)?.name ?? engine}（点击切换；地址栏输入非网址内容时用它搜索）`}
+          onClick={(e) => {
+            e.stopPropagation()
+            setEngineMenu((v) => !v)
+          }}
+        >
+          {engines.find((e) => e.key === engine)?.name ?? '搜索'}
+        </button>
+        {engineMenu && (
+          <div className="theme-menu engine-menu" onClick={(e) => e.stopPropagation()}>
+            {engines.map((en) => (
+              <button
+                key={en.key}
+                className={engine === en.key ? 'on' : ''}
+                onClick={() => applyEngine(en.key)}
+              >
+                {en.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       <input
         className="urlbar"
         value={input}
@@ -113,7 +164,67 @@ export function Toolbar({ active, onAction }: Props): React.JSX.Element {
           </div>
         )}
       </div>
+      <button
+        className="tb-btn"
+        title="急停快捷键设置"
+        onClick={(e) => {
+          e.stopPropagation()
+          setStopKeysOpen(true)
+          void window.cobrowse.emergencyKeysGet().then((s) => setStopKeys(s.keys))
+        }}
+      >
+        ⌨
+      </button>
       {active?.loading && <span className="load-dot" title="加载中" />}
+
+      {stopKeysOpen && (
+        <div className="confirm-overlay" onClick={(e) => e.stopPropagation()}>
+          <div className="confirm-box">
+            <div className="confirm-title">急停快捷键</div>
+            <label className="add-tool-field">
+              <span>按键（逗号分隔；在下方输入框按任意键即可捕获替换）</span>
+              <input
+                className="stopkey-capture"
+                value={stopKeys.join(',')}
+                spellCheck={false}
+                onChange={(e) =>
+                  setStopKeys(
+                    e.target.value
+                      .split(',')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  )
+                }
+                onKeyDown={(e) => {
+                  e.preventDefault()
+                  setStopKeys([e.key])
+                }}
+              />
+            </label>
+            <div className="import-status">
+              按急停键立即中止当前任务（内置 agent 与外部工具进程）并接管浏览器。常用键名：Escape、F2、F8。
+            </div>
+            <div className="confirm-row">
+              <button className="import-btn" onClick={() => setStopKeysOpen(false)}>
+                取消
+              </button>
+              <button
+                className="send-btn"
+                onClick={() => {
+                  void window.cobrowse.emergencyKeysSet(stopKeys).then((r) => {
+                    if (r.ok) {
+                      setStopKeysOpen(false)
+                      onStopKeysChanged?.(r.keys ?? stopKeys)
+                    }
+                  })
+                }}
+              >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -71,6 +71,42 @@ describe('resolveAddress (URL vs search)', () => {
   })
 })
 
+describe('normalizeProviderState v2 fields', () => {
+  it('keeps valid protocol/auth fields and falls back on invalid ones', () => {
+    const r = normalizeProviderState({
+      providers: [
+        {
+          id: 'a',
+          name: 'A',
+          baseUrl: 'https://x/v1',
+          apiKey: 'k',
+          model: 'm',
+          protocol: 'anthropic-messages',
+          authType: 'import',
+          authSource: 'codex'
+        },
+        {
+          id: 'b',
+          name: 'B',
+          baseUrl: 'https://y/v1',
+          apiKey: 'k2',
+          model: 'm2',
+          protocol: 'bogus',
+          authType: 'weird',
+          authSource: 'nope'
+        }
+      ],
+      activeProviderId: 'a'
+    })
+    expect(r.providers[0].protocol).toBe('anthropic-messages')
+    expect(r.providers[0].authType).toBe('import')
+    expect(r.providers[0].authSource).toBe('codex')
+    expect(r.providers[1].protocol).toBe('openai-chat')
+    expect(r.providers[1].authType).toBe('key')
+    expect(r.providers[1].authSource).toBeUndefined()
+  })
+})
+
 describe('searchUrl', () => {
   it('builds a baidu URL by default', () => {
     expect(searchUrl('你好 world')).toBe(
@@ -274,7 +310,7 @@ describe('built-in agent mode', () => {
 
     const rt = new AgentRuntime(
       exec as never,
-      () => ({ baseUrl: 'https://x/v1', apiKey: 'k', model: 'm' }),
+      () => ({ baseUrl: 'https://x/v1', apiKey: 'k', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
       (ev) => events.push(ev),
       mockChat as never,
       { load: () => [], save: () => undefined } as never
@@ -306,7 +342,7 @@ describe('built-in agent mode', () => {
   it('rejects send when not configured', async () => {
     const rt = new AgentRuntime(
       (async () => ({ content: [] })) as never,
-      () => ({ baseUrl: '', apiKey: '', model: '' }),
+      () => ({ baseUrl: '', apiKey: '', model: '', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
       () => undefined,
       (async () => ({ text: '', toolCalls: [] })) as never,
       { load: () => [], save: () => undefined } as never
@@ -381,7 +417,7 @@ describe('agent provider management (CC-Switch style)', () => {
   it('allows keyless providers end to end (Ollama scenario)', async () => {
     const rt = new AgentRuntime(
       (async () => ({ content: [] })) as never,
-      () => ({ baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'qwen2.5:7b' }),
+      () => ({ baseUrl: 'http://localhost:11434/v1', apiKey: '', model: 'qwen2.5:7b', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
       () => undefined,
       (async () => ({ text: '本地模型回复', toolCalls: [] })) as never,
       { load: () => [], save: () => undefined } as never
@@ -398,7 +434,7 @@ describe('agent provider management (CC-Switch style)', () => {
     }) as never
     const rt = new AgentRuntime(
       (async () => ({ content: [] })) as never,
-      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm' }),
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
       () => undefined,
       mockChat,
       {
@@ -458,7 +494,7 @@ describe('agent session store (history persistence)', () => {
     let saved: AgentSession[] = []
     const rt = new AgentRuntime(
       (async () => ({ content: [] })) as never,
-      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm' }),
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
       () => undefined,
       (async () => ({ text: '', toolCalls: [] })) as never,
       {
@@ -518,7 +554,7 @@ describe('local-model hardening (tolerant parsing + watchdogs)', () => {
     })) as never
     const rt = new AgentRuntime(
       (async () => ({ content: [] })) as never,
-      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm' }),
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
       (ev) => events.push(ev),
       mockChat,
       { load: () => [], save: () => undefined } as never

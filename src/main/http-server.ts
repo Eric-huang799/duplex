@@ -23,6 +23,8 @@ export interface HttpServerDeps {
   /** Built-in agent control (fire-and-forget; watch /api/agent/state). */
   sendAgent?: (text: string) => Promise<void>
   agentBusy?: () => boolean
+  /** Returns false when the panel is mirroring an external tool (drop opencode pushes). */
+  mirrorGate?: () => boolean
 }
 
 export interface RunningHttpServer {
@@ -64,8 +66,15 @@ function sendJson(res: ServerResponse, code: number, obj: unknown): void {
   res.end(body)
 }
 
+const PUSH_KINDS = new Set(['text', 'reasoning', 'tool', 'session', 'annotation', 'session-info'])
+
 function isValidPush(b: unknown): b is MirrorPush {
-  return !!b && typeof b === 'object' && typeof (b as { kind?: unknown }).kind === 'string'
+  if (!b || typeof b !== 'object') return false
+  const o = b as { kind?: unknown; text?: unknown; ts?: unknown }
+  if (typeof o.kind !== 'string' || !PUSH_KINDS.has(o.kind)) return false
+  if (o.ts !== undefined && (typeof o.ts !== 'number' || !Number.isFinite(o.ts))) return false
+  if (o.text !== undefined && typeof o.text !== 'string') return false
+  return true
 }
 
 export async function startHttpServer(deps: HttpServerDeps): Promise<RunningHttpServer> {
@@ -179,13 +188,17 @@ async function handle(
       return
     }
     deps.sessionBus.report(body)
-    deps.mirror.add({
-      kind: 'session-info',
-      activeSessionID: deps.sessionBus.state.activeSessionID,
-      activeTitle: deps.sessionBus.state.activeTitle ?? undefined,
-      sessions: body.sessions,
-      reason: (body.reason as 'listed' | 'selected' | 'created' | 'auto' | undefined) ?? undefined
-    })
+    const gateOk = !deps.mirrorGate || deps.mirrorGate() || body.reason === 'listed'
+    if (gateOk) {
+      deps.mirror.add({
+        kind: 'session-info',
+        activeSessionID: deps.sessionBus.state.activeSessionID,
+        activeTitle: deps.sessionBus.state.activeTitle ?? undefined,
+        sessions: body.sessions,
+        reason:
+          (body.reason as 'listed' | 'selected' | 'created' | 'auto' | undefined) ?? undefined
+      })
+    }
     sendJson(res, 200, { ok: true })
     return
   }
@@ -236,6 +249,10 @@ async function handle(
       if (!isValidPush(item)) continue
       const sid = String((item as { sessionID?: unknown }).sessionID ?? '')
       if (active && sid && sid !== active) {
+        skipped++
+        continue
+      }
+      if (deps.mirrorGate && !deps.mirrorGate()) {
         skipped++
         continue
       }
@@ -338,6 +355,7 @@ async function handleMcpPost(
 ): Promise<void> {
   const server = new McpServer({ name: 'duplex', version: deps.version })
   for (const def of toolDefs) {
+    if (def.internal) continue
     server.registerTool(
       def.name,
       { description: def.description, inputSchema: def.input },

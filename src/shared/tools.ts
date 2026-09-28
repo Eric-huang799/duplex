@@ -9,6 +9,8 @@ export interface ToolDef {
   name: string
   description: string
   input: z.ZodRawShape
+  /** Only exposed to the built-in agent; hidden from external MCP clients. */
+  internal?: boolean
 }
 
 export const toolDefs: ToolDef[] = [
@@ -218,6 +220,65 @@ export const toolDefs: ToolDef[] = [
       script: z.string().describe('JS expression or statements; use "return x" for a value'),
       tabId: z.number().optional()
     }
+  },
+  {
+    name: 'read_skill',
+    description:
+      'Read the full SKILL.md of an installed skill. The system prompt lists available skills (name + description); call this when a task matches one, then follow its instructions.',
+    input: {
+      name: z.string().describe('Skill name or id, e.g. "docx" or "claude/docx"')
+    },
+    internal: true
+  },
+  {
+    name: 'list_skill_files',
+    description: 'List files bundled inside a skill directory (relative paths).',
+    input: {
+      name: z.string().describe('Skill name or id')
+    },
+    internal: true
+  },
+  {
+    name: 'read_skill_file',
+    description:
+      'Read a text file bundled inside a skill directory (reference docs, templates, scripts).',
+    input: {
+      name: z.string().describe('Skill name or id'),
+      path: z.string().describe('Relative path inside the skill directory')
+    },
+    internal: true
+  },
+  {
+    name: 'run_skill_script',
+    description:
+      'Run a script bundled inside a skill directory (.js/.mjs/.py/.ps1/.cmd/.bat). The user must approve the exact command in a confirmation dialog before it runs.',
+    input: {
+      name: z.string().describe('Skill name or id'),
+      script: z.string().describe('Relative path of the script inside the skill directory'),
+      args: z.array(z.string()).optional().describe('Command-line arguments')
+    },
+    internal: true
+  },
+  {
+    name: 'write_file',
+    description:
+      'Write a UTF-8 text file to disk (parent directories are created). Every write must be approved by the user in a confirmation dialog. Use it to save a script or document that a skill requires (then run it with run_command), or to save results.',
+    input: {
+      path: z.string().describe('Absolute file path to write'),
+      content: z.string().describe('Full file content (UTF-8)')
+    },
+    internal: true
+  },
+  {
+    name: 'run_command',
+    description:
+      'Run a shell command (cmd/PowerShell on Windows) and return its output (exit code + stdout/stderr). Every command must be approved by the user in a confirmation dialog. Use it to run scripts provided by a skill (set cwd to the skill directory) or scripts you created with write_file.',
+    input: {
+      command: z.string().describe('Full command line'),
+      cwd: z.string().optional().describe('Working directory (defaults to the home directory)'),
+      timeout_ms: z.number().optional().describe('Timeout in ms (default 120000, max 600000)')
+    },
+    internal: true
   }
 ]
 
