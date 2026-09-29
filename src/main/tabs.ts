@@ -123,12 +123,21 @@ export class TabManager {
   private activateView(): void {
     const active = this.activeId != null ? this.tabs.get(this.activeId) : null
     for (const t of this.tabs.values()) {
-      const isActive = t.id === this.activeId
-      // Blank tabs stay hidden so the renderer start page shows through.
-      t.view.setVisible(isActive && !this.isBlank(t))
+      try {
+        if (t.view.webContents.isDestroyed()) continue
+        const isActive = t.id === this.activeId
+        // Blank tabs stay hidden so the renderer start page shows through.
+        t.view.setVisible(isActive && !this.isBlank(t))
+      } catch {
+        /* view already torn down */
+      }
     }
     if (active) {
-      active.view.setBounds(this.bounds)
+      try {
+        if (!active.view.webContents.isDestroyed()) active.view.setBounds(this.bounds)
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -193,22 +202,34 @@ export class TabManager {
   updateBounds(bounds: ContentBounds): void {
     this.bounds = bounds
     const active = this.getActive()
-    if (active) active.view.setBounds(bounds)
+    if (!active) return
+    try {
+      if (!active.view.webContents.isDestroyed()) active.view.setBounds(bounds)
+    } catch {
+      /* ignore */
+    }
   }
 
   list(): TabInfo[] {
-    return Array.from(this.tabs.values()).map((t) => {
-      const wc = t.view.webContents
-      return {
-        id: t.id,
-        url: wc.getURL(),
-        title: wc.getTitle(),
-        loading: wc.isLoading(),
-        active: t.id === this.activeId,
-        canGoBack: wc.navigationHistory.canGoBack(),
-        canGoForward: wc.navigationHistory.canGoForward()
+    const out: TabInfo[] = []
+    for (const t of this.tabs.values()) {
+      try {
+        const wc = t.view.webContents
+        if (wc.isDestroyed()) continue
+        out.push({
+          id: t.id,
+          url: wc.getURL(),
+          title: wc.getTitle(),
+          loading: wc.isLoading(),
+          active: t.id === this.activeId,
+          canGoBack: wc.navigationHistory.canGoBack(),
+          canGoForward: wc.navigationHistory.canGoForward()
+        })
+      } catch {
+        /* skip tabs that are going away */
       }
-    })
+    }
+    return out
   }
 
   destroy(): void {
@@ -216,6 +237,12 @@ export class TabManager {
   }
 
   private emit(): void {
-    this.onChanged()
+    // Fires from async webContents events (including during teardown) —
+    // a UI-refresh callback must never take down the main process.
+    try {
+      this.onChanged()
+    } catch {
+      /* ignore */
+    }
   }
 }

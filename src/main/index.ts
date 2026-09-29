@@ -640,13 +640,23 @@ function createWindow(): void {
     win,
     path.join(app.getAppPath(), 'out', 'preload', 'overlay.cjs'),
     () => {
-      win?.webContents.send('tabs:update', tabs!.list(), tabs!.activeId)
+      try {
+        if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+        win.webContents.send('tabs:update', tabs!.list(), tabs!.activeId)
+      } catch {
+        /* window is going away */
+      }
     }
   )
   tabs.createTab()
 
   mirror.onEvent = (ev) => {
-    win?.webContents.send('mirror:event', ev)
+    try {
+      if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+      win.webContents.send('mirror:event', ev)
+    } catch {
+      /* window is going away */
+    }
   }
 
   applyWindowBackground()
