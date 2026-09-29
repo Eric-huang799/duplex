@@ -7,7 +7,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { exec, spawnSync, type ExecOptions } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
 
 export type FsConfirmFn = (payload: {
@@ -87,40 +87,29 @@ export function createFsToolHandlers(
       const ok = await confirm({ kind: 'command', detail: command, cwd })
       if (!ok) return text('用户拒绝了这次命令执行。')
       return await new Promise<ToolResult>((resolve) => {
+        const MAX_OUTPUT = 4 * 1024 * 1024
         let killTimer: ReturnType<typeof setTimeout> | null = null
         let timedOut = false
-        // `detached` is passed through to spawn by exec at runtime, but is
-        // missing from ExecOptions in @types/node — widen the option type.
-        const execOptions: ExecOptions & { detached?: boolean } = {
+        let overflowed = false
+        let settled = false
+        const outChunks: Buffer[] = []
+        const errChunks: Buffer[] = []
+        let outBytes = 0
+        let errBytes = 0
+
+        // `exec` silently drops `detached`, so the shell child would stay in
+        // our process group: killing it left grandchildren alive, holding the
+        // stdout pipe open and the completion callback would never fire.
+        // `spawn` honours `detached` on POSIX — the child leads its own group
+        // and the timeout kill can take down the whole tree.
+        const child = spawn(command, {
           cwd,
-          maxBuffer: 4 * 1024 * 1024,
+          shell: true,
           windowsHide: true,
-          // POSIX: give the child its own process group so the timeout
-          // kill can take down the whole tree (not just the shell)
           detached: process.platform !== 'win32'
-        }
-        const child = exec(
-          command,
-          execOptions,
-          (err, stdout, stderr) => {
-            if (killTimer) clearTimeout(killTimer)
-            const out = `${String(stdout ?? '')}${stderr ? `\n[stderr]\n${String(stderr)}` : ''}`
-            const tail = out.length > 8000 ? `…（输出截断，保留尾部）\n${out.slice(-8000)}` : out
-            if (err) {
-              const reason = timedOut
-                ? `超时（${timeoutMs / 1000}s 限制），已终止进程`
-                : `退出码 ${err.code ?? '?'}`
-              resolve(errorText(`${reason}\n${tail || err.message}`))
-            } else {
-              resolve(text(`命令完成（退出码 0）\n${tail || '(无输出)'}`))
-            }
-          }
-        )
-        // never leave the child waiting on stdin
-        child.stdin?.end()
-        // kill the whole process tree on timeout (exec's own kill misses children)
-        killTimer = setTimeout(() => {
-          timedOut = true
+        })
+
+        const killTree = (): void => {
           if (!child.pid) return
           try {
             if (process.platform === 'win32') {
@@ -135,6 +124,53 @@ export function createFsToolHandlers(
           } catch {
             /* ignore */
           }
+        }
+
+        const finish = (reason: string | null): void => {
+          if (settled) return
+          settled = true
+          if (killTimer) clearTimeout(killTimer)
+          const out = `${Buffer.concat(outChunks).toString('utf8')}${
+            errBytes ? `\n[stderr]\n${Buffer.concat(errChunks).toString('utf8')}` : ''
+          }`
+          const tail = out.length > 8000 ? `…（输出截断，保留尾部）\n${out.slice(-8000)}` : out
+          if (reason) resolve(errorText(`${reason}\n${tail || '(无输出)'}`))
+          else resolve(text(`命令完成（退出码 0）\n${tail || '(无输出)'}`))
+        }
+
+        const overflow = (): void => {
+          if (overflowed) return
+          overflowed = true
+          killTree()
+        }
+
+        const collect = (chunk: Buffer, isErr: boolean): void => {
+          if (isErr) {
+            if (errBytes + chunk.length > MAX_OUTPUT) return overflow()
+            errBytes += chunk.length
+            errChunks.push(chunk)
+          } else {
+            if (outBytes + chunk.length > MAX_OUTPUT) return overflow()
+            outBytes += chunk.length
+            outChunks.push(chunk)
+          }
+        }
+
+        child.stdout?.on('data', (d: Buffer) => collect(d, false))
+        child.stderr?.on('data', (d: Buffer) => collect(d, true))
+        child.on('error', (e) => finish(`启动失败：${e.message}`))
+        child.on('close', (code, signal) => {
+          if (timedOut) finish(`超时（${timeoutMs / 1000}s 限制），已终止进程`)
+          else if (overflowed) finish(`输出超过 ${MAX_OUTPUT / 1024 / 1024}MB 限制，已终止进程`)
+          else if (code === 0) finish(null)
+          else if (code != null) finish(`退出码 ${code}`)
+          else finish(`被信号终止（${signal ?? '未知'}）`)
+        })
+        // never leave the child waiting on stdin
+        child.stdin?.end()
+        killTimer = setTimeout(() => {
+          timedOut = true
+          killTree()
         }, timeoutMs)
       })
     }
