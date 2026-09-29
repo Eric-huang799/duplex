@@ -121,6 +121,25 @@ const api = {
       title?: string
       error?: string
     }>,
+  agentsSessionSend: (toolId: string, message: string) =>
+    ipcRenderer.invoke('agents:session-send', toolId, message) as Promise<{
+      ok: boolean
+      error?: string
+    }>,
+  agentsModels: (toolId: string) =>
+    ipcRenderer.invoke('agents:models', toolId) as Promise<{
+      current: string
+      candidates: Array<{ id: string; label: string }>
+    }>,
+  agentsModelSet: (toolId: string, model: string) =>
+    ipcRenderer.invoke('agents:model-set', toolId, model) as Promise<{ ok: boolean; error?: string }>,
+  agentsModelSyncGlobal: (toolId: string) =>
+    ipcRenderer.invoke('agents:model-sync-global', toolId) as Promise<{
+      ok: boolean
+      path?: string
+      backupPath?: string
+      error?: string
+    }>,
   agentsSessionClose: () => ipcRenderer.invoke('agents:session-close') as Promise<{ ok: boolean }>,
   agentsSetMirrorSource: (source: 'opencode' | 'external') =>
     ipcRenderer.invoke('agents:mirror-source', source) as Promise<{ ok: boolean }>,

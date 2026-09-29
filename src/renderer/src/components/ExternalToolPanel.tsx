@@ -29,20 +29,24 @@ function timeAgo(ts: number): string {
 }
 
 /**
- * Read-only mirror of an external CLI agent (Codex / Claude Code / custom):
+ * Mirror of an external CLI agent (Codex / Claude Code / custom):
  * pick a session transcript, replay its history into the panel, then keep
- * tailing the file so new messages appear live.
+ * tailing the file so new messages appear live. For Codex and Claude Code the
+ * panel can also reply: the message is injected by headlessly resuming the
+ * same session (the CLI appends to the transcript, which the tail picks up).
  */
 export function ExternalToolPanel({
   toolId,
   tool,
   onCollapse,
-  onToolRemoved
+  onToolRemoved,
+  onOpenedChange
 }: {
   toolId: string
   tool: AgentToolInfo | null
   onCollapse: () => void
   onToolRemoved: () => void
+  onOpenedChange?: (opened: { id: string; title: string } | null) => void
 }): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
@@ -51,6 +55,12 @@ export function ExternalToolPanel({
   const [delStage, setDelStage] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [models, setModels] = useState<Array<{ id: string; label: string }>>([])
+  const [model, setModel] = useState('')
+  const [customMode, setCustomMode] = useState(false)
+  const [customInput, setCustomInput] = useState('')
+  const [syncStage, setSyncStage] = useState(0)
+  const [modelMsg, setModelMsg] = useState('')
 
   const refresh = async (): Promise<void> => {
     setError('')
@@ -64,12 +74,14 @@ export function ExternalToolPanel({
 
   useEffect(() => {
     setOpened(null)
+    onOpenedChange?.(null)
     setNewHint(false)
     setMenuOpen(false)
     void window.cobrowse.agentsSessionClose()
     void window.cobrowse.agentsSetMirrorSource('external')
     void refresh()
     return () => {
+      onOpenedChange?.(null)
       void window.cobrowse.agentsSessionClose()
       void window.cobrowse.agentsSetMirrorSource('opencode')
     }
@@ -85,9 +97,51 @@ export function ExternalToolPanel({
       setError(r.error ?? '打开失败')
       return
     }
-    setOpened({ id: s.id, title: r.title ?? s.title })
+    const info = { id: s.id, title: r.title ?? s.title }
+    setOpened(info)
+    onOpenedChange?.(info)
     setNewHint(false)
     setMenuOpen(false)
+  }
+
+  const modelCapable = tool?.kind === 'codex' || tool?.kind === 'claude'
+
+  useEffect(() => {
+    setModels([])
+    setModel('')
+    setCustomMode(false)
+    setCustomInput('')
+    setSyncStage(0)
+    setModelMsg('')
+    if (!toolId) return
+    void window.cobrowse.agentsModels(toolId).then((r) => {
+      setModels(Array.isArray(r?.candidates) ? r.candidates : [])
+      setModel(typeof r?.current === 'string' ? r.current : '')
+    })
+  }, [toolId])
+
+  const saveModel = async (value: string): Promise<void> => {
+    setModelMsg('')
+    const r = await window.cobrowse.agentsModelSet(toolId, value)
+    if (!r.ok) {
+      setModelMsg(r.error ?? '保存失败')
+      return
+    }
+    setModel(value)
+    setModelMsg(
+      value ? `已选择：${value}（对面板发起/续聊的会话生效）` : '已恢复默认（跟随 CLI 配置）'
+    )
+  }
+
+  const syncModel = async (): Promise<void> => {
+    if (syncStage === 0) {
+      setSyncStage(1)
+      setTimeout(() => setSyncStage(0), 4000)
+      return
+    }
+    setSyncStage(0)
+    const r = await window.cobrowse.agentsModelSyncGlobal(toolId)
+    setModelMsg(r.ok ? `已写入全局配置（备份：${r.backupPath ?? ''}）` : (r.error ?? '同步失败'))
   }
 
   const removeTool = async (): Promise<void> => {
@@ -107,6 +161,7 @@ export function ExternalToolPanel({
   }
 
   const available = !!tool?.available
+  const canReply = tool?.kind === 'codex' || tool?.kind === 'claude'
 
   return (
     <>
@@ -142,6 +197,73 @@ export function ExternalToolPanel({
         </button>
       </div>
 
+      {modelCapable && (
+        <div className="model-row">
+          <span className="model-row-label">模型</span>
+          {customMode ? (
+            <>
+              <input
+                className="model-input"
+                value={customInput}
+                spellCheck={false}
+                placeholder="输入模型名，回车保存"
+                onChange={(e) => setCustomInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && customInput.trim()) {
+                    void saveModel(customInput.trim())
+                    setCustomMode(false)
+                  }
+                }}
+              />
+              <button
+                className="model-sync"
+                onClick={() => {
+                  if (customInput.trim()) void saveModel(customInput.trim())
+                  setCustomMode(false)
+                }}
+              >
+                保存
+              </button>
+            </>
+          ) : (
+            <>
+              <select
+                className="model-select"
+                value={model}
+                onChange={(e) => {
+                  const v = e.target.value
+                  if (v === '__custom__') {
+                    setCustomMode(true)
+                    setCustomInput(models.some((m) => m.id === model) ? '' : model)
+                    return
+                  }
+                  void saveModel(v)
+                }}
+              >
+                <option value="">默认（跟随 CLI 配置）</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+                {model && !models.some((m) => m.id === model) && (
+                  <option value={model}>{model}（自定义）</option>
+                )}
+                <option value="__custom__">自定义…</option>
+              </select>
+              <button
+                className={`model-sync ${syncStage > 0 ? 'danger' : ''}`}
+                title="把当前模型写入全局 CLI 配置（先备份）"
+                onClick={() => void syncModel()}
+              >
+                {syncStage === 0 ? '⇪ 全局' : '确认?'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {modelMsg && <div className="external-hint">{modelMsg}</div>}
+
       {menuOpen && (
         <>
           <div className="session-menu-backdrop" onClick={() => setMenuOpen(false)} />
@@ -154,6 +276,7 @@ export function ExternalToolPanel({
               onClick={() => {
                 setNewHint(true)
                 setOpened(null)
+                onOpenedChange?.(null)
                 setMenuOpen(false)
               }}
             >
@@ -184,7 +307,8 @@ export function ExternalToolPanel({
       )}
       {!busy && opened && (
         <div className="external-hint">
-          已打开：{opened.title}（只读镜像，新消息自动同步）
+          已打开：{opened.title}
+          {canReply ? '（可直接在下方回复，将续接该会话）' : '（只读镜像，新消息自动同步）'}
         </div>
       )}
     </>

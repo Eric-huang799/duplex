@@ -35,7 +35,7 @@
 - **Skills** — Claude Code-compatible skill format (`SKILL.md`): indexes your existing `~/.claude/skills` and supports importing or authoring duplex-only skills under `~/.cobrowse/skills`. The built-in agent reads and follows them on demand (every script run asks for confirmation first).
 - **Multi-protocol model APIs** — beyond OpenAI-compatible, native support for Anthropic Messages, OpenAI Responses and Google Gemini.
 - **Credential import** — reuse your local Codex (ChatGPT subscription) and opencode logins directly; no API key typing needed.
-- **External agent tools** — switch the panel between opencode / Codex / Claude Code / Gemini CLI / Qwen Code / custom CLIs: transcripts mirror into the panel (history + live) and new sessions can be started right from the panel; custom tools can be added manually (session directory + start command).
+- **External agent tools** — switch the panel between opencode / Codex / Claude Code / Gemini CLI / Qwen Code / custom CLIs: transcripts mirror into the panel (history + live), **Codex / Claude Code sessions can be continued by replying right from the panel** (the message headlessly resumes the same session), and new sessions can be started right from the panel. Codex / Claude Code also get a **model picker** (default follows the CLI config; one click writes the choice back to the global config, with a timestamped backup); custom tools can be added manually (session directory + start command).
 - **Safety & robustness** — global emergency-stop hotkeys (default `Esc` / `F2`, customizable from the ⌨ button), triple-confirm deletes, task watchdog with automatic render recovery, process-tree termination, and more.
 
 ## How Duplex compares
@@ -203,9 +203,10 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 
 ## Roadmap
 
-- **Codex / Claude Code compatibility (next up)** — more first-class AI client integrations:
+- **Codex / Claude Code compatibility** — first-class AI client integrations:
   - The bridge is client-agnostic (standard stdio MCP), so the *tool layer* is not opencode-specific by design.
-  - Planned: official adapters and **session mirroring** for **Codex**, **Claude Code** and other AI clients, so their conversations appear in the side panel the same way opencode's do.
+  - Session mirroring is in: transcripts replay into the panel live, and replies sent from the panel resume the same session headlessly (Codex `exec resume` / Claude Code `--resume`) — the CLI appends to its transcript and the tail streams it back into the panel.
+  - Next: richer event mapping (tool calls / reasoning cards) and more clients (Gemini CLI / Qwen Code).
 
 ## Development
 

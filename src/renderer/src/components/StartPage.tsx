@@ -115,7 +115,7 @@ export function StartPage({ onNavigate }: Props): React.JSX.Element {
               {engineName}
             </button>
             {engineMenu && (
-              <div className="theme-menu start-engine-menu" onClick={(e) => e.stopPropagation()}>
+              <div className="start-engine-menu" onClick={(e) => e.stopPropagation()}>
                 {engines.map((en) => (
                   <button
                     key={en.key}

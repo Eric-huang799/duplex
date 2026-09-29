@@ -94,7 +94,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged }: Props): React.J
       <button className="tb-btn" onClick={() => onAction('reload')} title="刷新">
         ⟳
       </button>
-      <div className="theme-wrap engine-wrap">
+      <div className="engine-wrap">
         <button
           className="tb-engine"
           title={`搜索引擎：${engines.find((e) => e.key === engine)?.name ?? engine}（点击切换；地址栏输入非网址内容时用它搜索）`}
@@ -106,7 +106,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged }: Props): React.J
           {engines.find((e) => e.key === engine)?.name ?? '搜索'}
         </button>
         {engineMenu && (
-          <div className="theme-menu engine-menu" onClick={(e) => e.stopPropagation()}>
+          <div className="engine-menu" onClick={(e) => e.stopPropagation()}>
             {engines.map((en) => (
               <button
                 key={en.key}

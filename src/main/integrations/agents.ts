@@ -97,14 +97,24 @@ function viaShell(cmd: string, args: string[]): { file: string; args: string[] }
  */
 export function buildStartPlan(
   tool: Pick<AgentTool, 'kind' | 'command'>,
-  message: string
+  message: string,
+  model?: string
 ): StartPlan | { error: string } {
   const cwd = os.homedir()
+  const m = (model ?? '').trim()
   switch (tool.kind) {
     case 'codex':
-      return { ...viaShell('codex', ['exec', '--skip-git-repo-check', '-']), useStdin: true, cwd }
+      return {
+        ...viaShell('codex', ['exec', '--skip-git-repo-check', ...(m ? ['-m', m] : []), '-']),
+        useStdin: true,
+        cwd
+      }
     case 'claude':
-      return { ...viaShell('claude', ['-p']), useStdin: true, cwd }
+      return {
+        ...viaShell('claude', ['-p', ...(m ? ['--model', m] : [])]),
+        useStdin: true,
+        cwd
+      }
     case 'gemini':
       // `echo "..." | gemini` is the documented non-interactive form
       return { ...viaShell('gemini', []), useStdin: true, cwd }
@@ -129,29 +139,221 @@ export function buildStartPlan(
   }
 }
 
+/** A resolved "continue an existing session" plan (pure data, unit-testable). */
+export interface ResumePlan {
+  file: string
+  args: string[]
+  /** Working directory the CLI should resume from (the session's recorded cwd when known). */
+  cwd: string
+}
+
+/**
+ * Build the headless resume plan for tools whose CLIs can continue a recorded
+ * session (Codex `exec resume`, Claude Code `--resume`). The message is always
+ * delivered over stdin (`-` / bare `-p`), which avoids argv quoting issues.
+ */
+export function buildResumePlan(
+  tool: Pick<AgentTool, 'kind'>,
+  cliSessionId: string,
+  cwdHint: string,
+  model?: string
+): ResumePlan | { error: string } {
+  const id = cliSessionId.trim()
+  if (!id) return { error: '无法确定该会话的 CLI 会话 ID' }
+  const m = (model ?? '').trim()
+  let cwd = os.homedir()
+  if (cwdHint) {
+    try {
+      if (fs.statSync(cwdHint).isDirectory()) cwd = cwdHint
+    } catch {
+      /* fall back to home */
+    }
+  }
+  switch (tool.kind) {
+    case 'codex':
+      return {
+        ...viaShell('codex', ['exec', 'resume', '--skip-git-repo-check', ...(m ? ['-m', m] : []), id, '-']),
+        cwd
+      }
+    case 'claude':
+      return { ...viaShell('claude', ['--resume', id, '-p', ...(m ? ['--model', m] : [])]), cwd }
+    default:
+      return { error: '该工具暂不支持从面板续聊，可发起新会话或在原 CLI 中继续' }
+  }
+}
+
 function agentsJsonPath(): string {
   return path.join(cobrowseDir(), 'agents.json')
 }
 
-function readCustom(): CustomAgent[] {
+interface AgentsFile {
+  custom?: CustomAgent[]
+  /** Per-tool model used when the panel launches/resumes a session ('' = follow CLI config). */
+  models?: Record<string, string>
+}
+
+function readAgentsFile(): AgentsFile {
   try {
-    const raw = JSON.parse(fs.readFileSync(agentsJsonPath(), 'utf8')) as { custom?: unknown }
-    if (!Array.isArray(raw.custom)) return []
-    return raw.custom.filter(
-      (c): c is CustomAgent =>
-        !!c &&
-        typeof (c as CustomAgent).id === 'string' &&
-        typeof (c as CustomAgent).name === 'string' &&
-        typeof (c as CustomAgent).sessionsDir === 'string'
-    )
+    const raw = JSON.parse(fs.readFileSync(agentsJsonPath(), 'utf8')) as AgentsFile
+    return raw && typeof raw === 'object' ? raw : {}
   } catch {
-    return []
+    return {}
   }
 }
 
-function writeCustom(list: CustomAgent[]): void {
+function writeAgentsFile(file: AgentsFile): void {
   fs.mkdirSync(cobrowseDir(), { recursive: true })
-  fs.writeFileSync(agentsJsonPath(), JSON.stringify({ custom: list }, null, 2), 'utf8')
+  fs.writeFileSync(agentsJsonPath(), JSON.stringify(file, null, 2), 'utf8')
+}
+
+function readCustom(): CustomAgent[] {
+  const list = readAgentsFile().custom
+  if (!Array.isArray(list)) return []
+  return list.filter(
+    (c): c is CustomAgent =>
+      !!c &&
+      typeof (c as CustomAgent).id === 'string' &&
+      typeof (c as CustomAgent).name === 'string' &&
+      typeof (c as CustomAgent).sessionsDir === 'string'
+  )
+}
+
+function writeCustom(list: CustomAgent[]): void {
+  const file = readAgentsFile()
+  file.custom = list
+  writeAgentsFile(file)
+}
+
+/** Per-tool model used when the panel launches or resumes a session ('' = CLI default). */
+export function getToolModel(toolId: string): string {
+  const v = readAgentsFile().models?.[toolId]
+  return typeof v === 'string' ? v : ''
+}
+
+export function setToolModel(toolId: string, model: string): { ok: boolean; error?: string } {
+  const file = readAgentsFile()
+  const models = { ...(file.models ?? {}) }
+  const m = model.trim()
+  if (m) models[toolId] = m
+  else delete models[toolId]
+  file.models = models
+  try {
+    writeAgentsFile(file)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? '写入失败' }
+  }
+}
+
+/** Candidate models read from the tool's own config files (codex models cache / claude settings). */
+export function listCandidateModels(
+  tool: Pick<AgentTool, 'kind'>
+): Array<{ id: string; label: string }> {
+  const home = os.homedir()
+  try {
+    if (tool.kind === 'codex') {
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(home, '.codex', 'models_cache.json'), 'utf8')
+      ) as { models?: unknown }
+      if (!Array.isArray(raw.models)) return []
+      const out: Array<{ id: string; label: string }> = []
+      for (const entry of raw.models) {
+        const slug = (entry as { slug?: unknown })?.slug
+        if (typeof slug !== 'string' || !slug.trim()) continue
+        const display = (entry as { display_name?: unknown })?.display_name
+        out.push({
+          id: slug.trim(),
+          label: typeof display === 'string' && display.trim() ? display.trim() : slug.trim()
+        })
+      }
+      return out
+    }
+    if (tool.kind === 'claude') {
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8')
+      ) as { env?: Record<string, unknown>; model?: unknown }
+      const set = new Set<string>()
+      for (const key of [
+        'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL',
+        'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+        'CLAUDE_CODE_SUBAGENT_MODEL'
+      ]) {
+        const v = raw.env?.[key]
+        if (typeof v === 'string' && v.trim()) set.add(v.trim())
+      }
+      if (typeof raw.model === 'string' && raw.model.trim()) set.add(raw.model.trim())
+      return [...set].map((id) => ({ id, label: id }))
+    }
+  } catch {
+    /* no candidates available */
+  }
+  return []
+}
+
+/** Pure TOML edit: replace (or insert) the top-level `model = "..."` line, leaving [tables] alone. */
+export function setTomlModel(content: string, model: string): string {
+  const eol = content.includes('\r\n') ? '\r\n' : '\n'
+  const lines = content.split(/\r?\n/)
+  const line = `model = ${JSON.stringify(model)}`
+  let replaced = false
+  let inTable = false
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim()
+    if (t.startsWith('[')) inTable = true
+    if (!inTable && /^model\s*=/.test(t)) {
+      lines[i] = line
+      replaced = true
+      break
+    }
+  }
+  if (!replaced) {
+    let idx = lines.findIndex((l) => l.trim().startsWith('['))
+    if (idx < 0) idx = lines.length
+    lines.splice(idx, 0, line)
+  }
+  return lines.join(eol)
+}
+
+/** Pure settings.json edit: set the top-level "model" field, preserving every other key. */
+export function setJsonModel(content: string, model: string): string {
+  const obj = JSON.parse(content) as Record<string, unknown>
+  obj.model = model
+  return JSON.stringify(obj, null, 2) + '\n'
+}
+
+/** Write the panel-selected model into the tool's global CLI config (timestamped backup first). */
+export function syncModelToGlobal(
+  tool: Pick<AgentTool, 'kind'>,
+  model: string
+): { ok: boolean; path?: string; backupPath?: string; error?: string } {
+  const m = model.trim()
+  if (!m) return { ok: false, error: '请先在面板中选择一个模型，再同步到全局' }
+  const home = os.homedir()
+  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+  const apply = (
+    file: string,
+    edit: (content: string) => string
+  ): { ok: boolean; path?: string; backupPath?: string; error?: string } => {
+    if (!fs.existsSync(file)) return { ok: false, error: '未找到配置文件：' + file }
+    try {
+      const content = fs.readFileSync(file, 'utf8')
+      const next = edit(content)
+      const backupPath = `${file}.bak-${stamp}`
+      fs.copyFileSync(file, backupPath)
+      fs.writeFileSync(file, next, 'utf8')
+      return { ok: true, path: file, backupPath }
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message ?? '写入失败' }
+    }
+  }
+  if (tool.kind === 'codex') {
+    return apply(path.join(home, '.codex', 'config.toml'), (c) => setTomlModel(c, m))
+  }
+  if (tool.kind === 'claude') {
+    return apply(path.join(home, '.claude', 'settings.json'), (c) => setJsonModel(c, m))
+  }
+  return { ok: false, error: '该工具不支持写回全局配置' }
 }
 
 export function listAgentTools(): AgentTool[] {
@@ -176,7 +378,7 @@ export function listAgentTools(): AgentTool[] {
       builtin: true,
       available: commandExists('codex') || fs.existsSync(codexDir),
       sessionsDir: fs.existsSync(codexDir) ? codexDir : undefined,
-      note: '镜像 + 可从面板发起新会话'
+      note: '镜像 + 可从面板续聊'
     },
     {
       id: 'claude',
@@ -185,7 +387,7 @@ export function listAgentTools(): AgentTool[] {
       builtin: true,
       available: commandExists('claude') || fs.existsSync(claudeDir),
       sessionsDir: fs.existsSync(claudeDir) ? claudeDir : undefined,
-      note: '镜像 + 可从面板发起新会话'
+      note: '镜像 + 可从面板续聊'
     },
     {
       id: 'gemini',

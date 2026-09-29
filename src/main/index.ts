@@ -47,10 +47,15 @@ import {
 } from './integrations/setup'
 import {
   addCustomAgent,
+  buildResumePlan,
   buildStartPlan,
   findAgentTool,
+  getToolModel,
   listAgentTools,
-  removeCustomAgent
+  listCandidateModels,
+  removeCustomAgent,
+  setToolModel,
+  syncModelToGlobal
 } from './integrations/agents'
 import {
   claudeLineMessages,
@@ -64,6 +69,7 @@ import {
   readCodexSession,
   readCustomSession,
   readGeminiSession,
+  readSessionMeta,
   type TranscriptMessage
 } from './integrations/transcripts'
 import { resolveAddress } from '../shared/url'
@@ -129,11 +135,19 @@ const fsHandlers = createFsToolHandlers((payload) =>
   })
 )
 
-// external agent transcript tailing (read-only mirror of Codex / Claude Code / custom CLI logs)
+// external agent transcripts: history replay + live tail, plus panel replies
+// (Codex `exec resume` / Claude Code `--resume` write back to the same transcript)
 let agentWatch: { timer: ReturnType<typeof setInterval> } | null = null
 let externalEvtSeq = 5_000_000
 /** While an external transcript is open, opencode pushes are muted. */
 let mirrorSource: 'opencode' | 'external' = 'opencode'
+
+/** The external transcript currently open in the panel (reply target). */
+let currentExternalSession: { toolId: string; kind: string; sessionId: string; file: string } | null =
+  null
+
+/** User message just injected via resume — the CLI transcript will echo it; skip that echo. */
+let pendingUserEcho: { text: string; since: number } | null = null
 
 function stopAgentWatch(): void {
   if (agentWatch) {
@@ -214,6 +228,16 @@ function startAgentWatch(
       const complete = text.slice(0, cut + 1)
       lastSize += Buffer.byteLength(complete, 'utf8')
       for (const m of parseTranscriptChunk(kind, complete)) {
+        if (
+          m.role === 'user' &&
+          pendingUserEcho &&
+          m.text === pendingUserEcho.text &&
+          m.ts >= pendingUserEcho.since - 15_000
+        ) {
+          // the CLI transcript echoed a message we already showed optimistically
+          pendingUserEcho = null
+          continue
+        }
         win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, sessionID))
       }
     } catch {
@@ -234,6 +258,8 @@ function openExternalSession(
   if (!path.resolve(file).startsWith(root)) return { ok: false, error: '非法路径' }
   stopAgentWatch()
   mirrorSource = 'external'
+  currentExternalSession = { toolId: tool.id, kind: tool.kind, sessionId, file }
+  pendingUserEcho = null
   const sid = `${tool.id}:${String(sessionId)}`
   // capture the tail baseline BEFORE reading history so nothing in between
   // is lost (messages appended during the read will still be tailed)
@@ -296,9 +322,10 @@ function killChildTree(child: ReturnType<typeof spawn>): void {
 /** Spawn a headless CLI run that starts a brand-new session (generalized). */
 function startExternalSessionSpawn(
   tool: { kind: string; command?: string },
-  message: string
+  message: string,
+  model?: string
 ): { ok: boolean; error?: string } {
-  const plan = buildStartPlan(tool as never, message)
+  const plan = buildStartPlan(tool as never, message, model)
   if ('error' in plan) return { ok: false, error: plan.error }
   try {
     const child = spawn(plan.file, plan.args, {
@@ -328,8 +355,70 @@ function startExternalSessionSpawn(
     return { ok: false, error: (e as Error)?.message ?? '启动失败' }
   }
 }
+
+/** Spawn a headless CLI run that CONTINUES an existing session ("reply from the panel"). */
+function resumeExternalSessionSpawn(
+  tool: { kind: string },
+  cliSessionId: string,
+  cwdHint: string,
+  message: string,
+  sessionID: string,
+  model?: string
+): { ok: boolean; error?: string } {
+  const plan = buildResumePlan(tool as never, cliSessionId, cwdHint, model)
+  if ('error' in plan) return { ok: false, error: plan.error }
+  try {
+    const child = spawn(plan.file, plan.args, {
+      cwd: plan.cwd,
+      windowsHide: true,
+      stdio: ['pipe', 'ignore', 'pipe']
+    })
+    liveChildren.add(child)
+    broadcastChildren()
+    let errBuf = ''
+    child.stderr?.on('data', (d: Buffer) => {
+      errBuf = (errBuf + d.toString('utf8')).slice(-2000)
+    })
+    child.on('exit', (code) => {
+      liveChildren.delete(child)
+      broadcastChildren()
+      const detail = errBuf.trim()
+      if (code !== 0 && detail) {
+        win?.webContents.send(
+          'mirror:event',
+          externalEvent({
+            kind: 'session',
+            status: 'error',
+            sessionID,
+            error: detail.split('\n').slice(-3).join('\n'),
+            ts: Date.now()
+          })
+        )
+      }
+    })
+    child.stdin?.on('error', () => undefined)
+    child.on('error', () => undefined)
+    try {
+      child.stdin?.write(message)
+    } catch {
+      /* child may already be gone */
+    }
+    child.stdin?.end()
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: (e as Error)?.message ?? '启动失败' }
+  }
+}
 let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
+
+/** Absolute path of the MCP bridge entry point external CLIs (node) will execute. */
+function bridgeCjsPath(): string {
+  const root = app.isPackaged
+    ? app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked')
+    : app.getAppPath()
+  return path.join(root, 'dist-bridge', 'index.cjs')
+}
 const mirror = new MirrorStore()
 const sessionBus = new SessionBus()
 
@@ -899,11 +988,9 @@ function setupIpc(): void {
   })
 
   ipcMain.handle('setup:codex-status', () => codexConfigStatus())
-  ipcMain.handle('setup:codex-install', () =>
-    installCodexMcp(path.join(app.getAppPath(), 'dist-bridge', 'index.cjs'))
-  )
+  ipcMain.handle('setup:codex-install', () => installCodexMcp(bridgeCjsPath()))
   ipcMain.handle('setup:claude-command', () => {
-    const bridgePath = path.join(app.getAppPath(), 'dist-bridge', 'index.cjs')
+    const bridgePath = bridgeCjsPath()
     return {
       command: claudeMcpCommand(bridgePath),
       hint: claudeDesktopConfigHint(bridgePath),
@@ -938,6 +1025,57 @@ function setupIpc(): void {
     return openExternalSession(tool, String(sessionId), String(filePath ?? ''))
   })
 
+  ipcMain.handle('agents:session-send', (_e, toolId: string, message: string) => {
+    const tool = findAgentTool(String(toolId))
+    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+    const cur = currentExternalSession
+    if (!cur || cur.toolId !== tool.id) {
+      return { ok: false, error: '请先从「历史会话」中打开一个会话，再发送续聊消息' }
+    }
+    const msg = String(message ?? '').trim()
+    if (!msg) return { ok: false, error: '消息不能为空' }
+    if (liveChildren.size > 0) {
+      return { ok: false, error: '有任务正在运行：请等待完成，或点「停止」后再发送' }
+    }
+    const meta = readSessionMeta(tool.kind, cur.file)
+    const cliSessionId = meta.cliSessionId ?? path.basename(cur.file, '.jsonl')
+    // optimistic echo so the panel shows the outgoing message immediately;
+    // the tail skips the CLI's own transcript echo of it
+    pendingUserEcho = { text: msg, since: Date.now() }
+    win?.webContents.send(
+      'mirror:event',
+      transcriptToMirrorEvent({ role: 'user', text: msg, ts: Date.now() }, cur.sessionId)
+    )
+    return resumeExternalSessionSpawn(
+      tool,
+      cliSessionId,
+      meta.cwd ?? '',
+      msg,
+      cur.sessionId,
+      getToolModel(tool.id)
+    )
+  })
+
+  ipcMain.handle('agents:models', (_e, toolId: string) => {
+    const tool = findAgentTool(String(toolId))
+    if (!tool) return { current: '', candidates: [] }
+    return { current: getToolModel(tool.id), candidates: listCandidateModels(tool) }
+  })
+
+  ipcMain.handle('agents:model-set', (_e, toolId: string, model: string) => {
+    const tool = findAgentTool(String(toolId))
+    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+    return setToolModel(tool.id, String(model ?? ''))
+  })
+
+  ipcMain.handle('agents:model-sync-global', (_e, toolId: string) => {
+    const tool = findAgentTool(String(toolId))
+    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+    const model = getToolModel(tool.id)
+    if (!model) return { ok: false, error: '请先在面板中选择一个模型，再同步到全局' }
+    return syncModelToGlobal(tool, model)
+  })
+
   let startSessionBusy = false
   ipcMain.handle('agents:start-session', async (_e, toolId: string, message: string) => {
     if (startSessionBusy || liveChildren.size > 0) {
@@ -964,7 +1102,7 @@ function setupIpc(): void {
     startSessionBusy = true
     try {
       const before = Date.now()
-      const spawnResult = startExternalSessionSpawn(tool, msg)
+      const spawnResult = startExternalSessionSpawn(tool, msg, getToolModel(tool.id))
       if (!spawnResult.ok) return spawnResult
       const listFn =
         tool.kind === 'codex'
@@ -1006,6 +1144,8 @@ function setupIpc(): void {
   ipcMain.handle('agents:session-close', () => {
     stopAgentWatch()
     mirrorSource = 'opencode'
+    currentExternalSession = null
+    pendingUserEcho = null
     return { ok: true }
   })
 

@@ -226,6 +226,42 @@ export function readClaudeSession(file: string): TranscriptMessage[] {
   return readJsonlMessages(file, claudeLineMessages)
 }
 
+export interface SessionMeta {
+  /** The CLI's own session/thread id (used by resume commands). */
+  cliSessionId?: string
+  /** The working directory the session ran in. */
+  cwd?: string
+}
+
+/** Read identity/working-dir hints from a transcript head (first matching line). */
+export function readSessionMeta(kind: string, file: string): SessionMeta {
+  const lines = readHead(file, 65536).split('\n')
+  for (const line of lines) {
+    const t = line.trim()
+    if (!t) continue
+    let obj: Record<string, unknown>
+    try {
+      obj = JSON.parse(t) as Record<string, unknown>
+    } catch {
+      continue
+    }
+    if (kind === 'codex') {
+      if (obj.type !== 'session_meta') continue
+      const p = (obj.payload ?? {}) as Record<string, unknown>
+      return {
+        cliSessionId: typeof p.id === 'string' ? p.id : undefined,
+        cwd: typeof p.cwd === 'string' ? p.cwd : undefined
+      }
+    }
+    if (kind === 'claude') {
+      const id = typeof obj.sessionId === 'string' ? obj.sessionId : undefined
+      const cwd = typeof obj.cwd === 'string' ? obj.cwd : undefined
+      if (id || cwd) return { cliSessionId: id, cwd }
+    }
+  }
+  return {}
+}
+
 // ---------------------------------------------------------------- Gemini family (single-JSON)
 
 interface GeminiFile {

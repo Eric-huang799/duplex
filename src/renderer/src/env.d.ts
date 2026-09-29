@@ -109,6 +109,18 @@ interface CobrowseApi {
     sessionId: string,
     file: string
   ): Promise<{ ok: boolean; count?: number; title?: string; error?: string }>
+  agentsSessionSend(toolId: string, message: string): Promise<{ ok: boolean; error?: string }>
+  agentsModels(toolId: string): Promise<{
+    current: string
+    candidates: Array<{ id: string; label: string }>
+  }>
+  agentsModelSet(toolId: string, model: string): Promise<{ ok: boolean; error?: string }>
+  agentsModelSyncGlobal(toolId: string): Promise<{
+    ok: boolean
+    path?: string
+    backupPath?: string
+    error?: string
+  }>
   agentsSessionClose(): Promise<{ ok: boolean }>
   agentsSetMirrorSource(source: 'opencode' | 'external'): Promise<{ ok: boolean }>
   agentsStop(): Promise<{ ok: boolean; killed: number }>

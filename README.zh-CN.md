@@ -35,7 +35,7 @@
 - **Skills 系统** —— 兼容 Claude Code 的 skill 格式（`SKILL.md`）：索引你已有的 `~/.claude/skills`，也可向 `~/.cobrowse/skills` 导入或自制专用 skill；内置模型会按需读取并遵照执行（脚本运行前必弹确认）。
 - **多协议模型接口** —— 除 OpenAI 兼容外，新增 Anthropic Messages、OpenAI Responses、Google Gemini 原生协议。
 - **登录凭据导入** —— 可直接复用本机 Codex（ChatGPT 订阅）与 opencode 的登录凭据，无需手填 API Key。
-- **外部 agent 工具接入** —— 面板可切换 opencode / Codex / Claude Code / Gemini CLI / Qwen Code / 自定义 CLI：对话历史与实时消息镜像进面板，并可从面板直接发起新会话；支持手动添加自定义工具（会话目录 + 启动命令）。
+- **外部 agent 工具接入** —— 面板可切换 opencode / Codex / Claude Code / Gemini CLI / Qwen Code / 自定义 CLI：对话历史与实时消息镜像进面板，**Codex / Claude Code 的会话可直接在面板里回复续聊**（消息以无头模式续接同一会话），也可从面板直接发起新会话。Codex / Claude Code 还带**模型选择器**（默认跟随 CLI 配置；一键可写回全局配置文件，自动留时间戳备份）；支持手动添加自定义工具（会话目录 + 启动命令）。
 - **安全与健壮性** —— 全局急停快捷键（默认 `Esc` / `F2`，工具栏 ⌨ 可自定义）、删除操作三次确认、任务看门狗与网页渲染自动恢复、子进程树终止等。
 
 ## 和同类项目比，Duplex 的差异在哪
@@ -203,9 +203,10 @@ npm start      # 预览生产构建
 
 ## 路线图
 
-- **Codex / Claude Code 兼容（下一阶段）** —— 为更多 AI 客户端提供一等集成：
+- **Codex / Claude Code 兼容** —— 为更多 AI 客户端提供一等集成：
   - MCP 桥本身是客户端无关的（标准 stdio MCP），工具层在设计上并不绑定 opencode。
-  - 计划：为 **Codex**、**Claude Code** 等客户端提供官方适配与会话镜像，让它们的对话也能像 opencode 一样显示在侧边面板中。
+  - 会话镜像已落地：对话实时镜像进面板，在面板里回复会以无头模式续接同一会话（Codex `exec resume` / Claude Code `--resume`），CLI 把新消息写回记录文件后由尾随机制流回面板。
+  - 下一步：更丰富的事件映射（工具调用 / 思考卡片）与更多客户端（Gemini CLI / Qwen Code）。
 
 ## 开发
 

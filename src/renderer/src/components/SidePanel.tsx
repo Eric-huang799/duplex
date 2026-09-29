@@ -106,6 +106,7 @@ export function SidePanel({
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
   const [externalPending, setExternalPending] = useState(false)
+  const [externalOpened, setExternalOpened] = useState<{ id: string; title: string } | null>(null)
   const [creatingSession, setCreatingSession] = useState(false)
   const [agentChildren, setAgentChildren] = useState(0)
   const [addOpen, setAddOpen] = useState(false)
@@ -244,11 +245,25 @@ export function SidePanel({
       extKind === 'gemini' ||
       extKind === 'qwen' ||
       (extKind === 'custom' && !!extToolInfo?.command))
+  /** Codex / Claude Code sessions can be continued from the panel. */
+  const extCanReply = extKind === 'codex' || extKind === 'claude'
+  const extReplyReady = extCanReply && !!externalOpened
 
   const send = (): void => {
     const t = draft.trim()
     if (!t) return
     if (mode === 'external') {
+      if (extReplyReady) {
+        if (externalPending) return
+        setDraft('')
+        setExternalErr('')
+        setExternalPending(true)
+        void window.cobrowse.agentsSessionSend(externalTool, t).then((r) => {
+          setExternalPending(false)
+          if (!r.ok) setExternalErr(r.error ?? '发送失败')
+        })
+        return
+      }
       if (!externalCanStart || externalPending) return
       setDraft('')
       setExternalErr('')
@@ -423,6 +438,7 @@ export function SidePanel({
           toolId={externalTool}
           tool={tools.find((t) => t.id === externalTool) ?? null}
           onCollapse={onCollapse}
+          onOpenedChange={setExternalOpened}
           onToolRemoved={() => {
             void refreshTools()
             onModeChange('opencode')
@@ -629,16 +645,20 @@ export function SidePanel({
         <textarea
           rows={2}
           value={draft}
-          disabled={mode === 'external' && (!externalCanStart || externalPending)}
+          disabled={
+            mode === 'external' && (externalPending || (!extReplyReady && !externalCanStart))
+          }
           placeholder={
             isAgent
               ? agentConfigured
                 ? '给内置模型下指令（Enter 发送）'
                 : '请先配置模型'
               : mode === 'external'
-                ? externalCanStart
-                  ? '输入第一条消息，以无头模式启动新会话（Enter 发送）'
-                  : '只读镜像：请在对应的 CLI 中继续对话'
+                ? extReplyReady
+                  ? '回复当前会话（Enter 发送，将续接该会话）'
+                  : externalCanStart
+                    ? '输入第一条消息，以无头模式启动新会话（Enter 发送）'
+                    : '只读镜像：请在对应的 CLI 中继续对话'
                 : '给 AI 发消息（Enter 发送，Shift+Enter 换行）'
           }
           onChange={(e) => setDraft(e.target.value)}
@@ -671,10 +691,10 @@ export function SidePanel({
             disabled={
               !draft.trim() ||
               (isAgent && !agentConfigured) ||
-              (mode === 'external' && (!externalCanStart || externalPending))
+              (mode === 'external' && (externalPending || (!extReplyReady && !externalCanStart)))
             }
           >
-            {externalPending ? '启动中…' : '发送'}
+            {externalPending ? (extReplyReady ? '发送中…' : '启动中…') : '发送'}
           </button>
         )}
       </div>

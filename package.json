@@ -46,7 +46,11 @@
     },
     "files": [
       "out/**/*",
-      "package.json"
+      "package.json",
+      "dist-bridge/**/*"
+    ],
+    "asarUnpack": [
+      "dist-bridge/**"
     ],
     "win": {
       "icon": "build/icon.png",
