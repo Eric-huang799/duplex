@@ -7,7 +7,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { exec, spawnSync } from 'node:child_process'
+import { exec, spawnSync, type ExecOptions } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
 
 export type FsConfirmFn = (payload: {
@@ -89,16 +89,19 @@ export function createFsToolHandlers(
       return await new Promise<ToolResult>((resolve) => {
         let killTimer: ReturnType<typeof setTimeout> | null = null
         let timedOut = false
+        // `detached` is passed through to spawn by exec at runtime, but is
+        // missing from ExecOptions in @types/node — widen the option type.
+        const execOptions: ExecOptions & { detached?: boolean } = {
+          cwd,
+          maxBuffer: 4 * 1024 * 1024,
+          windowsHide: true,
+          // POSIX: give the child its own process group so the timeout
+          // kill can take down the whole tree (not just the shell)
+          detached: process.platform !== 'win32'
+        }
         const child = exec(
           command,
-          {
-            cwd,
-            maxBuffer: 4 * 1024 * 1024,
-            windowsHide: true,
-            // POSIX: give the child its own process group so the timeout
-            // kill can take down the whole tree (not just the shell)
-            detached: process.platform !== 'win32'
-          },
+          execOptions,
           (err, stdout, stderr) => {
             if (killTimer) clearTimeout(killTimer)
             const out = `${String(stdout ?? '')}${stderr ? `\n[stderr]\n${String(stderr)}` : ''}`
