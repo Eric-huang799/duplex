@@ -167,9 +167,11 @@ export function listSkills(): SkillInfo[] {
     const seen = new Set<string>()
     const result: SkillInfo[] = []
     for (const skill of all) {
-      if (seen.has(skill.id)) continue
-      seen.add(skill.id)
-      result.push({ ...skill, enabled: !disabled.has(skill.id) })
+      // disambiguate same-name skills instead of silently dropping them
+      let id = skill.id
+      for (let n = 2; seen.has(id); n++) id = `${skill.id}~${n}`
+      seen.add(id)
+      result.push({ ...skill, id, enabled: !disabled.has(id) })
     }
     result.sort((a, b) => a.id.localeCompare(b.id))
     return result

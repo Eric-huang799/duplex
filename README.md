@@ -191,6 +191,7 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 - `dist-bridge/index.cjs` is a stdio MCP server that proxies tool calls to that API and auto-launches the app when it is not running.
 - The opencode plugin pushes session events (text, reasoning, tool calls) into the panel, and long-polls for messages queued in the browser (~10 ms injection latency).
 - Panel messages and page annotations are injected into the active opencode session with `session.promptAsync`.
+- Codex and Claude Code are mirrored from their local session transcripts (history + live tail); replies sent from the panel headlessly resume the same session (`codex exec resume` / `claude --resume`) and the new turns stream back through the same tail.
 - External scripts can also push messages into the session: `POST /api/chat { "text": "..." }`.
 
 ## Known limitations
@@ -203,7 +204,7 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 
 ## Roadmap
 
-- **Codex / Claude Code compatibility** — first-class AI client integrations:
+- **Richer client integrations** — Codex / Claude Code support has landed; more on the way:
   - The bridge is client-agnostic (standard stdio MCP), so the *tool layer* is not opencode-specific by design.
   - Session mirroring is in: transcripts replay into the panel live, and replies sent from the panel resume the same session headlessly (Codex `exec resume` / Claude Code `--resume`) — the CLI appends to its transcript and the tail streams it back into the panel.
   - Next: richer event mapping (tool calls / reasoning cards) and more clients (Gemini CLI / Qwen Code).

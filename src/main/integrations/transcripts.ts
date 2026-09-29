@@ -376,7 +376,8 @@ export function customLineMessages(o: unknown): TranscriptMessage[] {
   else if (obj?.type === 'assistant' || obj?.type === 'ai' || obj?.type === 'model') role = 'assistant'
   if (!role) return []
   let text = ''
-  const c = obj.text ?? obj.content ?? obj.message?.content
+  // '' must fall through to the next source (?? would short-circuit on it)
+  const c = obj.text || obj.content || obj.message?.content
   if (typeof c === 'string') text = c
   else if (Array.isArray(c)) {
     text = c

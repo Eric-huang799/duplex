@@ -136,6 +136,7 @@ export function ExternalToolPanel({
   const syncModel = async (): Promise<void> => {
     if (syncStage === 0) {
       setSyncStage(1)
+      setModelMsg('将写入全局 CLI 配置——影响该 CLI 的全部会话（不只 Duplex），确认后写入并自动备份')
       setTimeout(() => setSyncStage(0), 4000)
       return
     }
@@ -253,10 +254,10 @@ export function ExternalToolPanel({
               </select>
               <button
                 className={`model-sync ${syncStage > 0 ? 'danger' : ''}`}
-                title="把当前模型写入全局 CLI 配置（先备份）"
+                title="写入全局 CLI 配置：影响该 CLI 的全部会话（自动备份）"
                 onClick={() => void syncModel()}
               >
-                {syncStage === 0 ? '⇪ 全局' : '确认?'}
+                {syncStage === 0 ? '⇪ 全局' : '确认写入'}
               </button>
             </>
           )}

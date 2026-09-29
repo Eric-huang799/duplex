@@ -104,6 +104,17 @@ describe('listSkills', () => {
     const betas = listSkills().filter((s) => s.name === 'beta')
     expect(betas.map((s) => s.id).sort()).toEqual(['claude/beta', 'duplex/beta'])
   })
+
+  it('disambiguates same-name skills inside one source instead of dropping them', () => {
+    writeFixture(
+      path.join(claudeRoot, 'alpha-copy', 'SKILL.md'),
+      '---\nname: alpha\ndescription: "Duplicate name"\n---\n\n# Alpha 2\n'
+    )
+    const alphas = listSkills().filter((s) => s.name === 'alpha')
+    expect(alphas).toHaveLength(2)
+    expect(new Set(alphas.map((s) => s.id)).size).toBe(2)
+    expect(alphas.some((s) => s.id.endsWith('~2'))).toBe(true)
+  })
 })
 
 describe('skill enabled state', () => {

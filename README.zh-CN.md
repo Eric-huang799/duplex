@@ -191,6 +191,7 @@ npm start      # 预览生产构建
 - `dist-bridge/index.cjs` 是一个 stdio MCP 服务，把工具调用代理到该 API，并在应用未运行时自动拉起。
 - opencode 插件把会话事件（文本、思考、工具调用）推入面板，并以长轮询收取浏览器中排队的消息（注入延迟约 10 ms）。
 - 面板消息与页面标注通过 `session.promptAsync` 注入当前活跃的 opencode 会话。
+- Codex 与 Claude Code 的对话从本地会话记录实时尾随镜像；面板发送的消息以无头模式续接同一会话（`codex exec resume` / `claude --resume`）注入，新回合经同一尾随通道流回面板。
 - 外部脚本也可注入消息：`POST /api/chat { "text": "..." }`。
 
 ## 已知限制
@@ -203,7 +204,7 @@ npm start      # 预览生产构建
 
 ## 路线图
 
-- **Codex / Claude Code 兼容** —— 为更多 AI 客户端提供一等集成：
+- **更丰富的客户端集成** —— Codex / Claude Code 支持已落地，更多在路上：
   - MCP 桥本身是客户端无关的（标准 stdio MCP），工具层在设计上并不绑定 opencode。
   - 会话镜像已落地：对话实时镜像进面板，在面板里回复会以无头模式续接同一会话（Codex `exec resume` / Claude Code `--resume`），CLI 把新消息写回记录文件后由尾随机制流回面板。
   - 下一步：更丰富的事件映射（工具调用 / 思考卡片）与更多客户端（Gemini CLI / Qwen Code）。

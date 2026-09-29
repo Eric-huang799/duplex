@@ -615,7 +615,8 @@ export function SidePanel({
             </label>
             <label className="add-tool-field">
               <span>
-                启动命令（可选——填了才能从面板发消息；默认从 stdin 读，支持 {'{prompt}'} 占位）
+                启动命令（可选——填了才能从面板发消息；默认从 stdin 读，支持 {'{prompt}'} 占位。指令可能含
+                cmd 特殊字符时请用 stdin 模式：命令中不要出现 {'{prompt}'}）
               </span>
               <input
                 value={addCmd}

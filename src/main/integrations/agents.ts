@@ -368,7 +368,7 @@ export function listAgentTools(): AgentTool[] {
       name: 'opencode',
       kind: 'opencode',
       builtin: true,
-      available: true,
+      available: commandExists('opencode') || fs.existsSync(path.join(home, '.config', 'opencode')),
       note: '双向镜像（对话 + 注入）'
     },
     {

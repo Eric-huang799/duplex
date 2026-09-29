@@ -140,6 +140,13 @@ describe('custom generic parser', () => {
     expect(customLineMessages({ type: 'system', content: 'x' })).toEqual([])
     expect(customLineMessages({ role: 'user', text: '' })).toEqual([])
   })
+
+  it('falls through an empty text field to content', () => {
+    expect(customLineMessages({ role: 'user', text: '', content: 'real-text' })[0]).toMatchObject({
+      role: 'user',
+      text: 'real-text'
+    })
+  })
 })
 
 describe('list/read against temp fixtures', () => {
