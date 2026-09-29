@@ -1,5 +1,7 @@
 # Duplex
 
+[![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
+
 <p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex mascot"></p>
 
 **One browser shared by a human and an AI** — the human sees the rendered page, the AI reads the DOM and page source. Same tabs, same live session, at the same time.
@@ -120,10 +122,10 @@ Draw a box (or circle / arrow / point) around anything and ask a question about 
 
 ## Quick start
 
-### Installer (Windows)
+### Installer (Windows / macOS / Linux)
 
-1. Download `Duplex Setup 0.2.0.exe` from [Releases](../../releases).
-2. Run the installer and launch Duplex.
+1. Download the latest installer from [Releases](../../releases): `Duplex Setup x.y.z.exe` (Windows), `.dmg` (macOS, Apple Silicon / Intel) or `.AppImage` (Linux).
+2. Run it and launch Duplex.
 
 ### Build from source
 

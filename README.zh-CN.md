@@ -1,5 +1,7 @@
 # Duplex
 
+[![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
+
 <p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex 吉祥物"></p>
 
 **一个人与 AI 共用的浏览器** —— 人看渲染后的页面，AI 读 DOM 与源码；同一个标签、同一个实时会话，同时进行。
@@ -120,9 +122,9 @@ AI 的每一步操作都画在页面上：光标圆环、目标元素高亮、�
 
 ## 快速开始
 
-### 安装包（Windows）
+### 安装包（Windows / macOS / Linux）
 
-1. 从 [Releases](../../releases) 下载 `Duplex Setup 0.2.0.exe`。
+1. 从 [Releases](../../releases) 下载最新安装包：Windows 为 `Duplex Setup x.y.z.exe`，macOS 为 `.dmg`（Apple Silicon / Intel），Linux 为 `.AppImage`。
 2. 运行安装并启动 Duplex。
 
 ### 从源码构建
