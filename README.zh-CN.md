@@ -12,11 +12,11 @@
 
 ## 演示
 
-### 第一幕：让 Duplex 在 B 站搜索并播放论文解读视频
+**完整演示 —— 3 分钟，中英双语字幕 + 配乐：**
 
-[![点击播放演示视频](docs/screenshots/demo-video-cover.jpg)](docs/videos/act1-bilibili-demo.mp4)
+[![点击播放完整演示](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)
 
-*内置模型自主完成：切换模型 → 输入指令 → B 站搜索 → 挑选并播放视频。当前为无声先导版，配音版制作中。*
+*一条完整走查：第一幕 —— 内置模型自主搜索 B 站并播放论文解读视频；第二幕 —— Kimi 打开 Claude 询问「CUDA 是什么」并回来总结答案；功能亮点 —— 多模型协议、Skills 技能、外部 Agent、急停接管；以及获取方式。*
 
 ![用 Duplex 操控网页版 Excel](docs/screenshots/excel-web-demo.png)
 

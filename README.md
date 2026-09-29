@@ -12,11 +12,11 @@
 
 ## Demo
 
-### Act 1: Searching Bilibili and playing a paper-explainer video
+**Full demo — 3 min, bilingual subtitles, with music:**
 
-[![Click to play the demo](docs/screenshots/demo-video-cover.jpg)](docs/videos/act1-bilibili-demo.mp4)
+[![Click to play the full demo](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)
 
-*The built-in agent does it all on its own: switch model → type the instruction → search Bilibili → pick and play a video. This is a silent preview — a narrated version is in the works.*
+*One continuous walkthrough: Act 1 — the built-in agent searches Bilibili and plays a paper-explainer video; Act 2 — Kimi browses to Claude and asks what CUDA is, then summarizes the answer; feature highlights — multi-model APIs, skills, external agents, emergency stop; and where to get it.*
 
 ![Controlling Excel for the web with Duplex](docs/screenshots/excel-web-demo.png)
 
