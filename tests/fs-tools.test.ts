@@ -52,7 +52,8 @@ describe('fs-tools write_file', () => {
   it('refuses protected system targets without even asking', async () => {
     const { fn, calls } = makeConfirm(true)
     const handlers = createFsToolHandlers(fn)
-    const res = await handlers.write_file({ path: 'C:\\Windows\\evil.txt', content: 'x' })
+    const target = process.platform === 'win32' ? 'C:\\Windows\\evil.txt' : '/etc/evil.txt'
+    const res = await handlers.write_file({ path: target, content: 'x' })
     expect(res.isError).toBe(true)
     expect(calls.length).toBe(0)
   })

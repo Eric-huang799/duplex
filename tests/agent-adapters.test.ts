@@ -58,7 +58,7 @@ describe('buildStartPlan', () => {
       const p = buildStartPlan({ kind }, 'hi')
       if ('error' in p) throw new Error(p.error)
       expect(p.useStdin).toBe(true)
-      expect(p.args.join(' ')).toContain(kind)
+      expect([p.file, ...p.args].join(' ')).toContain(kind)
     }
   })
 
@@ -71,7 +71,7 @@ describe('buildStartPlan', () => {
     const p = buildStartPlan({ kind: 'custom', command: 'my-agent run --json' }, 'hi')
     if ('error' in p) throw new Error(p.error)
     expect(p.useStdin).toBe(true)
-    expect(p.args.join(' ')).toContain('my-agent')
+    expect([p.file, ...p.args].join(' ')).toContain('my-agent')
   })
 
   it('custom {prompt} mode inlines the message as an argument', () => {

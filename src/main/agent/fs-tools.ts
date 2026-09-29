@@ -27,15 +27,14 @@ const errorText = (s: string): ToolResult => ({
  *  approval is the first line of defense; this is the hard backstop.
  *  (AppData is intentionally NOT blocked: Temp lives under it.) */
 function isProtectedWriteTarget(abs: string): boolean {
-  const home = os.homedir().toLowerCase()
+  const win = process.platform === 'win32'
+  const home = os.homedir()
   const blocked = [
-    'c:\\windows',
-    'c:\\program files',
-    'c:\\program files (x86)',
-    `${home}\\.ssh`,
-    `${home}\\.aws`,
-    `${home}\\.gnupg`
-  ]
+    ...(win
+      ? ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)']
+      : ['/etc', '/private/etc', '/usr', '/bin', '/sbin']),
+    ...['.ssh', '.aws', '.gnupg'].map((d) => path.join(home, d))
+  ].map((p) => (win ? p.toLowerCase() : p))
   // resolve links so junctions/symlinks into protected areas are caught
   let real = abs
   try {
@@ -47,8 +46,9 @@ function isProtectedWriteTarget(abs: string): boolean {
       /* keep abs */
     }
   }
-  const low = real.toLowerCase().replace(/\//g, '\\')
-  return blocked.some((p) => low === p || low.startsWith(p + '\\'))
+  const norm = path.resolve(real)
+  const low = win ? norm.toLowerCase() : norm
+  return blocked.some((p) => low === p || low.startsWith(p + path.sep))
 }
 
 export function createFsToolHandlers(
