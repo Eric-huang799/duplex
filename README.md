@@ -38,6 +38,20 @@
 - **External agent tools** — switch the panel between opencode / Codex / Claude Code / Gemini CLI / Qwen Code / custom CLIs: transcripts mirror into the panel (history + live) and new sessions can be started right from the panel; custom tools can be added manually (session directory + start command).
 - **Safety & robustness** — global emergency-stop hotkeys (default `Esc` / `F2`, customizable from the ⌨ button), triple-confirm deletes, task watchdog with automatic render recovery, process-tree termination, and more.
 
+## How Duplex compares
+
+| | **Duplex** | browser-use | Browser MCP | Playwright MCP | AI browsers (Atlas / Comet) |
+|---|---|---|---|---|---|
+| Form | Desktop browser (Electron app) | Python automation framework | MCP server (browser extension) | MCP server (Microsoft) | Closed-source product |
+| Who uses the browser | **Human and AI share the same tab and the same live session** | AI only (separate automation instance) | AI drives your current Chrome | AI only (Playwright instance) | AI assistant alongside/operating |
+| What the AI sees | DOM outline snapshot + source + screenshots | Vision + DOM | Screenshots + a11y tree | Accessibility tree | Internal |
+| Human collaboration | **Real-time side-by-side; `Esc` takeover interrupts the AI anytime** | Logs afterwards | Human spectates | Human spectates | Limited intervention |
+| Connectable AI | **Built-in models + opencode / Codex / Claude Code / Gemini / Qwen / any MCP client** | Bring your own LLM | Any MCP client | Any MCP client | Official model only |
+| Conversation visibility | **Live side-panel mirror (including external CLIs' chats and tool calls)** | Logs/terminal | In the client | In the client | In-app |
+| Data | Fully local | Local/cloud | Local | Local | Cloud |
+
+> In one line: browser-use / Playwright MCP let the AI **run a flow for you**; Duplex lets the AI **use the browser together with you** — same tab, same session, takeover anytime.
+
 ## Highlights
 
 - **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes (light / dark / follow system) and a wallpaper start page with a clock and search.
@@ -104,7 +118,7 @@ Draw a box (or circle / arrow / point) around anything and ask a question about 
 
 ### Installer (Windows)
 
-1. Download `Duplex Setup 0.1.0.exe` from [Releases](../../releases).
+1. Download `Duplex Setup 0.2.0.exe` from [Releases](../../releases).
 2. Run the installer and launch Duplex.
 
 ### Build from source
