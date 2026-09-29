@@ -42,7 +42,6 @@
   "build": {
     "appId": "com.duplex.app",
     "productName": "Duplex",
-    "electronDist": "node_modules/electron/dist",
     "directories": {
       "output": "release"
     },
