@@ -12,6 +12,10 @@
 
 ## 演示
 
+![Duplex 演示 —— AI 搜索 B 站论文解读视频、打开并播放，侧栏同步镜像每一步](docs/screenshots/demo.gif)
+
+*AI 在操作：搜索 B 站、打开视频并开始播放，侧栏实时镜像每一步。*
+
 **完整演示 —— 3 分钟，中英双语字幕 + 配乐：**
 
 [![点击播放完整演示](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)

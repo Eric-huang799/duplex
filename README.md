@@ -12,6 +12,10 @@
 
 ## Demo
 
+![Duplex demo — the AI searches Bilibili for a paper explainer, opens the video and plays it, while the side panel mirrors every step](docs/screenshots/demo.gif)
+
+*The AI drives: it searches Bilibili, opens the video and starts playback — the side panel streams every step.*
+
 **Full demo — 3 min, bilingual subtitles, with music:**
 
 [![Click to play the full demo](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)
