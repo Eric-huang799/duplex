@@ -94,7 +94,10 @@ export function createFsToolHandlers(
           {
             cwd,
             maxBuffer: 4 * 1024 * 1024,
-            windowsHide: true
+            windowsHide: true,
+            // POSIX: give the child its own process group so the timeout
+            // kill can take down the whole tree (not just the shell)
+            detached: process.platform !== 'win32'
           },
           (err, stdout, stderr) => {
             if (killTimer) clearTimeout(killTimer)
