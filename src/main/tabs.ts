@@ -11,18 +11,24 @@ export interface Tab {
   id: number
   view: WebContentsView
   logs: ConsoleEntry[]
+  favicon?: string
 }
 
 export class TabManager {
   private tabs = new Map<number, Tab>()
   private nextId = 1
   activeId: number | null = null
+  private closedUrls: string[] = []
+  private chromeOverlays = new Set<string>()
   private bounds: ContentBounds = { x: 0, y: 88, width: 1200, height: 760 }
 
   constructor(
     private win: BrowserWindow,
     private overlayPreload: string | null,
-    private onChanged: () => void
+    private onChanged: () => void,
+    private onNavigate: (url: string, title: string, favicon?: string) => void,
+    private onShortcut: (action: string) => void,
+    private onMetadata: (url: string, title: string, favicon?: string) => void
   ) {
     // Chromium can leave a WebContentsView "hidden" (suspended rendering,
     // rAF stopped) after the window was minimized/occluded. Nudge the active
@@ -38,6 +44,7 @@ export class TabManager {
   private async reviveActiveView(): Promise<void> {
     try {
       if (!this.win.isVisible() || this.win.isMinimized()) return
+      if (this.chromeOverlays.size > 0) return
       const active = this.activeId != null ? this.tabs.get(this.activeId) : null
       if (!active || this.isBlank(active)) return
       const state = await active.view.webContents.executeJavaScript(
@@ -47,6 +54,7 @@ export class TabManager {
       if (state === 'hidden') {
         active.view.setVisible(false)
         setTimeout(() => {
+          if (this.chromeOverlays.size > 0) return
           active.view.setVisible(true)
           active.view.setBounds(this.bounds)
         }, 80)
@@ -85,6 +93,20 @@ export class TabManager {
 
   private wireEvents(tab: Tab): void {
     const wc = tab.view.webContents
+    wc.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return
+      const key = input.key.toLowerCase()
+      const actions: Record<string, string> = {
+        l: 'focusAddress', t: input.shift ? 'reopenClosed' : 'newTab',
+        w: 'closeTab', r: 'reload', d: 'bookmark', f: 'find'
+      }
+      const action = input.key === 'Tab' ? (input.shift ? 'previousTab' : 'nextTab') : actions[key]
+      if (!action) return
+      event.preventDefault()
+      if (action === 'closeTab') this.closeTab(tab.id)
+      else if (action === 'reload') wc.reload()
+      else this.onShortcut(action)
+    })
     const changed = (): void => {
       if (tab.id === this.activeId) this.activateView()
       this.emit()
@@ -92,6 +114,19 @@ export class TabManager {
     wc.on('did-start-loading', changed)
     wc.on('did-stop-loading', changed)
     wc.on('did-navigate', changed)
+    wc.on('did-navigate', (_event, url) => {
+      tab.favicon = undefined
+      this.onNavigate(url, wc.getTitle())
+    })
+    wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
+      if (isMainFrame) this.onNavigate(url, wc.getTitle(), tab.favicon)
+    })
+    wc.on('page-favicon-updated', (_event, icons) => {
+      tab.favicon = icons[0]
+      this.onMetadata(wc.getURL(), wc.getTitle(), tab.favicon)
+      changed()
+    })
+    wc.on('page-title-updated', (_event, title) => this.onMetadata(wc.getURL(), title, tab.favicon))
     wc.on('did-navigate-in-page', changed)
     wc.on('page-title-updated', changed)
     wc.on('did-fail-load', changed)
@@ -127,7 +162,7 @@ export class TabManager {
         if (t.view.webContents.isDestroyed()) continue
         const isActive = t.id === this.activeId
         // Blank tabs stay hidden so the renderer start page shows through.
-        t.view.setVisible(isActive && !this.isBlank(t))
+        t.view.setVisible(isActive && this.chromeOverlays.size === 0 && !this.isBlank(t))
       } catch {
         /* view already torn down */
       }
@@ -160,6 +195,11 @@ export class TabManager {
   closeTab(id: number): boolean {
     const tab = this.tabs.get(id)
     if (!tab) return false
+    const closedUrl = tab.view.webContents.getURL()
+    if (/^https?:\/\//i.test(closedUrl)) {
+      this.closedUrls.push(closedUrl)
+      if (this.closedUrls.length > 10) this.closedUrls.shift()
+    }
     this.tabs.delete(id)
     try {
       this.win.contentView.removeChildView(tab.view)
@@ -174,6 +214,31 @@ export class TabManager {
     this.activateView()
     this.emit()
     return true
+  }
+
+  setChromeOverlay(id: string, open: boolean): void {
+    if (!id || id.length > 64) return
+    if (open) this.chromeOverlays.add(id)
+    else this.chromeOverlays.delete(id)
+    this.activateView()
+  }
+
+  reopenClosed(): boolean {
+    const url = this.closedUrls.pop()
+    if (!url) return false
+    this.createTab(url)
+    return true
+  }
+
+  closeOthers(keepId: number): void {
+    for (const id of Array.from(this.tabs.keys())) if (id !== keepId) this.closeTab(id)
+    this.setActive(keepId)
+  }
+
+  closeToRight(id: number): void {
+    const ids = Array.from(this.tabs.keys())
+    const index = ids.indexOf(id)
+    for (const next of ids.slice(index + 1)) this.closeTab(next)
   }
 
   getTab(id?: number | null): Tab | null {
@@ -223,7 +288,8 @@ export class TabManager {
           loading: wc.isLoading(),
           active: t.id === this.activeId,
           canGoBack: wc.navigationHistory.canGoBack(),
-          canGoForward: wc.navigationHistory.canGoForward()
+          canGoForward: wc.navigationHistory.canGoForward(),
+          favicon: t.favicon
         })
       } catch {
         /* skip tabs that are going away */

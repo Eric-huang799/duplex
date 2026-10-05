@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MirrorEvent, TabInfo } from '../../shared/protocol'
 import { TabBar } from './components/TabBar'
 import { Toolbar } from './components/Toolbar'
 import { SidePanel, type PanelMode } from './components/SidePanel'
 import { StartPage } from './components/StartPage'
+import { BrowserPanel } from './components/BrowserPanel'
+import type { BrowserDataSnapshot, DownloadRecord } from '../../shared/protocol'
 
 export interface LocalMessage {
   id: string
@@ -29,10 +31,15 @@ function mergeMirror(prev: MirrorEvent[], ev: MirrorEvent): MirrorEvent[] {
 export default function App(): React.JSX.Element {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
+  const [browserData, setBrowserData] = useState<BrowserDataSnapshot>({ bookmarks: [], history: [], downloads: [] })
+  const [downloads, setDownloads] = useState<DownloadRecord[]>([])
+  const [library, setLibrary] = useState<'bookmarks' | 'history' | 'downloads' | null>(null)
+  const [findOpen, setFindOpen] = useState(false)
+  const [findText, setFindText] = useState('')
   const [mirror, setMirror] = useState<MirrorEvent[]>([])
   const [localMsgs, setLocalMsgs] = useState<LocalMessage[]>([])
   const [panelWidth, setPanelWidth] = useState(400)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('duplex-ai-open') !== 'true')
   const [panelMode, setPanelMode] = useState<PanelMode>(() => {
     const saved = localStorage.getItem('duplex-panel-mode')
     return saved === 'agent' || saved === 'external' ? saved : 'opencode'
@@ -50,12 +57,39 @@ export default function App(): React.JSX.Element {
   const [stopKeys, setStopKeys] = useState<string[]>(['Escape', 'F2'])
   const [stopToast, setStopToast] = useState('')
   const contentRef = useRef<HTMLDivElement>(null)
+  const setChromeOverlay = useCallback((id: string, open: boolean) => {
+    window.cobrowse.setChromeOverlay(id, open)
+  }, [])
+
+  useEffect(() => {
+    setChromeOverlay('library', library !== null)
+    return () => setChromeOverlay('library', false)
+  }, [library, setChromeOverlay])
+
+  useEffect(() => {
+    setChromeOverlay('find', findOpen)
+    return () => setChromeOverlay('find', false)
+  }, [findOpen, setChromeOverlay])
+
+  useEffect(() => {
+    setChromeOverlay('agent-confirm', confirmReq !== null)
+    return () => setChromeOverlay('agent-confirm', false)
+  }, [confirmReq, setChromeOverlay])
 
   useEffect(() => {
     void window.cobrowse.ready().then((s) => {
       setTabs(s.tabs)
       setActiveTabId(s.activeTabId)
       setMirror(s.mirror)
+    })
+    void window.cobrowse.browserData().then((data) => setBrowserData(data))
+    const offBrowserData = window.cobrowse.onBrowserData(setBrowserData)
+    void window.cobrowse.downloadsList().then(setDownloads)
+    const offDownloads = window.cobrowse.onDownloads(setDownloads)
+    const offShortcut = window.cobrowse.onBrowserShortcut((action) => {
+      if (action === 'focusAddress') window.dispatchEvent(new Event('duplex:focus-address'))
+      if (action === 'bookmark') void toggleBookmark()
+      if (action === 'find') setFindOpen(true)
     })
     // built-in agent stream (restored across panel reloads)
     void window.cobrowse.agentEvents().then((evs) => {
@@ -106,8 +140,45 @@ export default function App(): React.JSX.Element {
       offMirror()
       offAgent()
       offConfirm()
+      offDownloads()
+      offShortcut()
+      offBrowserData()
     }
   }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const key = e.key.toLowerCase()
+      const editing = (e.target as HTMLElement | null)?.matches?.('input,textarea,[contenteditable="true"]')
+      if (key === 'l') { e.preventDefault(); window.dispatchEvent(new Event('duplex:focus-address')) }
+      else if (key === 't' && e.shiftKey) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reopenClosed' }) }
+      else if (key === 't') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'newTab' }) }
+      else if (key === 'w' && tabs.length) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'closeTab', tabId: activeTabId ?? undefined }) }
+      else if (key === 'r') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reload' }) }
+      else if (key === 'd') { e.preventDefault(); void toggleBookmark() }
+      else if (key === 'f' && !editing) { e.preventDefault(); setFindOpen(true) }
+      else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cycleTab(-1) }
+      else if (e.key === 'Tab') { e.preventDefault(); cycleTab(1) }
+    }
+    const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape' && findOpen) { setFindOpen(false); void window.cobrowse.tabAction({ type: 'find', url: '' }) } }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onEscape)
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onEscape) }
+  }, [tabs, activeTabId, browserData, findOpen])
+
+  const cycleTab = (step: number): void => {
+    if (!tabs.length) return
+    const index = Math.max(0, tabs.findIndex((t) => t.id === activeTabId))
+    const target = tabs[(index + step + tabs.length) % tabs.length]
+    if (target) void window.cobrowse.tabAction({ type: 'switchTab', tabId: target.id })
+  }
+
+  const toggleBookmark = async (): Promise<void> => {
+    if (!activeTab || !/^https?:\/\//i.test(activeTab.url)) return
+    await window.cobrowse.bookmarkToggle({ url: activeTab.url, title: activeTab.title, favicon: activeTab.favicon })
+    setBrowserData(await window.cobrowse.browserData())
+  }
 
   useEffect(() => {
     void window.cobrowse.emergencyKeysGet().then((s) => {
@@ -121,6 +192,7 @@ export default function App(): React.JSX.Element {
       // let the capture input in the hotkey settings dialog record keys instead
       const t = e.target as HTMLElement | null
       if (t?.closest?.('.stopkey-capture')) return
+      if (t?.matches?.('input,textarea,[contenteditable="true"]')) return
       e.preventDefault()
       e.stopPropagation()
       // emergency stop: abort built-in agent, kill external children, take over
@@ -220,25 +292,46 @@ export default function App(): React.JSX.Element {
           onSwitch={(id) => void window.cobrowse.tabAction({ type: 'switchTab', tabId: id })}
           onClose={(id) => void window.cobrowse.tabAction({ type: 'closeTab', tabId: id })}
           onNew={() => void window.cobrowse.tabAction({ type: 'newTab' })}
+          onContext={(action, id) => void window.cobrowse.tabAction({ type: action, tabId: id })}
+          onChromeOverlayChange={setChromeOverlay}
         />
         <Toolbar
           active={activeTab}
           onAction={(a, url) => void window.cobrowse.tabAction({ type: a, url })}
           onStopKeysChanged={(keys) => setStopKeys(keys)}
+          bookmarked={browserData.bookmarks.some((b) => b.url === activeTab?.url)}
+          onBookmark={() => void toggleBookmark()}
+          onOpenLibrary={setLibrary}
+          onToggleAI={() => { const next = !collapsed; setCollapsed(next); localStorage.setItem('duplex-ai-open', String(!next)) }}
+          aiOpen={!collapsed}
+          onChromeOverlayChange={setChromeOverlay}
         />
         <div className="content" ref={contentRef}>
           {showStartPage && (
             <StartPage
               onNavigate={(v) => void window.cobrowse.tabAction({ type: 'navigate', url: v })}
+              bookmarks={browserData.bookmarks}
+              history={browserData.history}
             />
           )}
           {!activeTab && !showStartPage && <div className="content-empty">没有打开的标签页</div>}
         </div>
+        {library && <div className="library-overlay"><BrowserPanel
+          section={library} data={browserData} downloads={downloads} onClose={() => setLibrary(null)}
+          onNavigate={(url) => { setLibrary(null); void window.cobrowse.tabAction({ type: 'navigate', url }) }}
+          onRemoveHistory={(url, visitedAt) => { void window.cobrowse.historyRemove(url, visitedAt).then(() => window.cobrowse.browserData()).then(setBrowserData) }}
+          onClearHistory={() => { void window.cobrowse.historyClear().then(() => window.cobrowse.browserData()).then(setBrowserData) }}
+          onCancelDownload={(id) => { void window.cobrowse.downloadsCancel(id) }}
+          onClearDownloads={() => { void window.cobrowse.downloadsClear().then(() => window.cobrowse.downloadsList()).then(setDownloads) }}
+          onOpenDownload={(id) => { void window.cobrowse.downloadsOpen(id) }}
+          onRevealDownload={(id) => { void window.cobrowse.downloadsReveal(id) }}
+        /></div>}
+        {findOpen && <div className="findbar"><input autoFocus placeholder="在页面中查找" value={findText} onChange={(e) => { setFindText(e.target.value); void window.cobrowse.tabAction({ type: 'find', url: e.target.value }) }} onKeyDown={(e) => { if (e.key === 'Escape') setFindOpen(false); if (e.key === 'Enter') void window.cobrowse.tabAction({ type: 'find', url: findText }) }} /><button onClick={() => { setFindOpen(false); void window.cobrowse.tabAction({ type: 'find', url: '' }) }}>关闭</button></div>}
       </div>
 
       {collapsed ? (
-        <button className="panel-expand" title="展开 AI 面板" onClick={() => setCollapsed(false)}>
-          «
+        <button className="panel-expand" title="展开 AI 面板" onClick={() => { setCollapsed(false); localStorage.setItem('duplex-ai-open', 'true') }}>
+          AI
         </button>
       ) : (
         <>
@@ -248,7 +341,7 @@ export default function App(): React.JSX.Element {
             events={mirror}
             localMsgs={localMsgs}
             onSend={(t) => void send(t)}
-            onCollapse={() => setCollapsed(true)}
+          onCollapse={() => { setCollapsed(true); localStorage.setItem('duplex-ai-open', 'false') }}
             mode={panelMode}
             onModeChange={changeMode}
             agentEvents={agentEvents}

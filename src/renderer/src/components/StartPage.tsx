@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import type { BookmarkRecord, HistoryRecord } from '../../../shared/protocol'
 
 interface Props {
   onNavigate: (value: string) => void
+  bookmarks?: BookmarkRecord[]
+  history?: HistoryRecord[]
 }
 
-export function StartPage({ onNavigate }: Props): React.JSX.Element {
+export function StartPage({ onNavigate, bookmarks = [], history = [] }: Props): React.JSX.Element {
   const [value, setValue] = useState('')
   const [now, setNow] = useState(() => new Date())
   const [bgFailed, setBgFailed] = useState(false)
@@ -128,6 +131,10 @@ export function StartPage({ onNavigate }: Props): React.JSX.Element {
               </div>
             )}
           </div>
+        </div>
+        <div className="start-shortcuts">
+          {bookmarks.slice(0, 6).map((item) => <button key={item.url} onClick={() => onNavigate(item.url)} title={item.url}><span className="shortcut-icon">{item.favicon ? <img src={item.favicon} /> : '✦'}</span><span>{item.title || item.url}</span></button>)}
+          {!bookmarks.length && history.slice().reverse().slice(0, 4).map((item) => <button key={`${item.url}-${item.visitedAt}`} onClick={() => onNavigate(item.url)} title={item.url}><span className="shortcut-icon">{item.favicon ? <img src={item.favicon} /> : '↗'}</span><span>{item.title || item.url}</span></button>)}
         </div>
       </div>
     </div>

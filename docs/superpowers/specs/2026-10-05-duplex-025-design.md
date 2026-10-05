@@ -13,6 +13,7 @@ Develop Duplex 0.2.5 in an isolated worktree. Keep the existing 0.2.1 checkout, 
 - Move search-engine selection into the address field's menu. Keep annotation and emergency-stop settings reachable from a compact tools menu.
 - Use one coherent icon set, spacing scale, and interaction states for light, dark, and system themes. Favor clear, calm browser chrome over the current translucent tool-panel appearance.
 - Make the new-tab page a practical browser start page: search, bookmarks, and recent pages, while retaining Duplex's visual identity as a restrained background treatment.
+- Give the existing light/dark new-tab illustrations gentle independent drift, depth blur, and a slow light sweep using CSS; animate content entrance and hover states, and honor `prefers-reduced-motion`. Keep the source art unchanged and add no video/image dependency.
 
 ### Everyday browsing
 

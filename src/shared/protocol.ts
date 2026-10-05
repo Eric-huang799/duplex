@@ -17,6 +17,20 @@ export interface TabInfo {
   active: boolean
   canGoBack: boolean
   canGoForward: boolean
+  favicon?: string
+}
+
+export interface BookmarkRecord { url: string; title: string; favicon?: string; addedAt: number }
+export interface HistoryRecord { url: string; title: string; visitedAt: number; favicon?: string }
+export interface DownloadRecord {
+  id: string; filename: string; path: string; url: string
+  state: 'progressing' | 'completed' | 'interrupted' | 'cancelled'
+  receivedBytes: number; totalBytes: number; startedAt: number; endedAt?: number
+}
+export interface BrowserDataSnapshot {
+  bookmarks: BookmarkRecord[]
+  history: HistoryRecord[]
+  downloads: DownloadRecord[]
 }
 
 /** Events mirrored from the opencode session into the browser side panel. */

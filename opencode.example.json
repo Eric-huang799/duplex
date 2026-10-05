@@ -1,5 +1,9 @@
 {
   "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "duplex_*": "deny",
+    "*": "allow"
+  },
   "mcp": {
     "duplex": {
       "type": "local",

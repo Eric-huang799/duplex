@@ -23,7 +23,7 @@ import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.5'
 
 function log(...args: unknown[]): void {
   console.error('[duplex-bridge]', ...args)

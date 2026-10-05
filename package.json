@@ -1,6 +1,6 @@
 {
   "name": "duplex",
-  "version": "0.2.1",
+  "version": "0.2.5",
   "private": true,
   "description": "Duplex - one browser shared by a human and an AI: visual for the human, source-level for the AI",
   "main": "./out/main/index.js",

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ContentBounds } from '../shared/protocol'
+import type { BrowserDataSnapshot, ContentBounds, DownloadRecord } from '../shared/protocol'
 
 type TabAction = { type: string; url?: string; tabId?: number }
 
@@ -19,7 +19,36 @@ const api = {
   setContentBounds: (b: ContentBounds): void => {
     ipcRenderer.send('ui:bounds', b)
   },
+  setChromeOverlay: (id: string, open: boolean): void => {
+    ipcRenderer.send('browser:chrome-overlay', id, open)
+  },
   tabAction: (action: TabAction) => ipcRenderer.invoke('tabs:action', action) as Promise<unknown>,
+  browserData: () => ipcRenderer.invoke('browser:data') as Promise<BrowserDataSnapshot>,
+  onBrowserData: (cb: (data: BrowserDataSnapshot) => void): (() => void) => {
+    const listener = (_e: unknown, data: BrowserDataSnapshot): void => cb(data)
+    ipcRenderer.on('browser:data-update', listener)
+    return () => ipcRenderer.removeListener('browser:data-update', listener)
+  },
+  bookmarkToggle: (record: { url: string; title: string; favicon?: string }) =>
+    ipcRenderer.invoke('browser:bookmark-toggle', record) as Promise<{ bookmarked: boolean }>,
+  historyRemove: (url: string, visitedAt: number) =>
+    ipcRenderer.invoke('browser:history-remove', url, visitedAt) as Promise<{ ok: boolean }>,
+  historyClear: () => ipcRenderer.invoke('browser:history-clear') as Promise<{ ok: boolean }>,
+  downloadsList: () => ipcRenderer.invoke('downloads:list') as Promise<DownloadRecord[]>,
+  downloadsCancel: (id: string) => ipcRenderer.invoke('downloads:cancel', id) as Promise<{ ok: boolean }>,
+  downloadsClear: () => ipcRenderer.invoke('downloads:clear') as Promise<{ ok: boolean }>,
+  downloadsOpen: (id: string) => ipcRenderer.invoke('downloads:open', id) as Promise<{ ok: boolean }>,
+  downloadsReveal: (id: string) => ipcRenderer.invoke('downloads:reveal', id) as Promise<{ ok: boolean }>,
+  onDownloads: (cb: (rows: DownloadRecord[]) => void): (() => void) => {
+    const listener = (_e: unknown, rows: DownloadRecord[]): void => cb(rows)
+    ipcRenderer.on('downloads:update', listener)
+    return () => ipcRenderer.removeListener('downloads:update', listener)
+  },
+  onBrowserShortcut: (cb: (action: string) => void): (() => void) => {
+    const listener = (_e: unknown, action: string): void => cb(action)
+    ipcRenderer.on('browser:shortcut', listener)
+    return () => ipcRenderer.removeListener('browser:shortcut', listener)
+  },
   sendChat: (text: string) => ipcRenderer.invoke('chat:send', text) as Promise<unknown>,
   getTheme: () => ipcRenderer.invoke('theme:get') as Promise<{ theme: 'system' | 'light' | 'dark' }>,
   setTheme: (theme: 'system' | 'light' | 'dark') =>

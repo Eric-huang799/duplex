@@ -1,10 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { TabManager } from './tabs'
+import { BrowserDataStore } from './browser-data'
+import { DownloadManager } from './downloads'
 import { MirrorStore } from './mirror'
 import { createToolExecutor, type ToolExecutor } from './tool-handlers'
 import { startHttpServer, type RunningHttpServer } from './http-server'
@@ -77,7 +79,7 @@ import { SEARCH_ENGINES, searchUrl } from '../shared/search'
 import type { ContentBounds } from '../shared/protocol'
 import { isLlmProtocol } from '../shared/llm'
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.5'
 const TOKEN = crypto.randomBytes(24).toString('hex')
 const LOG_FILE = path.join(cobrowseDir(), 'app.log')
 
@@ -99,6 +101,14 @@ let win: BrowserWindow | null = null
 let tabs: TabManager | null = null
 let httpServer: RunningHttpServer | null = null
 let annotationSubmitHandler: AnnotationSubmitHandler | null = null
+let browserData: BrowserDataStore
+let downloads: DownloadManager
+
+function emitBrowserData(): void {
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send('browser:data-update', browserData.snapshot())
+  }
+}
 
 // script-execution confirmation round trip (run_skill_script → renderer dialog);
 // module scope so both the agent wiring and the IPC handlers can reach it
@@ -422,6 +432,12 @@ function bridgeCjsPath(): string {
 const mirror = new MirrorStore()
 const sessionBus = new SessionBus()
 
+if (process.env['DUPLEX_DATA_DIR']) {
+  const previewData = path.resolve(process.env['DUPLEX_DATA_DIR'])
+  fs.mkdirSync(previewData, { recursive: true })
+  app.setPath('userData', path.join(previewData, 'electron'))
+}
+
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
@@ -437,6 +453,10 @@ if (!gotLock) {
 
 async function start(): Promise<void> {
   app.setAppUserModelId('Duplex')
+  browserData = new BrowserDataStore(cobrowseDir())
+  downloads = new DownloadManager(session.fromPartition('persist:cobrowse'), browserData, (rows) => {
+    if (win && !win.isDestroyed()) win.webContents.send('downloads:update', rows)
+  })
   const settings = loadSettings()
   nativeTheme.themeSource = settings.theme
   logLine(`[duplex] theme source: ${settings.theme}`)
@@ -646,7 +666,23 @@ function createWindow(): void {
       } catch {
         /* window is going away */
       }
-    }
+    },
+    (url, title, favicon) => {
+      if (/^https?:\/\//i.test(url)) browserData.addHistory({ url, title, favicon, visitedAt: Date.now() })
+      emitBrowserData()
+    },
+    (action) => {
+      if (action === 'newTab' || action === 'reopenClosed' || action === 'nextTab' || action === 'previousTab') {
+        if (action === 'nextTab' || action === 'previousTab') {
+          const all = tabs?.list() ?? []
+          const index = all.findIndex((t) => t.id === tabs?.activeId)
+          const next = all[(index + (action === 'nextTab' ? 1 : -1) + all.length) % all.length]
+          if (next) tabs?.setActive(next.id)
+        } else if (action === 'newTab') tabs?.createTab()
+        else tabs?.reopenClosed()
+      } else win?.webContents.send('browser:shortcut', action)
+    },
+    (url, title, favicon) => { browserData.updateLatestHistory(url, title, favicon); emitBrowserData() }
   )
   tabs.createTab()
 
@@ -669,8 +705,30 @@ function setupIpc(): void {
     mirror: mirror.snapshot()
   }))
 
+  ipcMain.handle('browser:data', () => browserData.snapshot())
+  ipcMain.handle('browser:bookmark-toggle', (_e, record: { url: string; title: string; favicon?: string }) => {
+    const bookmarked = browserData.toggleBookmark(record)
+    emitBrowserData()
+    return { bookmarked }
+  })
+  ipcMain.handle('browser:history-remove', (_e, url: string, visitedAt: number) => {
+    browserData.removeHistory(url, visitedAt)
+    emitBrowserData()
+    return { ok: true }
+  })
+  ipcMain.handle('browser:history-clear', () => { browserData.clearHistory(); emitBrowserData(); return { ok: true } })
+  ipcMain.handle('downloads:list', () => downloads.list())
+  ipcMain.handle('downloads:cancel', (_e, id: string) => ({ ok: downloads.cancel(id) }))
+  ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })
+  ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id).then(() => ({ ok: true })))
+  ipcMain.handle('downloads:reveal', (_e, id: string) => { downloads.reveal(id); return { ok: true } })
+
   ipcMain.on('ui:bounds', (_e, bounds: ContentBounds) => {
     tabs?.updateBounds(bounds)
+  })
+
+  ipcMain.on('browser:chrome-overlay', (_e, id: string, open: boolean) => {
+    tabs?.setChromeOverlay(id, open === true)
   })
 
   ipcMain.handle(
@@ -722,6 +780,26 @@ function setupIpc(): void {
           case 'switchTab':
             if (action.tabId != null) tabs.setActive(action.tabId)
             break
+          case 'reopenClosed':
+            tabs.reopenClosed()
+            break
+          case 'duplicateTab': {
+            const tab = tabs.getTab(action.tabId)
+            if (tab) tabs.createTab(tab.view.webContents.getURL())
+            break
+          }
+          case 'closeOthers':
+            if (action.tabId != null) tabs.closeOthers(action.tabId)
+            break
+          case 'closeToRight':
+            if (action.tabId != null) tabs.closeToRight(action.tabId)
+            break
+          case 'find': {
+            const tab = tabs.requireTab(null)
+            if (action.url) tab.view.webContents.findInPage(action.url)
+            else tab.view.webContents.stopFindInPage('clearSelection')
+            break
+          }
           case 'annotationMode': {
             const tab = tabs.requireTab(null)
             tab.view.webContents.send('overlay:cmd', { kind: 'annotationMode' })

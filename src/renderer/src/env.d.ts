@@ -1,12 +1,25 @@
-import type { ContentBounds, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
+import type { BrowserDataSnapshot, ContentBounds, DownloadRecord, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
 import type { LlmProtocol } from '../../shared/llm'
 
 interface CobrowseApi {
   ready(): Promise<{ tabs: TabInfo[]; activeTabId: number | null; mirror: MirrorEvent[] }>
   onTabs(cb: (tabs: TabInfo[], activeTabId: number | null) => void): () => void
+  onBrowserShortcut(cb: (action: string) => void): () => void
   onMirror(cb: (ev: MirrorEvent) => void): () => void
   setContentBounds(b: ContentBounds): void
+  setChromeOverlay(id: string, open: boolean): void
   tabAction(a: { type: string; url?: string; tabId?: number }): Promise<unknown>
+  browserData(): Promise<BrowserDataSnapshot>
+  onBrowserData(cb: (data: BrowserDataSnapshot) => void): () => void
+  bookmarkToggle(record: { url: string; title: string; favicon?: string }): Promise<{ bookmarked: boolean }>
+  historyRemove(url: string, visitedAt: number): Promise<{ ok: boolean }>
+  historyClear(): Promise<{ ok: boolean }>
+  downloadsList(): Promise<DownloadRecord[]>
+  downloadsCancel(id: string): Promise<{ ok: boolean }>
+  downloadsClear(): Promise<{ ok: boolean }>
+  downloadsOpen(id: string): Promise<{ ok: boolean }>
+  downloadsReveal(id: string): Promise<{ ok: boolean }>
+  onDownloads(cb: (rows: DownloadRecord[]) => void): () => void
   sendChat(text: string): Promise<unknown>
   getTheme(): Promise<{ theme: 'system' | 'light' | 'dark' }>
   setTheme(theme: 'system' | 'light' | 'dark'): Promise<{ ok: boolean; theme: string }>

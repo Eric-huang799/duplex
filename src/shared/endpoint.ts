@@ -5,7 +5,9 @@ import path from 'node:path'
 import type { EndpointInfo } from './protocol'
 
 export function cobrowseDir(): string {
-  return path.join(os.homedir(), '.cobrowse')
+  return process.env['DUPLEX_DATA_DIR']
+    ? path.resolve(process.env['DUPLEX_DATA_DIR'])
+    : path.join(os.homedir(), '.cobrowse')
 }
 
 export function endpointFilePath(): string {
