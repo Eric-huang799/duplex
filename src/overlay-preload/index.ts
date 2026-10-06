@@ -12,6 +12,7 @@
  * Blueprint: docs/blueprints/2026-09-27-p1-interaction-layer.md
  */
 import { ipcRenderer } from 'electron'
+import { matchesBinding } from '../shared/hotkeys'
 
 const HOST_ID = '__cobrowse_overlay_host'
 const FONT =
@@ -322,6 +323,7 @@ const TEMPLATE = `
 
 let nodes: Nodes | null = null
 let cursorShown = false
+let hotkeys: string[] = []
 const timers: Record<'cursor' | 'highlight' | 'status', ReturnType<typeof setTimeout> | null> = {
   cursor: null,
   highlight: null,
@@ -511,6 +513,15 @@ function setup(): void {
           setAnnotationActive(false)
           return
         }
+      }
+      // configurable emergency-stop hotkeys (single keys and combos)
+      if (hotkeys.length > 0 && hotkeys.some((b) => matchesBinding(b, e))) {
+        e.preventDefault()
+        e.stopPropagation()
+        ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'hotkey' })
+        return
+      }
+      if (e.key === 'Escape') {
         ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'escape' })
         return
       }
@@ -528,9 +539,16 @@ function setup(): void {
     true
   )
 
-  ipcRenderer.on('overlay:cmd', (_e, cmd: OverlayCommand) => {
+  ipcRenderer.on('overlay:cmd', (_e, cmd: OverlayCommand | { kind: 'hotkeys'; keys: string[] }) => {
     try {
-      apply(cmd)
+      if ((cmd as { kind?: string })?.kind === 'hotkeys') {
+        const keys = (cmd as { keys?: unknown }).keys
+        hotkeys = Array.isArray(keys)
+          ? keys.filter((k): k is string => typeof k === 'string' && k.length > 0)
+          : []
+        return
+      }
+      apply(cmd as OverlayCommand)
     } catch {
       /* visualization must never break the page */
     }
@@ -991,10 +1009,15 @@ if (
   location.protocol === 'https:' ||
   location.protocol === 'file:'
 ) {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', setup, { once: true })
-  } else {
+  const boot = (): void => {
     setup()
+    // send ready only after setup registered the overlay:cmd listener, otherwise
+    // the hotkey-config reply from the main process is lost
+    ipcRenderer.send('overlay:event', { kind: 'ready', url: location.href })
   }
-  ipcRenderer.send('overlay:event', { kind: 'ready', url: location.href })
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot, { once: true })
+  } else {
+    boot()
+  }
 }

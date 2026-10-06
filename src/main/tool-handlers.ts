@@ -141,7 +141,9 @@ async function dispatch(
       })
       await cdp.sleep(350)
       if (operationSignal()?.aborted) return interruptedText()
-      await tab.view.webContents.loadURL(url)
+      const start = await cdp.loadUrlInterruptible(tab, url)
+      if (start.kind === 'interrupted') return interruptedText()
+      if (start.kind === 'error') return errorText(`navigation failed: ${start.message}`)
       const lr = await cdp.waitForLoad(tab)
       if (lr === 'interrupted') return interruptedText()
       const wc = tab.view.webContents
@@ -170,7 +172,9 @@ async function dispatch(
       })
       await cdp.sleep(350)
       if (operationSignal()?.aborted) return interruptedText()
-      await tab.view.webContents.loadURL(url)
+      const start = await cdp.loadUrlInterruptible(tab, url)
+      if (start.kind === 'interrupted') return interruptedText()
+      if (start.kind === 'error') return errorText(`navigation failed: ${start.message}`)
       const lr = await cdp.waitForLoad(tab)
       if (lr === 'interrupted') return interruptedText()
       const wc = tab.view.webContents

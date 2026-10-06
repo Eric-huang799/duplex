@@ -72,7 +72,7 @@ interface CobrowseApi {
     error?: string
   }>
   onAgentConfirm(
-    cb: (req: { id: number; command: string; cwd: string; skill: string }) => void
+    cb: (req: { id: number; command: string; cwd: string; skill: string; tool?: string }) => void
   ): () => void
   agentConfirmRespond(id: number, ok: boolean): Promise<{ ok: boolean }>
   skillsList(): Promise<
@@ -141,6 +141,10 @@ interface CobrowseApi {
   emergencyKeysGet(): Promise<{ keys: string[] }>
   emergencyKeysSet(keys: string[]): Promise<{ ok: boolean; keys?: string[]; error?: string }>
   emergencyTakeover(): void
+  resumeAi(): void
+  onEmergencyState(cb: (s: { paused: boolean }) => void): () => void
+  onEmergencyStop(cb: (s: { via?: string; aborted?: boolean }) => void): () => void
+  onAgentConfirmCancel(cb: (s: { id?: number }) => void): () => void
   searchEngineGet(): Promise<{ engine: string; engines: Array<{ key: string; name: string }> }>
   searchEngineSet(engine: string): Promise<{ ok: boolean }>
   agentsStartSession(

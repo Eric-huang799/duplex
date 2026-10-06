@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { MirrorEvent, TabInfo } from '../../shared/protocol'
+import { matchesBinding } from '../../shared/hotkeys'
+import type { PermissionRequest } from './components/PermissionCard'
 import { TabBar } from './components/TabBar'
 import { Toolbar } from './components/Toolbar'
 import { SidePanel, type PanelMode } from './components/SidePanel'
@@ -48,14 +50,10 @@ export default function App(): React.JSX.Element {
     () => localStorage.getItem('duplex-external-tool') ?? 'codex'
   )
   const [agentEvents, setAgentEvents] = useState<MirrorEvent[]>([])
-  const [confirmReq, setConfirmReq] = useState<{
-    id: number
-    command: string
-    cwd: string
-    skill: string
-  } | null>(null)
+  const [confirms, setConfirms] = useState<PermissionRequest[]>([])
   const [stopKeys, setStopKeys] = useState<string[]>(['Escape', 'F2'])
   const [stopToast, setStopToast] = useState('')
+  const [aiPaused, setAiPaused] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const setChromeOverlay = useCallback((id: string, open: boolean) => {
     window.cobrowse.setChromeOverlay(id, open)
@@ -70,11 +68,6 @@ export default function App(): React.JSX.Element {
     setChromeOverlay('find', findOpen)
     return () => setChromeOverlay('find', false)
   }, [findOpen, setChromeOverlay])
-
-  useEffect(() => {
-    setChromeOverlay('agent-confirm', confirmReq !== null)
-    return () => setChromeOverlay('agent-confirm', false)
-  }, [confirmReq, setChromeOverlay])
 
   useEffect(() => {
     void window.cobrowse.ready().then((s) => {
@@ -128,18 +121,29 @@ export default function App(): React.JSX.Element {
       setAgentEvents((prev) => mergeMirror(prev, ev))
     })
     const offConfirm = window.cobrowse.onAgentConfirm((req) => {
-      setConfirmReq(req)
-      // the main process auto-denies after 120s — clear the dialog to match
-      const id = req.id
-      setTimeout(() => {
-        setConfirmReq((cur) => (cur && cur.id === id ? null : cur))
-      }, 125_000)
+      setConfirms((prev) => [
+        ...prev.filter((c) => c.id !== req.id),
+        { ...req, state: 'pending' as const }
+      ])
+      // a blocked run must never hide behind a collapsed panel
+      setCollapsed(false)
+      localStorage.setItem('duplex-ai-open', 'true')
+    })
+    const offConfirmCancel = window.cobrowse.onAgentConfirmCancel((s) => {
+      setConfirms((prev) =>
+        prev.map((c) => {
+          if (c.state !== 'pending') return c
+          if (s && s.id != null && c.id !== s.id) return c
+          return { ...c, state: s && s.id != null ? ('expired' as const) : ('stopped' as const) }
+        })
+      )
     })
     return () => {
       offTabs()
       offMirror()
       offAgent()
       offConfirm()
+      offConfirmCancel()
       offDownloads()
       offShortcut()
       offBrowserData()
@@ -180,6 +184,13 @@ export default function App(): React.JSX.Element {
     setBrowserData(await window.cobrowse.browserData())
   }
 
+  const respondConfirm = (id: number, ok: boolean): void => {
+    void window.cobrowse.agentConfirmRespond(id, ok)
+    setConfirms((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, state: ok ? 'allowed' : 'denied' } : c))
+    )
+  }
+
   useEffect(() => {
     void window.cobrowse.emergencyKeysGet().then((s) => {
       if (Array.isArray(s.keys) && s.keys.length > 0) setStopKeys(s.keys)
@@ -188,23 +199,32 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!stopKeys.includes(e.key)) return
+      if (!stopKeys.some((b) => matchesBinding(b, e))) return
       // let the capture input in the hotkey settings dialog record keys instead
       const t = e.target as HTMLElement | null
       if (t?.closest?.('.stopkey-capture')) return
       if (t?.matches?.('input,textarea,[contenteditable="true"]')) return
       e.preventDefault()
       e.stopPropagation()
-      // emergency stop: abort built-in agent, kill external children, take over
-      void window.cobrowse.agentAbort()
-      void window.cobrowse.agentsStop()
+      // emergency stop: the main process aborts in-flight operations, kills
+      // external children and latches the AI off until the user resumes
       window.cobrowse.emergencyTakeover()
-      setStopToast('已急停：已中断当前任务并接管浏览器')
-      window.setTimeout(() => setStopToast(''), 2600)
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
   }, [stopKeys])
+
+  useEffect(() => {
+    const offState = window.cobrowse.onEmergencyState((s) => setAiPaused(!!s.paused))
+    const offStop = window.cobrowse.onEmergencyStop(() => {
+      setStopToast('已急停：AI 操作已全部切断（发消息、搜索或点「恢复」继续）')
+      window.setTimeout(() => setStopToast(''), 3600)
+    })
+    return () => {
+      offState()
+      offStop()
+    }
+  }, [])
 
   const changeMode = (m: PanelMode): void => {
     setPanelMode(m)
@@ -347,39 +367,25 @@ export default function App(): React.JSX.Element {
             agentEvents={agentEvents}
             externalTool={externalTool}
             onExternalToolChange={changeExternalTool}
+            confirms={confirms}
+            onConfirmRespond={respondConfirm}
           />
         </>
       )}
 
       {stopToast && <div className="stop-toast">{stopToast}</div>}
 
-      {confirmReq && (
-        <div className="confirm-overlay">
-          <div className="confirm-box">
-            <div className="confirm-title">AI 请求执行操作（{confirmReq.skill}）</div>
-            <pre className="confirm-cmd">{confirmReq.command}</pre>
-            <div className="confirm-cwd">工作目录：{confirmReq.cwd}</div>
-            <div className="confirm-row">
-              <button
-                className="import-btn"
-                onClick={() => {
-                  void window.cobrowse.agentConfirmRespond(confirmReq.id, false)
-                  setConfirmReq(null)
-                }}
-              >
-                拒绝
-              </button>
-              <button
-                className="send-btn"
-                onClick={() => {
-                  void window.cobrowse.agentConfirmRespond(confirmReq.id, true)
-                  setConfirmReq(null)
-                }}
-              >
-                允许执行
-              </button>
-            </div>
-          </div>
+      {aiPaused && (
+        <div className="ai-paused-banner">
+          <span className="ai-paused-dot" />
+          <span>AI 已急停挂起 · 发消息 / 搜索新内容 即恢复</span>
+          <button onClick={() => window.cobrowse.resumeAi()}>恢复</button>
+        </div>
+      )}
+
+      {confirms.some((c) => c.state === 'pending') && (
+        <div className="sr-only" aria-live="polite">
+          AI 请求执行操作，等待你的许可
         </div>
       )}
     </div>

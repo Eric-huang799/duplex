@@ -101,7 +101,7 @@ const api = {
       error?: string
     }>,
   onAgentConfirm: (
-    cb: (req: { id: number; command: string; cwd: string; skill: string }) => void
+    cb: (req: { id: number; command: string; cwd: string; skill: string; tool?: string }) => void
   ): (() => void) => {
     const listener = (
       _e: unknown,
@@ -184,6 +184,24 @@ const api = {
     }>,
   emergencyTakeover: (): void => {
     ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'hotkey' })
+  },
+  resumeAi: (): void => {
+    ipcRenderer.send('emergency:resume')
+  },
+  onEmergencyState: (cb: (s: { paused: boolean }) => void): (() => void) => {
+    const listener = (_e: unknown, s: { paused: boolean }): void => cb(s)
+    ipcRenderer.on('emergency:state', listener)
+    return () => ipcRenderer.removeListener('emergency:state', listener)
+  },
+  onEmergencyStop: (cb: (s: { via?: string; aborted?: boolean }) => void): (() => void) => {
+    const listener = (_e: unknown, s: { via?: string; aborted?: boolean }): void => cb(s)
+    ipcRenderer.on('emergency:stop', listener)
+    return () => ipcRenderer.removeListener('emergency:stop', listener)
+  },
+  onAgentConfirmCancel: (cb: (s: { id?: number }) => void): (() => void) => {
+    const listener = (_e: unknown, s: { id?: number } | undefined): void => cb(s ?? {})
+    ipcRenderer.on('agent:confirm-cancel', listener)
+    return () => ipcRenderer.removeListener('agent:confirm-cancel', listener)
   },
   onAgentsChildren: (cb: (count: number) => void): (() => void) => {
     const listener = (_e: unknown, n: number): void => cb(Number(n) || 0)

@@ -11,7 +11,7 @@ import {
 import type { LlmProtocol } from '../shared/llm'
 import { DEFAULT_ENGINE, SEARCH_ENGINES, type SearchEngine } from '../shared/search'
 
-/** Default global emergency-stop hotkeys (matched against KeyboardEvent.key). */
+/** Default global emergency-stop hotkeys (parsed as hotkey combos, e.g. "F2" / "Ctrl+Shift+K"). */
 export const DEFAULT_STOP_KEYS = ['Escape', 'F2']
 
 export type ThemeSetting = 'system' | 'light' | 'dark'

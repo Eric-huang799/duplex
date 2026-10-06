@@ -223,6 +223,17 @@ export class TabManager {
     this.activateView()
   }
 
+  /** Send a command to every tab's page overlay preload (e.g. hotkey config). */
+  broadcastOverlay(cmd: unknown): void {
+    for (const t of this.tabs.values()) {
+      try {
+        if (!t.view.webContents.isDestroyed()) t.view.webContents.send('overlay:cmd', cmd)
+      } catch {
+        /* view is going away */
+      }
+    }
+  }
+
   reopenClosed(): boolean {
     const url = this.closedUrls.pop()
     if (!url) return false

@@ -8,14 +8,16 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
+import { interruptibleAwait, operationSignal } from '../interrupt'
 import { listSkillFiles, listSkills, readSkillFile, readSkillMarkdown } from './skills'
 
 export type ScriptConfirmFn = (payload: {
   command: string
   cwd: string
   skill: string
+  tool?: string
 }) => Promise<boolean>
 
 const SCRIPT_TIMEOUT_MS = 120_000
@@ -88,7 +90,29 @@ function truncateOutput(s: string): string {
 function executeScript(bin: string, execArgs: string[], cwd: string): Promise<ToolResult> {
   return new Promise((resolve) => {
     try {
-      execFile(
+      const opSignal = operationSignal()
+      let settled = false
+      const finish = (r: ToolResult): void => {
+        if (settled) return
+        settled = true
+        opSignal?.removeEventListener('abort', onAbort)
+        resolve(r)
+      }
+      const onAbort = (): void => {
+        try {
+          if (child.pid) {
+            if (process.platform === 'win32') {
+              spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+            } else {
+              child.kill('SIGKILL')
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        finish(errorText('已被用户急停中断（脚本已终止）'))
+      }
+      const child = execFile(
         bin,
         execArgs,
         {
@@ -103,12 +127,16 @@ function executeScript(bin: string, execArgs: string[], cwd: string): Promise<To
           if (error) {
             const code = typeof error.code === 'number' ? error.code : -1
             const extra = error.killed ? `（执行超时，${SCRIPT_TIMEOUT_MS / 1000} 秒）` : ''
-            resolve(errorText(`exit code: ${code}${extra}\n${output}`))
+            finish(errorText(`exit code: ${code}${extra}\n${output}`))
             return
           }
-          resolve(text(`exit code: 0\n${output}`))
+          finish(text(`exit code: 0\n${output}`))
         }
       )
+      if (opSignal) {
+        if (opSignal.aborted) onAbort()
+        else opSignal.addEventListener('abort', onAbort, { once: true })
+      }
     } catch (err) {
       resolve(errorText(`执行脚本失败：${err instanceof Error ? err.message : String(err)}`))
     }
@@ -179,11 +207,18 @@ export function createSkillToolHandlers(
 
       let approved = false
       try {
-        approved = await confirm({ command, cwd: skill.dir, skill: skill.id })
+        approved = await interruptibleAwait(
+          confirm({ command, cwd: skill.dir, skill: skill.id, tool: 'run_skill_script' }),
+          false
+        )
       } catch {
         approved = false
       }
-      if (!approved) return text('用户拒绝执行该脚本')
+      if (!approved) {
+        return operationSignal()?.aborted
+          ? text('已被用户急停中断（脚本未执行）')
+          : text('用户拒绝执行该脚本')
+      }
 
       return await executeScript(runtime.bin, execArgs, skill.dir)
     }

@@ -1,4 +1,5 @@
 import type { MirrorToolEvent } from '../../../shared/protocol'
+import { ShieldIcon } from './PermissionCard'
 
 const STATUS_ICON: Record<MirrorToolEvent['status'], string> = {
   pending: '⋯',
@@ -22,14 +23,34 @@ function summarizeInput(input: unknown): string {
   return String(input).slice(0, 80)
 }
 
-export function ToolCard({ ev, open, onToggle }: { ev: MirrorToolEvent; open: boolean; onToggle: () => void }): React.JSX.Element {
+export function ToolCard({
+  ev,
+  open,
+  onToggle,
+  waiting = false
+}: {
+  ev: MirrorToolEvent
+  open: boolean
+  onToggle: () => void
+  waiting?: boolean
+}): React.JSX.Element {
   const summary = ev.title || summarizeInput(ev.input)
   return (
-    <div className={`toolcard ${ev.status}`}>
+    <div className={`toolcard ${ev.status}${waiting ? ' waiting' : ''}`}>
       <div className="toolcard-head" onClick={onToggle}>
-        <span className="tool-status">{STATUS_ICON[ev.status]}</span>
+        {waiting ? (
+          <span className="tool-status">
+            <ShieldIcon className="tool-shield" />
+          </span>
+        ) : (
+          <span className="tool-status">{STATUS_ICON[ev.status]}</span>
+        )}
         <span className="tool-name">{ev.tool}</span>
-        {summary && <span className="tool-title">{summary}</span>}
+        {waiting ? (
+          <span className="tool-title">等待你的许可…</span>
+        ) : (
+          summary && <span className="tool-title">{summary}</span>
+        )}
       </div>
       {open && (
         <div className="toolcard-body">

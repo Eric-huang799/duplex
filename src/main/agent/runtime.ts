@@ -224,6 +224,12 @@ export class AgentRuntime {
     this.abortCtl?.abort()
   }
 
+  /** Emergency stop: abort the run and drop every queued send. */
+  abortForEmergency(): void {
+    this.queued.length = 0
+    this.abortCtl?.abort()
+  }
+
   private emit(ev: AgentUiEvent): void {
     const full = {
       ...ev,

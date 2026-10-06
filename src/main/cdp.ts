@@ -278,9 +278,7 @@ export async function captureScreenshot(tab: Tab, fullPage: boolean): Promise<st
   return res.data as string
 }
 
-export type LoadWaitResult = 'loaded' | 'timeout' | 'interrupted'
-
-/** Wait for a page load; ends early when the user takes over (Esc). */
+export type LoadWaitResult = 'loaded' | 'timeout' | 'interrupted'/** Wait for a page load; ends early when the user takes over (Esc). */
 export async function waitForLoad(tab: Tab, timeoutMs = 15000): Promise<LoadWaitResult> {
   const wc = tab.view.webContents
   const signal = operationSignal()
@@ -306,5 +304,48 @@ export async function waitForLoad(tab: Tab, timeoutMs = 15000): Promise<LoadWait
     wc.once('did-stop-loading', onStop)
     wc.once('did-fail-load', onStop)
     signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+export type LoadStartResult =
+  | { kind: 'loaded' }
+  | { kind: 'interrupted' }
+  | { kind: 'error'; message: string }
+
+/**
+ * Start a navigation and end the await immediately when the user takes over:
+ * the abort handler stops the page load so nothing keeps running behind the
+ * emergency stop.
+ */
+export async function loadUrlInterruptible(tab: Tab, url: string): Promise<LoadStartResult> {
+  const wc = tab.view.webContents
+  const signal = operationSignal()
+  if (signal?.aborted) return { kind: 'interrupted' }
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (r: LoadStartResult): void => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      resolve(r)
+    }
+    const onAbort = (): void => {
+      try {
+        wc.stop()
+      } catch {
+        /* ignore */
+      }
+      finish({ kind: 'interrupted' })
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    wc.loadURL(url)
+      .then(() => finish({ kind: 'loaded' }))
+      .catch((e: unknown) => {
+        finish(
+          signal?.aborted
+            ? { kind: 'interrupted' }
+            : { kind: 'error', message: String((e as Error)?.message ?? e) }
+        )
+      })
   })
 }

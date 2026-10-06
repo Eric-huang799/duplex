@@ -107,6 +107,13 @@ export class MirrorStore {
     return items
   }
 
+  /** Emergency stop: drop every pending send that has not been delivered yet. */
+  clearInjections(): number {
+    const n = this.injections.length
+    this.injections = []
+    return n
+  }
+
   /**
    * Long-poll: resolve immediately when pending items exist, otherwise as soon
    * as an injection arrives (or with [] on timeout). Items are TAKEN (removed)

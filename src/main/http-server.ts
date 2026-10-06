@@ -25,6 +25,8 @@ export interface HttpServerDeps {
   agentBusy?: () => boolean
   /** Returns false when the panel is mirroring an external tool (drop opencode pushes). */
   mirrorGate?: () => boolean
+  /** A user-originated send went through this HTTP API (resumes after emergency stop). */
+  onUserActivity?: () => void
 }
 
 export interface RunningHttpServer {
@@ -219,6 +221,7 @@ async function handle(
       sendJson(res, 501, { error: 'agent not available' })
       return
     }
+    deps.onUserActivity?.()
     void deps.sendAgent(text).catch(() => undefined)
     sendJson(res, 200, { ok: true })
     return
@@ -316,6 +319,7 @@ async function handle(
       sendJson(res, 400, { error: 'text is required' })
       return
     }
+    deps.onUserActivity?.()
     const inj = deps.mirror.addInjection(text, 'api')
     sendJson(res, 200, { ok: true, id: inj.id })
     return
@@ -332,7 +336,10 @@ async function handle(
   if (url.pathname === '/api/injections/requeue' && req.method === 'POST') {
     const body = (await readBody(req)) as { text?: string } | undefined
     const text = String(body?.text ?? '').trim()
-    if (text) deps.mirror.addInjection(text, 'api')
+    if (text) {
+      deps.onUserActivity?.()
+      deps.mirror.addInjection(text, 'api')
+    }
     sendJson(res, 200, { ok: true })
     return
   }

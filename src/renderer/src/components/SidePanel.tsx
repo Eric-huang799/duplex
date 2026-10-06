@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/protocol'
 import type { LocalMessage } from '../App'
 import { ToolCard } from './ToolCard'
+import { PermissionCard, type PermissionRequest } from './PermissionCard'
 import { MarkdownProse } from './Markdown'
 import { ProvidersPanel } from './ProvidersPanel'
 import { SkillsPanel } from './SkillsPanel'
@@ -24,6 +25,8 @@ interface Props {
   agentEvents: MirrorEvent[]
   externalTool: string
   onExternalToolChange: (id: string) => void
+  confirms: PermissionRequest[]
+  onConfirmRespond: (id: number, ok: boolean) => void
 }
 
 function timeAgo(ts: number): string {
@@ -52,7 +55,7 @@ function AnnotationNotice({ ev }: { ev: MirrorAnnotationEvent }): React.JSX.Elem
   )
 }
 
-function MirrorItem({ ev }: { ev: MirrorEvent }): React.JSX.Element | null {
+function MirrorItem({ ev, pendingTool }: { ev: MirrorEvent; pendingTool?: string }): React.JSX.Element | null {
   const [open, setOpen] = useState(false)
 
   if (ev.kind === 'annotation') {
@@ -75,7 +78,14 @@ function MirrorItem({ ev }: { ev: MirrorEvent }): React.JSX.Element | null {
     )
   }
   if (ev.kind === 'tool') {
-    return <ToolCard ev={ev} open={open} onToggle={() => setOpen((v) => !v)} />
+    return (
+      <ToolCard
+        ev={ev}
+        open={open}
+        onToggle={() => setOpen((v) => !v)}
+        waiting={pendingTool != null && ev.tool === pendingTool && ev.status === 'running'}
+      />
+    )
   }
   if (ev.kind === 'session') {
     if (ev.status === 'error') {
@@ -96,7 +106,9 @@ export function SidePanel({
   onModeChange,
   agentEvents,
   externalTool,
-  onExternalToolChange
+  onExternalToolChange,
+  confirms,
+  onConfirmRespond
 }: Props): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
@@ -364,6 +376,9 @@ export function SidePanel({
   }
   const agentConfigured = agentReady
   const agentVisible = agentEvents.filter((e) => e.kind !== 'session')
+  // while a permission request is pending, the matching running tool card
+  // shows a "waiting for your permission" state instead of a spinner
+  const pendingTool = confirms.find((c) => c.state === 'pending')?.tool
 
   return (
     <div className="panel" style={{ width }}>
@@ -567,7 +582,7 @@ export function SidePanel({
               </div>
             )}
             {agentVisible.map((ev) => (
-              <MirrorItem key={ev.id} ev={ev} />
+              <MirrorItem key={ev.id} ev={ev} pendingTool={pendingTool} />
             ))}
           </>
         ) : (
@@ -576,7 +591,7 @@ export function SidePanel({
               <div className="empty">向 AI 发送消息开始协作</div>
             )}
             {visibleEvents.map((ev) => (
-              <MirrorItem key={ev.id} ev={ev} />
+              <MirrorItem key={ev.id} ev={ev} pendingTool={pendingTool} />
             ))}
             {localMsgs.map((lm) => (
               <div key={lm.id} className="msg user pending-send">
@@ -585,6 +600,9 @@ export function SidePanel({
             ))}
           </>
         )}
+        {confirms.map((c) => (
+          <PermissionCard key={c.id} req={c} onRespond={onConfirmRespond} />
+        ))}
       </div>
 
       {(agentError || agentSessionError || externalErr) && (

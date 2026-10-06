@@ -10,7 +10,7 @@ import { DownloadManager } from './downloads'
 import { MirrorStore } from './mirror'
 import { createToolExecutor, type ToolExecutor } from './tool-handlers'
 import { startHttpServer, type RunningHttpServer } from './http-server'
-import { consumeTakeover, hideAllVisuals, noteTakeover } from './overlay'
+import { hideAllVisuals, isAiPaused, pauseAi, resumeAi } from './overlay'
 import { abortOperation, beginOperation, endOperation, runInOperation } from './interrupt'
 import {
   createAnnotationSubmitHandler,
@@ -18,6 +18,7 @@ import {
   type AnnotationSubmitPayload
 } from './annotations'
 import { cobrowseDir, removeEndpoint, writeEndpoint } from '../shared/endpoint'
+import { validateBinding } from '../shared/hotkeys'
 import {
   activeAgentConfig,
   loadSettings,
@@ -118,13 +119,21 @@ const confirmScript = (payload: {
   command: string
   cwd: string
   skill: string
+  tool?: string
 }): Promise<boolean> =>
   new Promise((resolve) => {
     const id = ++confirmSeq
     pendingConfirms.set(id, resolve)
     win?.webContents.send('agent:confirm-request', { id, ...payload })
     setTimeout(() => {
-      if (pendingConfirms.delete(id)) resolve(false)
+      if (pendingConfirms.delete(id)) {
+        resolve(false)
+        try {
+          win?.webContents.send('agent:confirm-cancel', { id })
+        } catch {
+          /* window is going away */
+        }
+      }
     }, 120_000)
   })
 const skillHandlers = createSkillToolHandlers(confirmScript)
@@ -137,10 +146,18 @@ const fsHandlers = createFsToolHandlers((payload) =>
       id,
       command: payload.kind === 'write' ? `写入文件：${payload.detail}` : payload.detail,
       cwd: payload.cwd,
-      skill: payload.kind === 'write' ? 'write_file（写文件）' : 'run_command（执行命令）'
+      skill: payload.kind === 'write' ? 'write_file（写文件）' : 'run_command（执行命令）',
+      tool: payload.kind === 'write' ? 'write_file' : 'run_command'
     })
     setTimeout(() => {
-      if (pendingConfirms.delete(id)) resolve(false)
+      if (pendingConfirms.delete(id)) {
+        resolve(false)
+        try {
+          win?.webContents.send('agent:confirm-cancel', { id })
+        } catch {
+          /* window is going away */
+        }
+      }
     }, 120_000)
   })
 )
@@ -329,6 +346,42 @@ function killChildTree(child: ReturnType<typeof spawn>): void {
   }
 }
 
+/** Emergency stop: cancel pending starts and kill every external-session child. */
+function stopExternalChildren(): number {
+  startSessionCancelled = true
+  let killed = 0
+  for (const child of liveChildren) {
+    killChildTree(child)
+    killed++
+  }
+  liveChildren.clear()
+  broadcastChildren()
+  return killed
+}
+
+/** A user message (panel / built-in agent / external session) resumes after an emergency stop. */
+function maybeResumeAi(): void {
+  if (resumeAi()) {
+    try {
+      win?.webContents.send('emergency:state', { paused: false })
+    } catch {
+      /* window is going away */
+    }
+    logLine('[takeover] AI resumed by user action')
+  }
+}
+
+/** Emergency stop dismisses every confirmation dialog still waiting for an answer. */
+function denyAllPendingConfirms(): number {
+  let n = 0
+  for (const [id, resolve] of pendingConfirms) {
+    pendingConfirms.delete(id)
+    resolve(false)
+    n++
+  }
+  return n
+}
+
 /** Spawn a headless CLI run that starts a brand-new session (generalized). */
 function startExternalSessionSpawn(
   tool: { kind: string; command?: string },
@@ -481,13 +534,13 @@ async function start(): Promise<void> {
     getSearchEngine: () => loadSettings().searchEngine
   })
   const executeWithWake: ToolExecutor = async (name, args) => {
-    if (consumeTakeover()) {
-      logLine('[takeover] pending takeover consumed; tool call blocked')
+    if (isAiPaused()) {
+      logLine('[takeover] AI paused (emergency stop); tool call rejected')
       return {
         content: [
           {
             type: 'text',
-            text: '用户已接管浏览器（按下 Esc / 点击了状态条）。本次调用未执行。请等待用户的下一步指示，不要重试。'
+            text: '已急停挂起：暂时不接受任何 AI 操作。请停止动作，等待用户恢复（发送新消息 / 搜索新内容 / 点「恢复」）。不要重试。'
           }
         ]
       }
@@ -501,12 +554,29 @@ async function start(): Promise<void> {
     }
   }
 
-  // skill tools (read_skill / run_skill_script …) are only wired into the
-  // built-in agent path (handlers + confirmation live at module scope)
+  // skill tools (read_skill / run_skill_script / run_command …) are only wired
+  // into the built-in agent path; they go through the same emergency-stop gate
+  // and run inside an abortable operation context
   const executeWithSkills: ToolExecutor = async (name, args) => {
     const h = skillHandlers[name] ?? fsHandlers[name]
-    if (h) return h(args)
-    return executeWithWake(name, args)
+    if (!h) return executeWithWake(name, args)
+    if (isAiPaused()) {
+      logLine('[takeover] AI paused (emergency stop); tool call rejected')
+      return {
+        content: [
+          {
+            type: 'text',
+            text: '已急停挂起：暂时不接受任何 AI 操作。请停止动作，等待用户恢复（发送新消息 / 搜索新内容 / 点「恢复」）。不要重试。'
+          }
+        ]
+      }
+    }
+    const ac = beginOperation()
+    try {
+      return await runInOperation(ac, () => h(args))
+    } finally {
+      endOperation(ac)
+    }
   }
 
   // built-in agent mode (optional alternative to the opencode path)
@@ -529,6 +599,7 @@ async function start(): Promise<void> {
       await agentRuntime?.send(text)
     },
     agentBusy: () => agentRuntime?.isRunning ?? false,
+    onUserActivity: () => maybeResumeAi(),
     mirrorGate: () => mirrorSource === 'opencode',
     captureUI: async () => {
       try {
@@ -735,6 +806,9 @@ function setupIpc(): void {
     'tabs:action',
     (_e, action: { type: string; url?: string; tabId?: number }) => {
       if (!tabs) return { ok: false }
+      // a user-initiated navigation/search is an explicit signal to resume
+      // after an emergency stop (AI tools never come through this IPC route)
+      if (action?.type === 'navigate') maybeResumeAi()
       try {
         switch (action.type) {
           case 'navigate': {
@@ -818,13 +892,35 @@ function setupIpc(): void {
   ipcMain.on(
     'overlay:event',
     (_e, ev: { kind?: string; via?: string; annotationId?: string }) => {
+      if (ev?.kind === 'ready') {
+        try {
+          _e.sender.send('overlay:cmd', {
+            kind: 'hotkeys',
+            keys: loadSettings().emergencyStopKeys
+          })
+        } catch {
+          /* frame is going away */
+        }
+        return
+      }
       if (ev?.kind === 'takeover') {
         const aborted = abortOperation()
-        const consumed = noteTakeover()
+        agentRuntime?.abortForEmergency()
+        const killed = stopExternalChildren()
+        const confirms = denyAllPendingConfirms()
+        const dropped = mirror.clearInjections()
+        const newly = pauseAi()
+        hideAllVisuals(tabs?.getActive() ?? null)
+        try {
+          win?.webContents.send('emergency:stop', { via: ev.via ?? 'unknown', aborted })
+          win?.webContents.send('emergency:state', { paused: true })
+          win?.webContents.send('agent:confirm-cancel', {})
+        } catch {
+          /* window is going away */
+        }
         logLine(
-          `[overlay] takeover via ${ev.via ?? 'unknown'} (aborted=${aborted}, in-window=${consumed})`
+          `[takeover] via ${ev.via ?? 'unknown'} (aborted=${aborted}, killed=${killed}, confirms=${confirms}, sends-dropped=${dropped}, newly-paused=${newly})`
         )
-        if (aborted || consumed) hideAllVisuals(tabs?.getActive() ?? null)
         return
       }
       if (ev?.kind === 'annotationSubmit') {
@@ -845,6 +941,7 @@ function setupIpc(): void {
   ipcMain.handle('chat:send', (_e, text: string) => {
     const t = String(text ?? '').trim()
     if (!t) return { ok: false }
+    maybeResumeAi()
     const inj = mirror.addInjection(t, 'panel')
     return { ok: true, id: inj.id }
   })
@@ -903,11 +1000,23 @@ function setupIpc(): void {
 
   ipcMain.handle('agent:send', async (_e, text: string) => {
     if (!agentRuntime) return { ok: false, error: 'agent not ready' }
+    maybeResumeAi()
     try {
       await agentRuntime.send(String(text ?? ''))
       return { ok: true }
     } catch (e) {
       return { ok: false, error: (e as Error)?.message ?? String(e) }
+    }
+  })
+
+  ipcMain.on('emergency:resume', () => {
+    if (resumeAi()) {
+      try {
+        win?.webContents.send('emergency:state', { paused: false })
+      } catch {
+        /* window is going away */
+      }
+      logLine('[takeover] AI resumed via window control')
     }
   })
 
@@ -1123,8 +1232,9 @@ function setupIpc(): void {
     const msg = String(message ?? '').trim()
     if (!msg) return { ok: false, error: '消息不能为空' }
     if (liveChildren.size > 0) {
-      return { ok: false, error: '有任务正在运行：请等待完成，或点「停止」后再发送' }
+      return { ok: false, error: '已有任务在运行中，请等待完成，或点「停止」后再发送' }
     }
+    maybeResumeAi()
     const meta = readSessionMeta(tool.kind, cur.file)
     const cliSessionId = meta.cliSessionId ?? path.basename(cur.file, '.jsonl')
     // optimistic echo so the panel shows the outgoing message immediately;
@@ -1167,8 +1277,9 @@ function setupIpc(): void {
   let startSessionBusy = false
   ipcMain.handle('agents:start-session', async (_e, toolId: string, message: string) => {
     if (startSessionBusy || liveChildren.size > 0) {
-      return { ok: false, error: '有任务正在运行：请等待完成，或点「停止」后再发送' }
+      return { ok: false, error: '已有任务在运行中，请等待完成，或点「停止」后再发送' }
     }
+    maybeResumeAi()
     startSessionCancelled = false
     const tool = findAgentTool(String(toolId))
     if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
@@ -1217,17 +1328,7 @@ function setupIpc(): void {
     }
   })
 
-  ipcMain.handle('agents:stop', () => {
-    startSessionCancelled = true
-    let killed = 0
-    for (const child of liveChildren) {
-      killChildTree(child)
-      killed++
-    }
-    liveChildren.clear()
-    broadcastChildren()
-    return { ok: true, killed }
-  })
+  ipcMain.handle('agents:stop', () => ({ ok: true, killed: stopExternalChildren() }))
 
   ipcMain.handle('agents:session-close', () => {
     stopAgentWatch()
@@ -1252,14 +1353,22 @@ function setupIpc(): void {
   ipcMain.handle('emergency:keys-get', () => ({ keys: loadSettings().emergencyStopKeys }))
 
   ipcMain.handle('emergency:keys-set', (_e, keys: unknown) => {
-    const list = Array.isArray(keys)
-      ? keys
-          .filter((k): k is string => typeof k === 'string' && k.length > 0 && k.length <= 20)
-          .slice(0, 5)
-      : []
+    const list: string[] = []
+    for (const k of Array.isArray(keys) ? keys : []) {
+      if (typeof k !== 'string' || k.length === 0 || k.length > 32) continue
+      const v = validateBinding(k)
+      if (v.ok) list.push(v.combo)
+      if (list.length >= 5) break
+    }
     const unique = [...new Set(list)]
-    if (unique.length === 0) return { ok: false, error: '至少需要一个按键' }
+    if (unique.length === 0) {
+      return {
+        ok: false,
+        error: '请设置至少一个有效按键（F1–F12、Esc 或带 Ctrl/Alt/Shift 的组合）'
+      }
+    }
     saveEmergencyStopKeys(unique)
+    tabs?.broadcastOverlay({ kind: 'hotkeys', keys: unique })
     return { ok: true, keys: unique }
   })
 

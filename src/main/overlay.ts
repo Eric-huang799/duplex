@@ -37,26 +37,39 @@ export function overlaySend(tab: Tab, cmd: OverlayCommand): void {
   }
 }
 
-const takeover = { requested: false, activeUntil: 0 }
+/**
+ * Emergency-stop state ("neutral gear"):
+ * once paused, the browser refuses EVERY AI tool call until the user resumes
+ * (a new user message or the resume control in the window).
+ */
+const takeover = { paused: false, pausedAt: 0, activeUntil: 0 }
 
-/** Mark an AI activity window; Esc within it counts as an explicit takeover. */
+/** Mark an AI activity window (kept for visualization/status decisions). */
 export function markAiActive(ms: number): void {
   takeover.activeUntil = Date.now() + ms
 }
 
-/** Called from the overlay IPC; returns true when the takeover was "in window". */
-export function noteTakeover(): boolean {
-  const active = Date.now() < takeover.activeUntil
-  if (active) takeover.requested = true
-  return active
+/** Latch the emergency stop on. Returns true when it was not already paused. */
+export function pauseAi(): boolean {
+  const newly = !takeover.paused
+  takeover.paused = true
+  takeover.pausedAt = Date.now()
+  return newly
 }
 
-export function consumeTakeover(): boolean {
-  if (takeover.requested) {
-    takeover.requested = false
-    return true
-  }
-  return false
+/** Clear the emergency-stop latch. Returns true when it was paused before. */
+export function resumeAi(): boolean {
+  const was = takeover.paused
+  takeover.paused = false
+  return was
+}
+
+export function isAiPaused(): boolean {
+  return takeover.paused
+}
+
+export function aiPausedAt(): number {
+  return takeover.pausedAt
 }
 
 export function hideAllVisuals(tab: Tab | null): void {

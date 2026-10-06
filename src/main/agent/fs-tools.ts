@@ -9,6 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
+import { interruptibleAwait, operationSignal } from '../interrupt'
 
 export type FsConfirmFn = (payload: {
   kind: 'write' | 'command'
@@ -62,8 +63,10 @@ export function createFsToolHandlers(
       if (typeof args.content !== 'string') return errorText('缺少参数 content')
       const abs = path.resolve(filePath)
       if (isProtectedWriteTarget(abs)) return errorText(`禁止写入受保护目录：${abs}`)
-      const ok = await confirm({ kind: 'write', detail: abs, cwd: path.dirname(abs) })
-      if (!ok) return text('用户拒绝了这次写入。')
+      const ok = await interruptibleAwait(confirm({ kind: 'write', detail: abs, cwd: path.dirname(abs) }), false)
+      if (!ok) {
+        return operationSignal()?.aborted ? text('已被用户急停中断（本次写入未执行）') : text('用户拒绝了这次写入。')
+      }
       try {
         fs.mkdirSync(path.dirname(abs), { recursive: true })
         fs.writeFileSync(abs, content, 'utf8')
@@ -84,8 +87,13 @@ export function createFsToolHandlers(
         Math.max(Number(args.timeout_ms ?? 120_000) || 120_000, 1000),
         600_000
       )
-      const ok = await confirm({ kind: 'command', detail: command, cwd })
-      if (!ok) return text('用户拒绝了这次命令执行。')
+      const ok = await interruptibleAwait(confirm({ kind: 'command', detail: command, cwd }), false)
+      if (!ok) {
+        return operationSignal()?.aborted
+          ? text('已被用户急停中断（本次命令未执行）')
+          : text('用户拒绝了该命令，未执行。')
+      }
+      if (operationSignal()?.aborted) return text('已被用户急停中断（本次命令未执行）')
       return await new Promise<ToolResult>((resolve) => {
         const MAX_OUTPUT = 4 * 1024 * 1024
         let killTimer: ReturnType<typeof setTimeout> | null = null
@@ -109,6 +117,8 @@ export function createFsToolHandlers(
           detached: process.platform !== 'win32'
         })
 
+        const opSignal = operationSignal()
+
         const killTree = (): void => {
           if (!child.pid) return
           try {
@@ -130,12 +140,22 @@ export function createFsToolHandlers(
           if (settled) return
           settled = true
           if (killTimer) clearTimeout(killTimer)
+          opSignal?.removeEventListener('abort', onAbort)
           const out = `${Buffer.concat(outChunks).toString('utf8')}${
             errBytes ? `\n[stderr]\n${Buffer.concat(errChunks).toString('utf8')}` : ''
           }`
           const tail = out.length > 8000 ? `…（输出截断，保留尾部）\n${out.slice(-8000)}` : out
           if (reason) resolve(errorText(`${reason}\n${tail || '(无输出)'}`))
           else resolve(text(`命令完成（退出码 0）\n${tail || '(无输出)'}`))
+        }
+
+        const onAbort = (): void => {
+          killTree()
+          finish('已被用户急停中断')
+        }
+        if (opSignal) {
+          if (opSignal.aborted) onAbort()
+          else opSignal.addEventListener('abort', onAbort, { once: true })
         }
 
         const overflow = (): void => {

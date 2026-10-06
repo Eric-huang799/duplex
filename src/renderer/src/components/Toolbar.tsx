@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { TabInfo } from '../../../shared/protocol'
+import { VirtualKeyboard } from './VirtualKeyboard'
+import { comboFromEvent, displayParts, isModifierKey, sameBinding, validateBinding } from '../../../shared/hotkeys'
 
 type ThemeSetting = 'system' | 'light' | 'dark'
 
@@ -48,6 +50,10 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   const [engineMenu, setEngineMenu] = useState(false)
   const [stopKeys, setStopKeys] = useState<string[]>([])
   const [stopKeysOpen, setStopKeysOpen] = useState(false)
+  const [stopError, setStopError] = useState('')
+  const [listening, setListening] = useState(false)
+  const [pendingMods, setPendingMods] = useState('')
+  const [vkOpen, setVkOpen] = useState(false)
   const [toolsMenu, setToolsMenu] = useState(false)
 
   useEffect(() => {
@@ -122,6 +128,52 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     ;(document.activeElement as HTMLElement | null)?.blur()
   }
 
+  const addBinding = (combo: string): void => {
+    const v = validateBinding(combo)
+    if (!v.ok) {
+      setStopError(v.reason)
+      return
+    }
+    if (stopKeys.some((b) => sameBinding(b, v.combo))) {
+      setStopError('该组合已存在')
+      return
+    }
+    if (stopKeys.length >= 5) {
+      setStopError('最多设置 5 个')
+      return
+    }
+    setStopKeys([...stopKeys, v.combo])
+    setStopError('')
+  }
+
+  const removeBinding = (combo: string): void => {
+    setStopKeys(stopKeys.filter((k) => k !== combo))
+    setStopError('')
+  }
+
+  const onRecorderKeyDown = (e: React.KeyboardEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.key === 'Escape') {
+      setListening(false)
+      setPendingMods('')
+      ;(e.target as HTMLElement).blur()
+      return
+    }
+    if (isModifierKey(e.key)) {
+      const parts: string[] = []
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.altKey) parts.push('Alt')
+      if (e.shiftKey) parts.push('Shift')
+      if (e.metaKey) parts.push('Win')
+      setPendingMods(parts.join(' + '))
+      return
+    }
+    const combo = comboFromEvent(e)
+    if (combo) addBinding(combo)
+    setPendingMods('')
+  }
+
   return (
     <div className="toolbar">
       <button className="tb-btn" disabled={!active?.canGoBack} onClick={() => onAction('back')} title="后退"><Icon name="back" /></button>
@@ -155,7 +207,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
       ><Icon name="more" /></button>
       {toolsMenu && <div className="browser-tools-menu" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => { onOpenLibrary?.('bookmarks'); setToolsMenu(false) }}>书签</button><button onClick={() => { onOpenLibrary?.('history'); setToolsMenu(false) }}>浏览记录</button><button onClick={() => { onOpenLibrary?.('downloads'); setToolsMenu(false) }}>下载内容</button>
-        <button onClick={() => { onAction('annotationMode'); setToolsMenu(false) }}>页面标注</button><button onClick={() => { setStopKeysOpen(true); setToolsMenu(false); void window.cobrowse.emergencyKeysGet().then((s) => setStopKeys(s.keys)) }}>设置急停键</button>
+        <button onClick={() => { onAction('annotationMode'); setToolsMenu(false) }}>页面标注</button><button onClick={() => { setToolsMenu(false); setStopKeysOpen(true); setStopError(''); setVkOpen(false); setListening(false); setPendingMods(''); void window.cobrowse.emergencyKeysGet().then((s) => setStopKeys(s.keys)) }}>设置急停键</button>
         <div className="tools-menu-divider" />
         {(['system', 'light', 'dark'] as const).map((t) => <button key={t} className={theme === t ? 'on' : ''} onClick={() => applyTheme(t)}>{THEME_ICON[t]}　{THEME_LABEL[t]}</button>)}
       </div>}
@@ -164,31 +216,49 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
 
       {stopKeysOpen && (
         <div className="confirm-overlay" onClick={(e) => e.stopPropagation()}>
-          <div className="confirm-box">
+          <div className="confirm-box stopkey-box">
             <div className="confirm-title">急停快捷键</div>
-            <label className="add-tool-field">
-              <span>按键（逗号分隔；在下方输入框按任意键即可捕获替换）</span>
-              <input
-                className="stopkey-capture"
-                value={stopKeys.join(',')}
-                spellCheck={false}
-                onChange={(e) =>
-                  setStopKeys(
-                    e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  )
-                }
-                onKeyDown={(e) => {
-                  e.preventDefault()
-                  setStopKeys([e.key])
-                }}
-              />
-            </label>
-            <div className="import-status">
-              按急停键立即中止当前任务（内置 agent 与外部工具进程）并接管浏览器。常用键名：Escape、F2、F8。
+            <div className="stopkey-hint">
+              触发后立即中止当前任务（内置 agent 与外部工具进程）并接管浏览器；在网页内同样生效。支持单键与组合键（最多 5 个）。
             </div>
+            <div className="stopkey-chips">
+              {stopKeys.length === 0 && <span className="stopkey-empty">（未设置）</span>}
+              {stopKeys.map((k) => (
+                <span className="stopkey-chip" key={k}>
+                  {displayParts(k).map((p, i) => (
+                    <span className="stopkey-capwrap" key={i}>
+                      {i > 0 && <span className="stopkey-plus">+</span>}
+                      <kbd>{p}</kbd>
+                    </span>
+                  ))}
+                  <button type="button" title="移除" onClick={() => removeBinding(k)}>
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div
+              className={`stopkey-recorder stopkey-capture${listening ? ' listening' : ''}`}
+              tabIndex={0}
+              onFocus={() => {
+                setListening(true)
+                setStopError('')
+              }}
+              onBlur={() => {
+                setListening(false)
+                setPendingMods('')
+              }}
+              onKeyDown={onRecorderKeyDown}
+            >
+              {listening
+                ? pendingMods || '请按下快捷键…（Esc 取消）'
+                : '点击这里，然后直接按下你要设置的按键 / 组合键'}
+            </div>
+            {stopError && <div className="stopkey-error">{stopError}</div>}
+            <button type="button" className="stopkey-vk-toggle" onClick={() => setVkOpen((v) => !v)}>
+              {vkOpen ? '收起虚拟键盘' : '用虚拟键盘选择…'}
+            </button>
+            {vkOpen && <VirtualKeyboard onPick={(c) => addBinding(c)} />}
             <div className="confirm-row">
               <button className="import-btn" onClick={() => setStopKeysOpen(false)}>
                 取消
@@ -196,11 +266,15 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
               <button
                 className="send-btn"
                 onClick={() => {
+                  if (stopKeys.length === 0) {
+                    setStopError('至少需要一个按键')
+                    return
+                  }
                   void window.cobrowse.emergencyKeysSet(stopKeys).then((r) => {
                     if (r.ok) {
                       setStopKeysOpen(false)
                       onStopKeysChanged?.(r.keys ?? stopKeys)
-                    }
+                    } else setStopError(r.error ?? '保存失败')
                   })
                 }}
               >

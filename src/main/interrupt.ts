@@ -64,3 +64,26 @@ export function interruptibleSleep(ms: number): Promise<void> {
     signal.addEventListener('abort', done, { once: true })
   })
 }
+
+/**
+ * Await a promise but give up (resolving `fallback`) the moment the current
+ * operation is aborted — used for user-confirmation dialogs and other waits
+ * that must not keep the emergency stop hanging.
+ */
+export function interruptibleAwait<T>(p: Promise<T>, fallback: T): Promise<T> {
+  const signal = operationSignal()
+  if (!signal) return p
+  if (signal.aborted) return Promise.resolve(fallback)
+  return new Promise<T>((resolve) => {
+    let settled = false
+    const finish = (v: T): void => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      resolve(v)
+    }
+    const onAbort = (): void => finish(fallback)
+    signal.addEventListener('abort', onAbort, { once: true })
+    p.then((v) => finish(v)).catch(() => finish(fallback))
+  })
+}
