@@ -71,11 +71,11 @@ async function main() {
 
   const query = await client.callTool({
     name: 'query',
-    arguments: { selector: 'h1' }
+    arguments: { selector: 'p' }
   })
   const qText = firstText(query)
   const qJson = JSON.parse(qText)
-  ok('query finds h1', qJson.total >= 1, qText.replace(/\s+/g, ' ').slice(0, 100))
+  ok('query finds elements', qJson.total >= 1, qText.replace(/\s+/g, ' ').slice(0, 100))
 
   // ---------- overlay visualization + fixture interaction ----------
   console.log('smoke: overlay + fixture checks')

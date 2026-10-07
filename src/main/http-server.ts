@@ -36,6 +36,8 @@ export interface HttpServerDeps {
   mirrorGate?: () => boolean
   /** A user-originated send went through this HTTP API (resumes after emergency stop). */
   onUserActivity?: () => void
+  /** Clear the emergency-stop latch explicitly (programmatic "resume" control). */
+  resumeAi?: () => void
 }
 
 export interface RunningHttpServer {
@@ -435,6 +437,13 @@ async function handle(
     const items =
       waitMs > 0 ? await deps.mirror.waitForInjections(waitMs) : deps.mirror.takeInjections()
     sendJson(res, 200, items)
+    return
+  }
+
+  if (url.pathname === '/api/emergency/resume' && req.method === 'POST') {
+    // Explicit resume — no message is queued (unlike POST /api/chat).
+    ;(deps.resumeAi ?? deps.onUserActivity)?.()
+    sendJson(res, 200, { ok: true })
     return
   }
 

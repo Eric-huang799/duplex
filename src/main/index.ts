@@ -888,6 +888,7 @@ async function start(): Promise<void> {
     },
     agentBusy: () => agentRuntime?.isRunning ?? false,
     onUserActivity: () => maybeResumeAi(),
+    resumeAi: () => maybeResumeAi(),
     mirrorGate: () => mirrorSource === 'opencode',
     captureUI: async () => {
       try {
