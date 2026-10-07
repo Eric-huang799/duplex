@@ -10,6 +10,8 @@ import {
 } from './agent/providers'
 import type { LlmProtocol } from '../shared/llm'
 import { DEFAULT_ENGINE, SEARCH_ENGINES, type SearchEngine } from '../shared/search'
+import { normalizeBinding } from '../shared/hotkeys'
+import { isShortcutAction } from '../shared/shortcuts'
 
 /** Default global emergency-stop hotkeys (parsed as hotkey combos, e.g. "F2" / "Ctrl+Shift+K"). */
 export const DEFAULT_STOP_KEYS = ['F2', 'Ctrl+Shift+K']
@@ -54,6 +56,7 @@ const cache: {
   emergencyStopKeys: string[]
   confirmBeforeDownload: boolean
   aiPaused: boolean
+  shortcuts: Record<string, string>
 } = {
   theme: 'system',
   session: null,
@@ -62,7 +65,8 @@ const cache: {
   searchEngine: DEFAULT_ENGINE,
   emergencyStopKeys: [...DEFAULT_STOP_KEYS],
   confirmBeforeDownload: true,
-  aiPaused: false
+  aiPaused: false,
+  shortcuts: {}
 }
 
 function settingsPath(): string {
@@ -178,6 +182,18 @@ function isValidTheme(v: unknown): v is ThemeSetting {
   return v === 'system' || v === 'light' || v === 'dark'
 }
 
+/** Keep only known actions with a parseable canonical binding. */
+function sanitizeShortcutOverrides(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out
+  for (const [action, binding] of Object.entries(value as Record<string, unknown>)) {
+    if (!isShortcutAction(action) || typeof binding !== 'string') continue
+    const norm = normalizeBinding(binding)
+    if (norm) out[action] = norm
+  }
+  return out
+}
+
 export function loadSettings(): {
   theme: ThemeSetting
   session: SavedSession | null
@@ -187,6 +203,7 @@ export function loadSettings(): {
   emergencyStopKeys: string[]
   confirmBeforeDownload: boolean
   aiPaused: boolean
+  shortcuts: Record<string, string>
 } {
   let raw: Record<string, unknown>
   try {
@@ -221,6 +238,7 @@ export function loadSettings(): {
   cache.confirmBeforeDownload =
     typeof raw.confirmBeforeDownload === 'boolean' ? raw.confirmBeforeDownload : true
   cache.aiPaused = raw.aiPaused === true
+  if (raw.shortcuts !== undefined) cache.shortcuts = sanitizeShortcutOverrides(raw.shortcuts)
   return {
     theme: cache.theme,
     session: cache.session,
@@ -229,7 +247,8 @@ export function loadSettings(): {
     searchEngine: cache.searchEngine,
     emergencyStopKeys: cache.emergencyStopKeys,
     confirmBeforeDownload: cache.confirmBeforeDownload,
-    aiPaused: cache.aiPaused
+    aiPaused: cache.aiPaused,
+    shortcuts: { ...cache.shortcuts }
   }
 }
 
@@ -269,6 +288,17 @@ export function saveEmergencyStopKeys(keys: string[]): SaveResult {
   ].slice(0, 5)
   const r = savePatch({ emergencyStopKeys: next })
   if (r.ok) cache.emergencyStopKeys = next.length > 0 ? next : [...DEFAULT_STOP_KEYS]
+  return r
+}
+
+/**
+ * Persist the browser shortcut overrides (action → canonical binding).
+ * An empty object means every action uses its default.
+ */
+export function saveShortcuts(overrides: Record<string, string | null>): SaveResult {
+  const next = sanitizeShortcutOverrides(overrides)
+  const r = savePatch({ shortcuts: next })
+  if (r.ok) cache.shortcuts = next
   return r
 }
 

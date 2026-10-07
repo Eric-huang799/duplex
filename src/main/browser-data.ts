@@ -6,6 +6,7 @@ export interface BookmarkRecord {
   title: string
   favicon?: string
   addedAt: number
+  folder?: string
 }
 
 export interface HistoryRecord {
@@ -29,11 +30,17 @@ export interface DownloadRecord {
 
 interface BrowserData {
   bookmarks: BookmarkRecord[]
+  bookmarkFolders: string[]
   history: HistoryRecord[]
   downloads: DownloadRecord[]
 }
 
-const empty = (): BrowserData => ({ bookmarks: [], history: [], downloads: [] })
+const empty = (): BrowserData => ({
+  bookmarks: [],
+  bookmarkFolders: [],
+  history: [],
+  downloads: []
+})
 
 const SAVE_DEBOUNCE_MS = 500
 
@@ -51,8 +58,18 @@ export class BrowserDataStore {
 
   /** Normalize a parsed payload into the in-memory shape. */
   private normalize(parsed: Partial<BrowserData>): BrowserData {
+    const folders = Array.isArray(parsed.bookmarkFolders)
+      ? [
+          ...new Set(
+            parsed.bookmarkFolders
+              .filter((name): name is string => typeof name === 'string' && name.trim() !== '')
+              .map((name) => name.trim())
+          )
+        ]
+      : []
     const data: BrowserData = {
       bookmarks: Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [],
+      bookmarkFolders: folders,
       history: Array.isArray(parsed.history) ? parsed.history.slice(-5000) : [],
       downloads: Array.isArray(parsed.downloads) ? parsed.downloads.slice(-500) : []
     }
@@ -220,6 +237,124 @@ export class BrowserDataStore {
       : [{ ...record, addedAt: Date.now() }, ...this.data.bookmarks]
     this.scheduleSave()
     return !exists
+  }
+
+  /**
+   * Add a bookmark, or update the existing one for the same URL (upsert).
+   * Only a non-empty `folder` string is retained; anything else leaves the
+   * bookmark at the root. The folder list is managed separately via addFolder.
+   */
+  addBookmark(record: {
+    url: string
+    title: string
+    favicon?: string
+    folder?: string
+  }): { ok: boolean; error?: string } {
+    const url = record.url?.trim() ?? ''
+    if (!url) return { ok: false, error: '网址不能为空' }
+    const title = record.title?.trim() || url
+    const favicon = record.favicon?.trim() || undefined
+    const folder = record.folder?.trim() || undefined
+    const index = this.data.bookmarks.findIndex((item) => item.url === url)
+    if (index >= 0) {
+      const item = this.data.bookmarks[index]
+      item.title = title
+      if (favicon) item.favicon = favicon
+      if (folder) item.folder = folder
+      else delete item.folder
+    } else {
+      const item: BookmarkRecord = { url, title, addedAt: Date.now() }
+      if (favicon) item.favicon = favicon
+      if (folder) item.folder = folder
+      this.data.bookmarks.unshift(item)
+    }
+    this.scheduleSave()
+    return { ok: true }
+  }
+
+  /**
+   * Patch a bookmark addressed by its current URL. Changing the URL onto an
+   * already-bookmarked one is rejected. An empty/omitted `folder` moves the
+   * bookmark back to the root (未分类).
+   */
+  updateBookmark(
+    url: string,
+    patch: { title?: string; url?: string; folder?: string }
+  ): { ok: boolean; error?: string } {
+    const index = this.data.bookmarks.findIndex((item) => item.url === url)
+    if (index < 0) return { ok: false, error: '书签不存在' }
+    const item = this.data.bookmarks[index]
+    if (patch.url !== undefined) {
+      const nextUrl = patch.url.trim()
+      if (!nextUrl) return { ok: false, error: '网址不能为空' }
+      if (nextUrl !== item.url) {
+        if (this.data.bookmarks.some((entry) => entry.url === nextUrl)) {
+          return { ok: false, error: '该网址已有书签' }
+        }
+        item.url = nextUrl
+      }
+    }
+    if (patch.title !== undefined) item.title = patch.title.trim() || item.url
+    if (patch.folder !== undefined) {
+      const folder = patch.folder.trim()
+      if (folder) item.folder = folder
+      else delete item.folder
+    }
+    this.scheduleSave()
+    return { ok: true }
+  }
+
+  /** Remove a bookmark by URL; returns false when there was nothing to remove. */
+  removeBookmark(url: string): boolean {
+    const before = this.data.bookmarks.length
+    this.data.bookmarks = this.data.bookmarks.filter((item) => item.url !== url)
+    const removed = this.data.bookmarks.length !== before
+    if (removed) this.scheduleSave()
+    return removed
+  }
+
+  /** Create a bookmark folder (trimmed, deduped). */
+  addFolder(name: string): { ok: boolean; error?: string } {
+    const value = name?.trim() ?? ''
+    if (!value) return { ok: false, error: '文件夹名称不能为空' }
+    if (this.data.bookmarkFolders.includes(value)) {
+      return { ok: false, error: '文件夹已存在' }
+    }
+    this.data.bookmarkFolders.push(value)
+    this.scheduleSave()
+    return { ok: true }
+  }
+
+  /** Delete a folder; bookmarks inside it return to the root (未分类). */
+  removeFolder(name: string): boolean {
+    const value = typeof name === 'string' ? name.trim() : ''
+    const index = this.data.bookmarkFolders.indexOf(value)
+    if (index < 0) return false
+    this.data.bookmarkFolders.splice(index, 1)
+    for (const item of this.data.bookmarks) {
+      if (item.folder === value) delete item.folder
+    }
+    this.scheduleSave()
+    return true
+  }
+
+  /** Rename a folder and move its bookmarks along with it. */
+  renameFolder(oldName: string, newName: string): { ok: boolean; error?: string } {
+    const oldValue = typeof oldName === 'string' ? oldName.trim() : ''
+    const newValue = newName?.trim() ?? ''
+    const index = this.data.bookmarkFolders.indexOf(oldValue)
+    if (index < 0) return { ok: false, error: '文件夹不存在' }
+    if (!newValue) return { ok: false, error: '文件夹名称不能为空' }
+    if (newValue === oldValue) return { ok: true }
+    if (this.data.bookmarkFolders.includes(newValue)) {
+      return { ok: false, error: '文件夹已存在' }
+    }
+    this.data.bookmarkFolders[index] = newValue
+    for (const item of this.data.bookmarks) {
+      if (item.folder === oldValue) item.folder = newValue
+    }
+    this.scheduleSave()
+    return { ok: true }
   }
 
   addDownload(record: DownloadRecord): void {

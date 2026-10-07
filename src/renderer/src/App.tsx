@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LoadErrorInfo, MirrorEvent, TabInfo } from '../../shared/protocol'
 import { matchesBinding, parseBinding } from '../../shared/hotkeys'
+import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, type ShortcutAction } from '../../shared/shortcuts'
 import type { PermissionRequest } from './components/PermissionCard'
 import { TabBar } from './components/TabBar'
 import { Toolbar } from './components/Toolbar'
@@ -55,7 +56,7 @@ function emergencyStopText(s: EmergencyStopEvent): string {
 export default function App(): React.JSX.Element {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
-  const [browserData, setBrowserData] = useState<BrowserDataSnapshot>({ bookmarks: [], history: [], downloads: [] })
+  const [browserData, setBrowserData] = useState<BrowserDataSnapshot>({ bookmarks: [], bookmarkFolders: [], history: [], downloads: [] })
   const [downloads, setDownloads] = useState<DownloadRecord[]>([])
   const [library, setLibrary] = useState<'bookmarks' | 'history' | 'downloads' | null>(null)
   const [findOpen, setFindOpen] = useState(false)
@@ -71,6 +72,10 @@ export default function App(): React.JSX.Element {
   const [agentEvents, setAgentEvents] = useState<MirrorEvent[]>([])
   const [confirms, setConfirms] = useState<PermissionRequest[]>([])
   const [stopKeys, setStopKeys] = useState<string[]>(['F2', 'Ctrl+Shift+K'])
+  const [shortcuts, setShortcuts] = useState<Record<string, string>>(() => ({
+    ...DEFAULT_SHORTCUTS
+  }))
+  const [platform] = useState(() => window.cobrowse.getPlatform())
   const [stopToast, setStopToast] = useState('')
   const [toast, setToast] = useState('')
   const [findResult, setFindResult] = useState<{ matches: number; activeMatch: number } | null>(null)
@@ -203,6 +208,28 @@ export default function App(): React.JSX.Element {
       if (action === 'menu:library-history') setLibrary('history')
       if (action === 'menu:library-downloads') setLibrary('downloads')
       if (action === 'menu:stopkeys') window.dispatchEvent(new Event('duplex:open-stopkeys'))
+      if (action === 'menu:shortcuts') window.dispatchEvent(new Event('duplex:open-shortcuts'))
+      if (action === 'menu:copied-link') showToast('链接已复制')
+      if (action === 'menu:copied-image') showToast('图片地址已复制')
+      if (action === 'menu:copied-url') showToast('页面地址已复制')
+      if (action === 'menu:copied-markdown') showToast('已复制为 Markdown')
+      if (action.startsWith('menu:bookmarked-all')) {
+        const n = Number(action.split(':')[2])
+        showToast(Number.isFinite(n) && n > 0 ? `已保存 ${n} 个标签页` : '已保存所有标签页')
+      }
+      // QA/automation hook (only reachable via the dev-only debug route):
+      // switch the panel mode so end-to-end tests are deterministic.
+      if (action.startsWith('panel-mode:')) {
+        const m = action.slice('panel-mode:'.length)
+        if (m === 'agent' || m === 'opencode' || m === 'external') changeMode(m)
+      }
+    })
+    void window.cobrowse
+      .shortcutsGet()
+      .then((s) => setShortcuts(s.shortcuts))
+      .catch(() => {})
+    const offShortcuts = window.cobrowse.onShortcutsChanged((map) => {
+      if (map) setShortcuts(map)
     })
     const onToast = (e: Event): void => {
       const detail = (e as CustomEvent).detail
@@ -285,41 +312,92 @@ export default function App(): React.JSX.Element {
       offAnnotation()
       offLoadError()
       offShortcut()
+      offShortcuts()
       offBrowserData()
       window.removeEventListener('duplex:toast', onToast)
     }
   }, [])
 
   useEffect(() => {
+    const runShortcut = (action: ShortcutAction): void => {
+      switch (action) {
+        case 'focusAddress':
+          window.dispatchEvent(new Event('duplex:focus-address'))
+          break
+        case 'newTab':
+          newTab()
+          break
+        case 'reopenClosed':
+          void window.cobrowse.tabAction({ type: 'reopenClosed' })
+          break
+        case 'closeTab':
+          if (tabs.length) {
+            void window.cobrowse.tabAction({ type: 'closeTab', tabId: activeTabId ?? undefined })
+          }
+          break
+        case 'reload':
+          void window.cobrowse.tabAction({ type: 'reload' })
+          break
+        case 'bookmark':
+          toggleBookmarkRef.current()
+          break
+        case 'find':
+          setFindOpen(true)
+          break
+        case 'togglePanel':
+          toggleAI()
+          break
+        case 'annotationToggle':
+          void window.cobrowse.annotationToggle()
+          break
+        case 'nextTab':
+          cycleTab(1)
+          break
+        case 'prevTab':
+          cycleTab(-1)
+          break
+        case 'zoomIn':
+          void window.cobrowse.tabAction({ type: 'zoom', value: 0.5 })
+          break
+        case 'zoomOut':
+          void window.cobrowse.tabAction({ type: 'zoom', value: -0.5 })
+          break
+        case 'zoomReset':
+          void window.cobrowse.tabAction({ type: 'zoom', value: 0 })
+          break
+        case 'back':
+          void window.cobrowse.tabAction({ type: 'back' })
+          break
+        case 'forward':
+          void window.cobrowse.tabAction({ type: 'forward' })
+          break
+      }
+    }
     const onKey = (e: KeyboardEvent): void => {
-      const mod = e.ctrlKey || e.metaKey
-      if (e.altKey && !mod) {
-        if (e.key === 'ArrowLeft') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'back' }) }
-        else if (e.key === 'ArrowRight') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'forward' }) }
+      // Ctrl+1..9 stay fixed tab shortcuts (rebinding them is rejected)
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && /^[1-9]$/.test(e.key)) {
+        e.preventDefault()
+        const target = tabs[e.key === '9' ? tabs.length - 1 : Number(e.key) - 1]
+        if (target) void window.cobrowse.tabAction({ type: 'switchTab', tabId: target.id })
         return
       }
-      if (!mod || e.altKey) return
-      const key = e.key.toLowerCase()
-      const editing = (e.target as HTMLElement | null)?.matches?.('input,textarea,[contenteditable="true"]')
-      if (key === 'l') { e.preventDefault(); window.dispatchEvent(new Event('duplex:focus-address')) }
-      else if (key === 't' && e.shiftKey) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reopenClosed' }) }
-      else if (key === 't') { e.preventDefault(); newTab() }
-      else if (key === 'w' && !e.shiftKey && tabs.length) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'closeTab', tabId: activeTabId ?? undefined }) }
-      else if (key === 'r') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reload' }) }
-      else if (key === 'd') { e.preventDefault(); void toggleBookmark() }
-      else if (key === 'f' && !editing) { e.preventDefault(); setFindOpen(true) }
-      else if (key === 'b' && !e.shiftKey && !editing) { e.preventDefault(); toggleAI() }
-      else if (key === 'a' && e.shiftKey) { e.preventDefault(); void window.cobrowse.annotationToggle() }
-      else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cycleTab(-1) }
-      else if (e.key === 'Tab') { e.preventDefault(); cycleTab(1) }
-      else if (/^[1-9]$/.test(key)) {
-        e.preventDefault()
-        const target = tabs[key === '9' ? tabs.length - 1 : Number(key) - 1]
-        if (target) void window.cobrowse.tabAction({ type: 'switchTab', tabId: target.id })
+      const like = {
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey
       }
-      else if (key === '=' || key === '+') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'zoom', value: 0.5 }) }
-      else if (key === '-' || key === '_') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'zoom', value: -0.5 }) }
-      else if (key === '0') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'zoom', value: 0 }) }
+      const editing = (e.target as HTMLElement | null)?.matches?.('input,textarea,[contenteditable="true"]') === true
+      for (const def of SHORTCUT_DEFS) {
+        const binding = shortcuts[def.id]
+        if (!binding || !matchesBinding(binding, like, platform)) continue
+        // typing in a field keeps plain-app shortcuts (find / panel) out of the way
+        if ((def.id === 'find' || def.id === 'togglePanel') && editing) continue
+        e.preventDefault()
+        runShortcut(def.id)
+        return
+      }
     }
     const onEscape = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
@@ -331,7 +409,7 @@ export default function App(): React.JSX.Element {
     window.addEventListener('keydown', onKey)
     window.addEventListener('keydown', onEscape)
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onEscape) }
-  }, [tabs, activeTabId, browserData, findOpen, library, closeFind, toggleAI, newTab, confirms, respondConfirm])
+  }, [tabs, activeTabId, browserData, findOpen, library, closeFind, toggleAI, newTab, confirms, respondConfirm, shortcuts, platform])
 
   const cycleTab = (step: number): void => {
     if (!tabs.length) return
@@ -578,6 +656,7 @@ export default function App(): React.JSX.Element {
         {library && <div className="library-overlay"><BrowserPanel
           section={library} data={browserData} downloads={downloads} onClose={() => setLibrary(null)}
           onNavigate={(url) => { setLibrary(null); navigate(url) }}
+          onRefresh={() => { void window.cobrowse.browserData().then(setBrowserData) }}
           onRemoveHistory={(url, visitedAt) => { void window.cobrowse.historyRemove(url, visitedAt).then(() => window.cobrowse.browserData()).then(setBrowserData) }}
           onClearHistory={() => { void window.cobrowse.historyClear().then(() => window.cobrowse.browserData()).then(setBrowserData) }}
           onCancelDownload={(id) => { void window.cobrowse.downloadsCancel(id) }}

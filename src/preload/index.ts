@@ -84,6 +84,43 @@ const api = {
     ipcRenderer.invoke('downloads:confirm-get') as Promise<{ enabled: boolean }>,
   downloadConfirmSet: (enabled: boolean) =>
     ipcRenderer.invoke('downloads:confirm-set', enabled) as Promise<{ ok: boolean; error?: string }>,
+  shortcutsGet: () =>
+    ipcRenderer.invoke('shortcuts:get') as Promise<{
+      shortcuts: Record<string, string>
+      defaults: Record<string, string>
+    }>,
+  shortcutsSet: (partial: Record<string, string | null>) =>
+    ipcRenderer.invoke('shortcuts:set', partial) as Promise<{
+      ok: boolean
+      error?: string
+      shortcuts?: Record<string, string>
+    }>,
+  onShortcutsChanged: (cb: (map: Record<string, string>) => void): (() => void) => {
+    const listener = (_e: unknown, map: Record<string, string>): void => cb(map)
+    ipcRenderer.on('shortcuts:changed', listener)
+    return () => ipcRenderer.removeListener('shortcuts:changed', listener)
+  },
+  bookmarkAdd: (record: { url: string; title: string; favicon?: string; folder?: string }) =>
+    ipcRenderer.invoke('browser:bookmark-add', record) as Promise<{ ok: boolean; error?: string }>,
+  bookmarkUpdate: (url: string, patch: { title?: string; url?: string; folder?: string }) =>
+    ipcRenderer.invoke('browser:bookmark-update', url, patch) as Promise<{
+      ok: boolean
+      error?: string
+    }>,
+  bookmarkRemove: (url: string) =>
+    ipcRenderer.invoke('browser:bookmark-remove', url) as Promise<{ ok: boolean }>,
+  bookmarkFolderAdd: (name: string) =>
+    ipcRenderer.invoke('browser:bookmark-folder-add', name) as Promise<{
+      ok: boolean
+      error?: string
+    }>,
+  bookmarkFolderRemove: (name: string) =>
+    ipcRenderer.invoke('browser:bookmark-folder-remove', name) as Promise<{ ok: boolean }>,
+  bookmarkFolderRename: (oldName: string, newName: string) =>
+    ipcRenderer.invoke('browser:bookmark-folder-rename', oldName, newName) as Promise<{
+      ok: boolean
+      error?: string
+    }>,
   onLoadError: (cb: (info: LoadErrorInfo) => void): (() => void) => {
     const listener = (_e: unknown, info: LoadErrorInfo): void => cb(info)
     ipcRenderer.on('browser:load-error', listener)

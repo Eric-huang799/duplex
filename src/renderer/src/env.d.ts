@@ -18,6 +18,27 @@ interface CobrowseApi {
   onThemeChanged(cb: (theme: 'system' | 'light' | 'dark') => void): () => void
   downloadConfirmGet(): Promise<{ enabled: boolean }>
   downloadConfirmSet(enabled: boolean): Promise<{ ok: boolean; error?: string }>
+  shortcutsGet(): Promise<{ shortcuts: Record<string, string>; defaults: Record<string, string> }>
+  shortcutsSet(partial: Record<string, string | null>): Promise<{
+    ok: boolean
+    error?: string
+    shortcuts?: Record<string, string>
+  }>
+  onShortcutsChanged(cb: (map: Record<string, string>) => void): () => void
+  bookmarkAdd(record: {
+    url: string
+    title: string
+    favicon?: string
+    folder?: string
+  }): Promise<{ ok: boolean; error?: string }>
+  bookmarkUpdate(
+    url: string,
+    patch: { title?: string; url?: string; folder?: string }
+  ): Promise<{ ok: boolean; error?: string }>
+  bookmarkRemove(url: string): Promise<{ ok: boolean }>
+  bookmarkFolderAdd(name: string): Promise<{ ok: boolean; error?: string }>
+  bookmarkFolderRemove(name: string): Promise<{ ok: boolean }>
+  bookmarkFolderRename(oldName: string, newName: string): Promise<{ ok: boolean; error?: string }>
   onLoadError(cb: (info: LoadErrorInfo) => void): () => void
   setPanelMode(mode: 'opencode' | 'agent' | 'external'): Promise<{ ok: boolean }>
   onMirror(cb: (ev: MirrorEvent) => void): () => void

@@ -56,6 +56,18 @@ export function TabBar({ tabs, activeTabId, onSwitch, onClose, onNew }: Props): 
         >
           {t.loading && <span className="tab-loading" />}
           {t.favicon && <img className="tab-favicon" src={t.favicon} onError={(e) => { e.currentTarget.style.display = 'none' }} />}
+          {(t.audioMuted || t.audioPlaying) && (
+            <button
+              className="tab-audio"
+              title={t.audioMuted ? '取消静音' : '静音标签页'}
+              onClick={(e) => {
+                e.stopPropagation()
+                void window.cobrowse.tabAction({ type: 'toggleMute', tabId: t.id })
+              }}
+            >
+              {t.audioMuted ? '🔇' : '🔊'}
+            </button>
+          )}
           <span className="tab-title">{shortTitle(t)}</span>
           <button
             className="tab-close"

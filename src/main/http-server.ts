@@ -38,6 +38,8 @@ export interface HttpServerDeps {
   onUserActivity?: () => void
   /** Clear the emergency-stop latch explicitly (programmatic "resume" control). */
   resumeAi?: () => void
+  /** Debug helper (only wired when COBROWSE_DEBUG_UI=1): forward a browser:shortcut action to the renderer. */
+  uiAction?: (action: string) => void
 }
 
 export interface RunningHttpServer {
@@ -421,6 +423,26 @@ async function handle(
         Number(body?.delayMs) || 50
       )
       sendJson(res, 200, { ok: true, typed: text.length })
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: String(e) })
+    }
+    return
+  }
+
+  if (debugOk && url.pathname === '/api/debug/ui-action' && req.method === 'POST') {
+    if (!deps.uiAction) {
+      sendJson(res, 501, { error: 'uiAction not available (set COBROWSE_DEBUG_UI=1)' })
+      return
+    }
+    const body = (await readBody(req)) as { action?: string } | undefined
+    const action = String(body?.action ?? '')
+    if (!action) {
+      sendJson(res, 400, { error: 'action is required' })
+      return
+    }
+    try {
+      deps.uiAction(action)
+      sendJson(res, 200, { ok: true })
     } catch (e) {
       sendJson(res, 500, { ok: false, error: String(e) })
     }

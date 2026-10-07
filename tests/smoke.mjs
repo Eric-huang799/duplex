@@ -324,6 +324,16 @@ async function main() {
   )
   ok('question card is clickable (own hit layer)', cardHit.hitIsInput === true, JSON.stringify(cardHit))
 
+  // Deterministic delivery: switch the panel to opencode mode via the dev-only
+  // debug action so the annotation lands in the injection queue. Ignore when
+  // the app was started without COBROWSE_DEBUG_UI=1.
+  await fetch(`http://127.0.0.1:${ep.port}/api/debug/ui-action`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...auth },
+    body: JSON.stringify({ action: 'panel-mode:opencode' })
+  }).catch(() => {})
+  await sleep(300)
+
   await client.callTool({
     name: 'evaluate',
     arguments: {

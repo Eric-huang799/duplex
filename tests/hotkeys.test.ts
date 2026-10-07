@@ -56,6 +56,16 @@ describe('comboFromEvent / matchesBinding', () => {
     expect(sameBinding('f2', 'F2')).toBe(true)
     expect(sameBinding('F2', 'F3')).toBe(false)
   })
+
+  it('treats Ctrl and Cmd as interchangeable on macOS (platform parameter)', () => {
+    expect(matchesBinding('Ctrl+L', { key: 'l', metaKey: true }, 'darwin')).toBe(true)
+    expect(matchesBinding('Meta+L', { key: 'l', ctrlKey: true }, 'darwin')).toBe(true)
+    expect(matchesBinding('Ctrl+L', { key: 'L', ctrlKey: true }, 'darwin')).toBe(true)
+    expect(matchesBinding('Ctrl+L', { key: 'l', ctrlKey: true, shiftKey: true }, 'darwin')).toBe(false)
+    // Windows keeps Ctrl and Meta strictly separate
+    expect(matchesBinding('Ctrl+L', { key: 'l', metaKey: true }, 'win32')).toBe(false)
+    expect(matchesBinding('Ctrl+L', { key: 'l', ctrlKey: true }, 'win32')).toBe(true)
+  })
 })
 
 describe('validateBinding', () => {

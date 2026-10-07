@@ -1072,7 +1072,7 @@ describe('BrowserDataStore (corruption recovery + .bak)', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     try {
       const store = new BrowserDataStore(dir)
-      expect(store.snapshot()).toEqual({ bookmarks: [], history: [], downloads: [] })
+      expect(store.snapshot()).toEqual({ bookmarks: [], bookmarkFolders: [], history: [], downloads: [] })
     } finally {
       spy.mockRestore()
     }

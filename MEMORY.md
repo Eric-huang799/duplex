@@ -21,13 +21,23 @@
 - 标注诚实回执（外部模式拒绝/opencode 排队 warning/无提问说明）；草稿按模式持久化；自定义工具支持工作目录；DeepSeek/OpenAI/Ollama 预置。
 - Mac 平台感知快捷键显示与校验；冲突表补全；地址栏焦点下缩放/数字切换/Alt 导航可用。
 
+轮次 3（commit `9cf4a6d`，实机调试）：`/api/emergency/resume` 显式恢复；CSP 允许 http 图；smoke/visual-check 适配 0.2.6 语义；inject-latency 改 opt-in。
+
+轮次 4（快捷键自定义 + 书签完整 + 借鉴功能包，见 Obsidian 记录最新一节）：
+- 快捷键全部可自定义：16 动作、`⋯`→快捷键设置、录制/恢复/冲突校验、地址栏+网页双层生效；`Ctrl+1..9` 保留。
+- 书签面板完整：文件夹增删改、书签增改删、新标签打开（Ctrl/中键）、复制链接、排序、搜索。
+- 借鉴功能（Chrome/Zen/Floorp/Vimium 调研）：页面右键原生菜单、标签静音、最近关闭列表、复制为 Markdown、所有标签存书签。
+- 调试基建：`POST /api/debug/ui-action`（仅开发）驱动渲染层动作，供 UI 自动化/测试确定性。
+
 ## 开发/验证命令
 - `npm run typecheck`（tsc node+web）
-- `npx vitest run`（205 用例）
+- `npx vitest run`（240 用例）
 - `npm run build` + `npm run build:bridge`
-- `npm run smoke`（端到端，会真实启动浏览器窗口；用户在工作时勿跑）
+- `npm run smoke`（端到端 34 项，会真实启动浏览器窗口；用户在工作时勿跑）
 - 打包：`npm run dist`（产物在 `release/`，gitignore）
+- 调试模式：`COBROWSE_DEBUG_UI=1` 启动后可用 `/api/debug/ui-action`、`/api/debug/exec`（exec 用表达式形式，顶层 return 不允许）
 
 ## 注意事项
 - 调试注入 API（http-server.ts/index.ts）曾为未提交调试文件，0.2.6 起已提交并加 `isPackaged` 门控：开发可用、打包版不可达。
-- 待办（延后）：token/费用统计 UI、响应式适配、触屏标注、「下载前询问」开关 UI（当前默认询问，可在 settings.json 手动关：`confirmBeforeDownload: false`）。
+- 待办（延后）：命令面板/标签搜索/会话恢复/阅读模式/标签固定/多选批量/书签 HTML 导入导出、token/费用统计 UI、响应式适配、触屏标注。
+- 本机已安装 0.2.5 与开发版可并存：开发版需 `--user-data-dir` 独立目录避开单例锁。

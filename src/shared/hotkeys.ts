@@ -170,11 +170,18 @@ function platformEquivalents(combo: string, platform?: string): string[] {
   return [combo, alt]
 }
 
-export function matchesBinding(binding: string, e: KeyEventLike): boolean {
+export function matchesBinding(binding: string, e: KeyEventLike, platform?: string): boolean {
   const p = parseBinding(binding)
   if (!p) return false
   const key = e.key ? normalizeKeyName(e.key) : ''
   if (key !== p.key) return false
+  if (isMacPlatform(platform)) {
+    // Cmd and Ctrl are interchangeable on macOS: a "Ctrl+…" binding also
+    // matches ⌘+… and vice versa.
+    const bindingCtrl = p.ctrl || p.meta
+    const eventCtrl = !!e.ctrlKey || !!e.metaKey
+    return bindingCtrl === eventCtrl && !!e.altKey === p.alt && !!e.shiftKey === p.shift
+  }
   return (
     !!e.ctrlKey === p.ctrl &&
     !!e.altKey === p.alt &&

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { TabInfo } from '../../../shared/protocol'
 import { VirtualKeyboard } from './VirtualKeyboard'
-import { comboFromEvent, displayParts, isModifierKey, sameBinding, validateBinding } from '../../../shared/hotkeys'
+import { comboFromEvent, displayParts, isModifierKey, normalizeBinding, sameBinding, validateBinding } from '../../../shared/hotkeys'
+import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, validateShortcuts, type ShortcutAction } from '../../../shared/shortcuts'
 
 type ThemeSetting = 'system' | 'light' | 'dark'
 
@@ -44,6 +45,13 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   const [listening, setListening] = useState(false)
   const [pendingMods, setPendingMods] = useState('')
   const [vkOpen, setVkOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [shortcutCurrent, setShortcutCurrent] = useState<Record<string, string>>(() => ({ ...DEFAULT_SHORTCUTS }))
+  const [shortcutDefaults, setShortcutDefaults] = useState<Record<string, string>>(() => ({ ...DEFAULT_SHORTCUTS }))
+  const [shortcutDraft, setShortcutDraft] = useState<Record<string, string | null>>({})
+  const [shortcutError, setShortcutError] = useState('')
+  const [recordingAction, setRecordingAction] = useState<ShortcutAction | null>(null)
+  const [recordingMods, setRecordingMods] = useState('')
 
   useEffect(() => {
     onChromeOverlayChange?.('toolbar-stop-keys', stopKeysOpen)
@@ -83,6 +91,27 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     // openStopKeys only touches stable state setters
   }, [])
 
+  useEffect(() => {
+    onChromeOverlayChange?.('toolbar-shortcuts', shortcutsOpen)
+    return () => onChromeOverlayChange?.('toolbar-shortcuts', false)
+  }, [shortcutsOpen, onChromeOverlayChange])
+
+  useEffect(() => {
+    const onOpenShortcuts = (): void => openShortcuts()
+    window.addEventListener('duplex:open-shortcuts', onOpenShortcuts)
+    return () => window.removeEventListener('duplex:open-shortcuts', onOpenShortcuts)
+  }, [])
+
+  useEffect(() => {
+    if (!shortcutsOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      closeShortcuts()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [shortcutsOpen])
+
   const closeStopKeys = (): void => {
     setStopKeysOpen(false)
     setListening(false)
@@ -96,6 +125,81 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     setListening(false)
     setPendingMods('')
     void window.cobrowse.emergencyKeysGet().then((s) => setStopKeys(s.keys))
+  }
+
+  const closeShortcuts = (): void => {
+    setShortcutsOpen(false)
+    setShortcutDraft({})
+    setShortcutError('')
+    setRecordingAction(null)
+    setRecordingMods('')
+  }
+
+  const openShortcuts = (): void => {
+    setShortcutsOpen(true)
+    setShortcutDraft({})
+    setShortcutError('')
+    setRecordingAction(null)
+    setRecordingMods('')
+    void window.cobrowse.shortcutsGet().then((s) => {
+      setShortcutCurrent(s.shortcuts)
+      setShortcutDefaults(s.defaults)
+    })
+  }
+
+  const shortcutValue = (id: ShortcutAction): string => {
+    if (Object.prototype.hasOwnProperty.call(shortcutDraft, id)) {
+      const v = shortcutDraft[id]
+      return v === null ? (shortcutDefaults[id] ?? DEFAULT_SHORTCUTS[id]) : v
+    }
+    return shortcutCurrent[id] ?? DEFAULT_SHORTCUTS[id]
+  }
+
+  const onShortcutRecorderKeyDown = (e: React.KeyboardEvent, id: ShortcutAction): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.key === 'Escape') {
+      setRecordingAction(null)
+      setRecordingMods('')
+      ;(e.target as HTMLElement).blur()
+      return
+    }
+    if (isModifierKey(e.key)) {
+      const parts: string[] = []
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.altKey) parts.push('Alt')
+      if (e.shiftKey) parts.push('Shift')
+      if (e.metaKey) parts.push('Win')
+      setRecordingMods(parts.join(' + '))
+      return
+    }
+    const combo = comboFromEvent(e)
+    if (combo) {
+      const norm = normalizeBinding(combo) ?? combo
+      setShortcutDraft((d) => ({ ...d, [id]: norm }))
+      setShortcutError('')
+    }
+    setRecordingMods('')
+    setRecordingAction(null)
+    ;(e.target as HTMLElement).blur()
+  }
+
+  const saveShortcuts = (): void => {
+    const effective: Record<string, string> = {}
+    for (const def of SHORTCUT_DEFS) effective[def.id] = shortcutValue(def.id)
+    const check = validateShortcuts(effective, { platform })
+    if (!check.ok) {
+      setShortcutError(check.error)
+      return
+    }
+    void window.cobrowse.shortcutsSet(shortcutDraft).then((r) => {
+      if (!r.ok) {
+        setShortcutError(r.error ?? '保存失败')
+        return
+      }
+      if (r.shortcuts) setShortcutCurrent(r.shortcuts)
+      closeShortcuts()
+    })
   }
 
   useEffect(() => {
@@ -305,6 +409,115 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
                   })
                 }}
               >
+                保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {shortcutsOpen && (
+        <div
+          className="confirm-overlay"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (e.target === e.currentTarget) closeShortcuts()
+          }}
+        >
+          <div className="confirm-box stopkey-box">
+            <div className="confirm-title">快捷键设置</div>
+            <div className="stopkey-hint">
+              点击某个动作的「录制」后直接按下新按键（Esc 取消录制）；「恢复默认」将该动作还原为默认键。保存后立即生效。
+            </div>
+            <div
+              style={{
+                maxHeight: '46vh',
+                overflowY: 'auto',
+                border: '1px solid var(--line)',
+                borderRadius: 10,
+                padding: '0 10px'
+              }}
+            >
+              {SHORTCUT_DEFS.map((def) => {
+                const value = shortcutValue(def.id)
+                const isListening = recordingAction === def.id
+                const isDefault =
+                  value === (shortcutDefaults[def.id] ?? DEFAULT_SHORTCUTS[def.id])
+                return (
+                  <div
+                    key={def.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '7px 0',
+                      borderBottom: '1px solid var(--line-soft)'
+                    }}
+                  >
+                    <span style={{ flex: '0 0 118px', fontSize: 12.5 }}>{def.label}</span>
+                    <span className="stopkey-chip" style={{ flex: '1 1 auto', minWidth: 0 }}>
+                      {displayParts(value, platform).map((p, i) => (
+                        <span className="stopkey-capwrap" key={i}>
+                          {i > 0 && <span className="stopkey-plus">+</span>}
+                          <kbd>{p}</kbd>
+                        </span>
+                      ))}
+                    </span>
+                    <div
+                      tabIndex={0}
+                      className={`stopkey-recorder stopkey-capture${isListening ? ' listening' : ''}`}
+                      style={{
+                        flex: '0 0 120px',
+                        alignSelf: 'center',
+                        padding: '6px 8px',
+                        fontSize: 11.5
+                      }}
+                      onFocus={() => {
+                        setRecordingAction(def.id)
+                        setRecordingMods('')
+                        setShortcutError('')
+                      }}
+                      onBlur={() => {
+                        setRecordingAction((cur) => (cur === def.id ? null : cur))
+                        setRecordingMods('')
+                      }}
+                      onKeyDown={(e) => onShortcutRecorderKeyDown(e, def.id)}
+                    >
+                      {isListening ? recordingMods || '按下按键…（Esc 取消）' : '录制'}
+                    </div>
+                    <button
+                      type="button"
+                      className="stopkey-vk-toggle"
+                      style={{ alignSelf: 'center' }}
+                      disabled={isDefault}
+                      onClick={() => {
+                        setShortcutDraft((d) => ({ ...d, [def.id]: null }))
+                        setShortcutError('')
+                      }}
+                    >
+                      恢复默认
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+            {shortcutError && <div className="stopkey-error">{shortcutError}</div>}
+            <div className="confirm-row">
+              <button
+                className="import-btn"
+                onClick={() => {
+                  setShortcutDraft(
+                    Object.fromEntries(SHORTCUT_DEFS.map((d) => [d.id, null]))
+                  )
+                  setShortcutError('')
+                }}
+              >
+                恢复全部默认
+              </button>
+              <button className="import-btn" onClick={closeShortcuts}>
+                取消
+              </button>
+              <button className="send-btn" onClick={saveShortcuts}>
                 保存
               </button>
             </div>

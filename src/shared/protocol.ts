@@ -18,9 +18,13 @@ export interface TabInfo {
   canGoBack: boolean
   canGoForward: boolean
   favicon?: string
+  /** Page audio is muted (Chrome-style speaker control). */
+  audioMuted?: boolean
+  /** Page is currently producing audio. */
+  audioPlaying?: boolean
 }
 
-export interface BookmarkRecord { url: string; title: string; favicon?: string; addedAt: number }
+export interface BookmarkRecord { url: string; title: string; favicon?: string; addedAt: number; folder?: string }
 export interface HistoryRecord { url: string; title: string; visitedAt: number; favicon?: string }
 export interface DownloadRecord {
   id: string; filename: string; path: string; url: string
@@ -29,6 +33,8 @@ export interface DownloadRecord {
 }
 export interface BrowserDataSnapshot {
   bookmarks: BookmarkRecord[]
+  /** User-created bookmark folder names (bookmarks without a folder live at the root). */
+  bookmarkFolders: string[]
   history: HistoryRecord[]
   downloads: DownloadRecord[]
 }

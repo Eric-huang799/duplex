@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -14,7 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { TabManager } from './tabs'
+import { TabManager, type PageContextMenuInfo, type Tab } from './tabs'
 import { BrowserDataStore } from './browser-data'
 import { DownloadManager } from './downloads'
 import { MirrorStore } from './mirror'
@@ -35,7 +36,15 @@ import {
   type AnnotationSubmitPayload
 } from './annotations'
 import { cobrowseDir, removeEndpoint, writeEndpoint } from '../shared/endpoint'
-import { validateBinding } from '../shared/hotkeys'
+import { normalizeBinding, validateBinding } from '../shared/hotkeys'
+import {
+  DEFAULT_SHORTCUTS,
+  bindingConflicts,
+  effectiveShortcuts,
+  isShortcutAction,
+  shortcutLabel,
+  validateShortcuts
+} from '../shared/shortcuts'
 import {
   activeAgentConfig,
   loadSettings,
@@ -45,6 +54,7 @@ import {
   saveProviders,
   saveSearchEngine,
   saveSession,
+  saveShortcuts,
   saveTheme,
   type AgentConfig,
   type ThemeSetting
@@ -889,6 +899,16 @@ async function start(): Promise<void> {
     agentBusy: () => agentRuntime?.isRunning ?? false,
     onUserActivity: () => maybeResumeAi(),
     resumeAi: () => maybeResumeAi(),
+    uiAction:
+      process.env['COBROWSE_DEBUG_UI'] === '1'
+        ? (action: string) => {
+            try {
+              win?.webContents.send('browser:shortcut', action)
+            } catch {
+              /* window is going away */
+            }
+          }
+        : undefined,
     mirrorGate: () => mirrorSource === 'opencode',
     captureUI: async () => {
       try {
@@ -1156,9 +1176,11 @@ function createWindow(): void {
       } catch {
         /* window is going away */
       }
-    }
+    },
+    (tab, info) => showPageContextMenu(tab, info)
   )
   tabs.createTab()
+  tabs.setShortcuts(effectiveShortcuts(loadSettings().shortcuts))
 
   mirror.onEvent = (ev) => {
     try {
@@ -1244,6 +1266,181 @@ function popupAppMenu(template: MenuItemConstructorOptions[], x: number, y: numb
   }
 }
 
+/** Single-line menu label, truncated with an ellipsis when too long. */
+function truncateMenuLabel(text: string, max: number): string {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  return clean.length > max ? `${clean.slice(0, max)}…` : clean
+}
+
+/** WebContents of the active page tab, or null when there is none/already gone. */
+function activePageWebContents(): WebContents | null {
+  try {
+    const tab = tabs?.getActive()
+    if (!tab) return null
+    const wc = tab.view.webContents
+    return wc.isDestroyed() ? null : wc
+  } catch {
+    return null
+  }
+}
+
+/** Copy `[title](url)` of the given page to the clipboard and notify the renderer. */
+function copyPageAsMarkdown(wc: WebContents | null | undefined): void {
+  if (!wc || wc.isDestroyed()) return
+  try {
+    const url = wc.getURL()
+    if (!url || url === 'about:blank') return
+    const title = wc.getTitle() || url
+    clipboard.writeText(`[${title}](${url})`)
+    sendBrowserShortcut('menu:copied-markdown')
+  } catch (e) {
+    logLine(`[menu] copy markdown failed: ${(e as Error)?.message ?? String(e)}`)
+  }
+}
+
+/** Add every http(s) tab to a freshly named bookmark folder. */
+function bookmarkAllTabs(): void {
+  if (!tabs) return
+  const items = tabs.list().filter((t) => /^https?:\/\//i.test(t.url))
+  if (items.length === 0) return
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const now = new Date()
+  const folder = `标签组 ${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+  browserData.addFolder(folder) // already existing (same minute) is fine
+  for (const item of items) {
+    browserData.addBookmark({
+      url: item.url,
+      title: item.title || item.url,
+      favicon: item.favicon,
+      folder
+    })
+  }
+  emitBrowserData()
+  sendBrowserShortcut(`menu:bookmarked-all:${items.length}`)
+}
+
+/**
+ * Native menu for a right-click on page content. Sections are built from the
+ * click context (link / image / selection / editable) and share a common tail.
+ */
+function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
+  const template: MenuItemConstructorOptions[] = []
+  const copyText = (text: string, action: string): void => {
+    try {
+      clipboard.writeText(text)
+      sendBrowserShortcut(action)
+    } catch (e) {
+      logLine(`[menu] clipboard write failed: ${(e as Error)?.message ?? String(e)}`)
+    }
+  }
+  if (info.linkURL) {
+    template.push(
+      { label: '在新标签页打开链接', click: () => tabs?.createTab(info.linkURL) },
+      { label: '复制链接地址', click: () => copyText(info.linkURL, 'menu:copied-link') },
+      { type: 'separator' }
+    )
+  }
+  if (info.mediaType === 'image' && info.srcURL) {
+    const srcURL = info.srcURL
+    template.push(
+      { label: '在新标签页打开图片', click: () => tabs?.createTab(srcURL) },
+      { label: '复制图片地址', click: () => copyText(srcURL, 'menu:copied-image') },
+      {
+        label: '图片另存为',
+        click: () => {
+          try {
+            const wc = tab.view.webContents
+            if (!wc.isDestroyed()) wc.downloadURL(srcURL)
+          } catch {
+            /* page already gone */
+          }
+        }
+      },
+      { type: 'separator' }
+    )
+  }
+  if (info.selectionText) {
+    const selectionText = info.selectionText
+    const engine = loadSettings().searchEngine
+    const engineName = SEARCH_ENGINES[engine]?.name ?? SEARCH_ENGINES.baidu.name
+    template.push(
+      { label: '复制', role: 'copy' },
+      {
+        label: `使用${engineName}搜索 "${truncateMenuLabel(selectionText, 30)}"`,
+        click: () => tabs?.createTab(searchUrl(selectionText, engine))
+      },
+      { type: 'separator' }
+    )
+  }
+  if (info.isEditable) {
+    template.push(
+      { label: '剪切', role: 'cut', enabled: info.editFlags.canCut },
+      { label: '复制', role: 'copy', enabled: info.editFlags.canCopy },
+      { label: '粘贴', role: 'paste', enabled: info.editFlags.canPaste },
+      { label: '全选', role: 'selectAll', enabled: info.editFlags.canSelectAll },
+      { type: 'separator' }
+    )
+  }
+  // common tail: navigation of the page the menu belongs to (the active one,
+  // since only visible views can receive a right-click)
+  const targetTab = tabs?.getActive() ?? tab
+  const wcAtClick = (): WebContents | null => {
+    try {
+      const wc = targetTab.view.webContents
+      return wc.isDestroyed() ? null : wc
+    } catch {
+      return null
+    }
+  }
+  let canGoBack = false
+  let canGoForward = false
+  let pageUrl = ''
+  try {
+    const wc = wcAtClick()
+    if (wc) {
+      canGoBack = wc.navigationHistory.canGoBack()
+      canGoForward = wc.navigationHistory.canGoForward()
+      pageUrl = wc.getURL()
+    }
+  } catch {
+    /* page already gone */
+  }
+  template.push(
+    {
+      label: '后退',
+      enabled: canGoBack,
+      click: () => {
+        const wc = wcAtClick()
+        if (!wc) return
+        const nav = wc.navigationHistory
+        if (nav.canGoBack()) nav.goBack()
+      }
+    },
+    {
+      label: '前进',
+      enabled: canGoForward,
+      click: () => {
+        const wc = wcAtClick()
+        if (!wc) return
+        const nav = wc.navigationHistory
+        if (nav.canGoForward()) nav.goForward()
+      }
+    },
+    {
+      label: '刷新',
+      enabled: pageUrl !== '',
+      click: () => {
+        const wc = wcAtClick()
+        if (wc) wc.reload()
+      }
+    },
+    { type: 'separator' },
+    { label: '复制页面地址', enabled: pageUrl !== '', click: () => copyText(pageUrl, 'menu:copied-url') },
+    { label: '复制为 Markdown', enabled: pageUrl !== '', click: () => copyPageAsMarkdown(wcAtClick()) }
+  )
+  popupAppMenu(template, info.x, info.y)
+}
+
 function setupIpc(): void {
   ipcMain.handle('ui:ready', () => {
     const state = {
@@ -1272,6 +1469,42 @@ function setupIpc(): void {
     const bookmarked = browserData.toggleBookmark(record)
     emitBrowserData()
     return { bookmarked }
+  })
+  ipcMain.handle(
+    'browser:bookmark-add',
+    (_e, record: { url: string; title: string; favicon?: string; folder?: string }) => {
+      const result = browserData.addBookmark(record)
+      if (result.ok) emitBrowserData()
+      return result
+    }
+  )
+  ipcMain.handle(
+    'browser:bookmark-update',
+    (_e, url: string, patch: { title?: string; url?: string; folder?: string }) => {
+      const result = browserData.updateBookmark(url, patch)
+      if (result.ok) emitBrowserData()
+      return result
+    }
+  )
+  ipcMain.handle('browser:bookmark-remove', (_e, url: string) => {
+    browserData.removeBookmark(url)
+    emitBrowserData()
+    return { ok: true }
+  })
+  ipcMain.handle('browser:bookmark-folder-add', (_e, name: string) => {
+    const result = browserData.addFolder(name)
+    if (result.ok) emitBrowserData()
+    return result
+  })
+  ipcMain.handle('browser:bookmark-folder-remove', (_e, name: string) => {
+    browserData.removeFolder(name)
+    emitBrowserData()
+    return { ok: true }
+  })
+  ipcMain.handle('browser:bookmark-folder-rename', (_e, oldName: string, newName: string) => {
+    const result = browserData.renameFolder(oldName, newName)
+    if (result.ok) emitBrowserData()
+    return result
   })
   ipcMain.handle('browser:history-remove', (_e, url: string, visitedAt: number) => {
     browserData.removeHistory(url, visitedAt)
@@ -1371,6 +1604,11 @@ function setupIpc(): void {
           case 'closeToRight':
             if (action.tabId != null) tabs.closeToRight(action.tabId)
             break
+          case 'toggleMute': {
+            if (action.tabId == null) return noTab
+            if (!tabs.toggleMute(action.tabId)) return { ok: false, error: '标签页不存在' }
+            break
+          }
           case 'find': {
             const tab = tabs.getActive()
             if (!tab) return noTab
@@ -1430,9 +1668,27 @@ function setupIpc(): void {
     const infos = tabs.list()
     const index = infos.findIndex((t) => t.id === id)
     const tab = tabs.getTab(id)
+    const info = infos.find((t) => t.id === id)
+    const closed = tabs.getClosedTabs()
+    const recentClosed: MenuItemConstructorOptions[] =
+      closed.length > 0
+        ? [...closed].reverse().map((entry, i) => {
+            const full = entry.title || entry.url
+            return {
+              label: truncateMenuLabel(full, 40),
+              toolTip: full,
+              click: () => tabs?.reopenClosed(closed.length - 1 - i)
+            }
+          })
+        : [{ label: '(空)', enabled: false }]
     popupAppMenu(
       [
         { label: '复制标签页', enabled: tab != null, click: () => tabs?.duplicateTab(id) },
+        {
+          label: info?.audioMuted ? '取消静音' : '静音标签页',
+          enabled: tab != null,
+          click: () => tabs?.toggleMute(id)
+        },
         {
           label: '关闭其他标签页',
           enabled: tab != null && infos.length > 1,
@@ -1443,7 +1699,13 @@ function setupIpc(): void {
           enabled: tab != null && index >= 0 && index < infos.length - 1,
           click: () => tabs?.closeToRight(id)
         },
+        {
+          label: '所有标签页加入书签',
+          enabled: infos.some((t) => /^https?:\/\//i.test(t.url)),
+          click: () => bookmarkAllTabs()
+        },
         { type: 'separator' },
+        { label: '最近关闭的标签页', submenu: recentClosed },
         {
           label: '重新打开关闭的标签页',
           enabled: tabs.canReopenClosed(),
@@ -1494,6 +1756,7 @@ function setupIpc(): void {
         { label: '书签', click: () => sendBrowserShortcut('menu:library-bookmarks') },
         { label: '浏览记录', click: () => sendBrowserShortcut('menu:library-history') },
         { label: '下载内容', click: () => sendBrowserShortcut('menu:library-downloads') },
+        { label: '复制本页为 Markdown', click: () => copyPageAsMarkdown(activePageWebContents()) },
         { type: 'separator' },
         {
           label: '页面标注',
@@ -1502,6 +1765,7 @@ function setupIpc(): void {
           click: () => sendAnnotationState(toggleAnnotationMode().active)
         },
         { label: '设置急停键', click: () => sendBrowserShortcut('menu:stopkeys') },
+        { label: '快捷键设置', click: () => sendBrowserShortcut('menu:shortcuts') },
         { type: 'separator' },
         ...(['system', 'light', 'dark'] as const).map(
           (t): MenuItemConstructorOptions => ({
@@ -2181,14 +2445,61 @@ function setupIpc(): void {
     return r
   })
 
+  ipcMain.handle('shortcuts:get', () => ({
+    shortcuts: effectiveShortcuts(loadSettings().shortcuts),
+    defaults: { ...DEFAULT_SHORTCUTS }
+  }))
+
+  ipcMain.handle('shortcuts:set', (_e, partial: unknown) => {
+    if (!partial || typeof partial !== 'object' || Array.isArray(partial)) {
+      return { ok: false, error: '无效的快捷键设置' }
+    }
+    const overrides: Record<string, string> = { ...loadSettings().shortcuts }
+    for (const [action, value] of Object.entries(partial as Record<string, unknown>)) {
+      if (!isShortcutAction(action)) continue
+      if (value === null) {
+        delete overrides[action]
+        continue
+      }
+      if (typeof value !== 'string') {
+        return { ok: false, error: `「${shortcutLabel(action)}」的按键无效` }
+      }
+      const norm = normalizeBinding(value)
+      if (!norm) return { ok: false, error: `「${shortcutLabel(action)}」的按键无法识别` }
+      overrides[action] = norm
+    }
+    const effective = effectiveShortcuts(overrides)
+    const check = validateShortcuts(effective, {
+      platform: process.platform,
+      emergencyKeys: loadSettings().emergencyStopKeys
+    })
+    if (!check.ok) return { ok: false, error: check.error }
+    const saved = saveShortcuts(overrides)
+    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+    tabs?.setShortcuts(effective)
+    try {
+      win?.webContents.send('shortcuts:changed', effective)
+    } catch {
+      /* window is going away */
+    }
+    return { ok: true, shortcuts: effective }
+  })
+
   ipcMain.handle('emergency:keys-get', () => ({ keys: loadSettings().emergencyStopKeys }))
 
   ipcMain.handle('emergency:keys-set', (_e, keys: unknown) => {
     const list: string[] = []
+    const shortcutsMap = effectiveShortcuts(loadSettings().shortcuts)
     for (const k of Array.isArray(keys) ? keys : []) {
       if (typeof k !== 'string' || k.length === 0 || k.length > 32) continue
       const v = validateBinding(k)
-      if (v.ok) list.push(v.combo)
+      if (v.ok) {
+        const conflict = bindingConflicts(v.combo, shortcutsMap, { platform: process.platform })
+        if (conflict) {
+          return { ok: false, error: `该组合已被快捷键「${conflict.label}」使用` }
+        }
+        list.push(v.combo)
+      }
       if (list.length >= 5) break
     }
     const unique = [...new Set(list)]

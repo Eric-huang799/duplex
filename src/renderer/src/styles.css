@@ -172,6 +172,21 @@ body {
 
 .tab-favicon { width: 15px; height: 15px; object-fit: contain; flex: 0 0 auto; border-radius: 3px; }
 
+.tab-audio {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.tab-audio:hover {
+  background: var(--bg-tab-close-hover);
+}
+
 .tab.active {
   background: var(--bg-tab-active);
   color: var(--text-strong);
