@@ -12,6 +12,7 @@ export class MirrorStore {
   private maxEvents = 1000
   private injectionWaiters = new Set<() => void>()
   private injectionPaused = false
+  private lastConsumerAt = 0
 
   onEvent: ((ev: MirrorEvent) => void) | null = null
 
@@ -22,31 +23,49 @@ export class MirrorStore {
   setInjectionPaused(paused: boolean): void {
     this.injectionPaused = paused
   }
-  private recentSigs = new Map<string, number>()
+
+  /**
+   * Record the most recent activity from an AI consumer (an opencode plugin
+   * polling /api/injections). Used by chat:send to warn when nothing is
+   * connected to receive queued messages.
+   */
+  touchConsumer(): void {
+    this.lastConsumerAt = Date.now()
+  }
+
+  hasConsumer(withinMs = 45000): boolean {
+    return this.lastConsumerAt > 0 && Date.now() - this.lastConsumerAt <= withinMs
+  }
+
+  /**
+   * Stream identity of an event: kind + sessionID + partID. Only events that
+   * share this identity with the last accepted copy are candidates for
+   * snapshot dedup; identical text under a different partID is a distinct
+   * message and must never be dropped.
+   */
+  private streamKey(push: MirrorPush): string {
+    const p = push as Record<string, unknown>
+    return JSON.stringify([push.kind, p.sessionID ?? '', p.partID ?? ''])
+  }
+
+  private recentSigs = new Map<string, { sig: string; ts: number }>()
 
   add(push: MirrorPush): MirrorEvent | null {
-    // Cross-instance / reconnect dedup: identical event content within 5s is
-    // dropped (opencode may deliver the same event through several plugin
-    // instances and the hook + SSE paths at once).
-    const p = push as Record<string, unknown>
-    const sig = JSON.stringify([
-      push.kind,
-      p.sessionID ?? '',
-      p.partID ?? '',
-      p.annotationId ?? '',
-      p.text ?? '',
-      p.status ?? '',
-      p.tool ?? '',
-      p.tool === undefined && p.status === undefined ? p.summary ?? '' : ''
-    ])
+    // Cross-instance / reconnect dedup: an exact repeat of the last content
+    // for the same stream (opencode may deliver the same snapshot through
+    // several plugin instances and the hook + SSE paths at once) is dropped.
+    // A changed snapshot (same part, new content) passes through so the
+    // renderer can merge the streaming update by partID.
+    const key = this.streamKey(push)
+    const sig = JSON.stringify(push)
     const now = Date.now()
-    const prev = this.recentSigs.get(sig)
-    if (prev !== undefined && now - prev < 5000) return null
-    this.recentSigs.set(sig, now)
+    const prev = this.recentSigs.get(key)
+    if (prev !== undefined && prev.sig === sig && now - prev.ts < 5000) return null
+    this.recentSigs.set(key, { sig, ts: now })
     if (this.recentSigs.size > 3000) {
       const cutoff = now - 30_000
-      for (const [key, ts] of this.recentSigs) {
-        if (ts < cutoff) this.recentSigs.delete(key)
+      for (const [k, v] of this.recentSigs) {
+        if (v.ts < cutoff) this.recentSigs.delete(k)
       }
     }
 
@@ -79,7 +98,12 @@ export class MirrorStore {
       source
     }
     this.injections.push(inj)
-    if (this.injections.length > 100) this.injections.shift()
+    if (this.injections.length > 100) {
+      const dropped = this.injections.shift()
+      console.error(
+        `[mirror] injection queue overflow: dropped oldest injection ${dropped?.id ?? ''} (${dropped?.source ?? 'unknown'})`
+      )
+    }
     // wake long-poll waiters so delivery is near-instant — but NOT while
     // paused: already-suspended plugin polls must not pick test messages up
     if (!this.injectionPaused) {

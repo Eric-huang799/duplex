@@ -8,6 +8,9 @@ const STATUS_ICON: Record<MirrorToolEvent['status'], string> = {
   error: '✗'
 }
 
+const OUTPUT_LIMIT = 2500
+const ERROR_LIMIT = 1500
+
 function summarizeInput(input: unknown): string {
   if (input == null) return ''
   if (typeof input === 'string') return input.slice(0, 80)
@@ -35,9 +38,11 @@ export function ToolCard({
   waiting?: boolean
 }): React.JSX.Element {
   const summary = ev.title || summarizeInput(ev.input)
+  const outputTruncated = !!ev.output && ev.output.length > OUTPUT_LIMIT
+  const errorTruncated = !!ev.error && ev.error.length > ERROR_LIMIT
   return (
     <div className={`toolcard ${ev.status}${waiting ? ' waiting' : ''}`}>
-      <div className="toolcard-head" onClick={onToggle}>
+      <div className="toolcard-head" onClick={onToggle} aria-expanded={open}>
         {waiting ? (
           <span className="tool-status">
             <ShieldIcon className="tool-shield" />
@@ -57,8 +62,18 @@ export function ToolCard({
           {ev.input != null && (
             <pre className="tool-io">{JSON.stringify(ev.input, null, 1)}</pre>
           )}
-          {ev.output && <pre className="tool-io">{ev.output.slice(0, 2500)}</pre>}
-          {ev.error && <pre className="tool-io err">{ev.error.slice(0, 1500)}</pre>}
+          {ev.output && (
+            <pre className="tool-io">
+              {ev.output.slice(0, OUTPUT_LIMIT)}
+              {outputTruncated ? '\n…（已截断）' : ''}
+            </pre>
+          )}
+          {ev.error && (
+            <pre className="tool-io err">
+              {ev.error.slice(0, ERROR_LIMIT)}
+              {errorTruncated ? '\n…（已截断）' : ''}
+            </pre>
+          )}
           {!ev.input && !ev.output && !ev.error && <div className="tool-io dim">（无详情）</div>}
         </div>
       )}

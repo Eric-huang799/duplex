@@ -8,7 +8,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { execFile, spawnSync } from 'node:child_process'
+import { execFile, spawnSync, type ChildProcess } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
 import { interruptibleAwait, operationSignal } from '../interrupt'
 import { listSkillFiles, listSkills, readSkillFile, readSkillMarkdown } from './skills'
@@ -18,11 +18,22 @@ export type ScriptConfirmFn = (payload: {
   cwd: string
   skill: string
   tool?: string
+  kind?: 'script'
+  /** Script content preview (at most 2000 chars, truncated marker included). */
+  preview?: string
 }) => Promise<boolean>
 
 const SCRIPT_TIMEOUT_MS = 120_000
 const OUTPUT_LIMIT = 8000
 const MAX_BUFFER = 8 * 1024 * 1024
+const PREVIEW_LIMIT = 2000
+
+/** A ≤2000-char preview with an explicit truncation marker. */
+function contentPreview(content: string): string {
+  if (content.length <= PREVIEW_LIMIT) return content
+  const suffix = '\n…（内容已截断）'
+  return content.slice(0, PREVIEW_LIMIT - suffix.length) + suffix
+}
 
 const text = (s: string): ToolResult => ({ content: [{ type: 'text', text: s }] })
 const errorText = (s: string): ToolResult => ({ content: [{ type: 'text', text: s }], isError: true })
@@ -87,29 +98,37 @@ function truncateOutput(s: string): string {
   return s.length <= OUTPUT_LIMIT ? s : `${s.slice(0, OUTPUT_LIMIT)}\n...(输出已截断)`
 }
 
+/** Kill a script child together with its descendants (Windows: taskkill /T). */
+function killTree(child: ChildProcess): void {
+  const pid = child.pid
+  if (!pid) return
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
+    } else {
+      child.kill('SIGKILL')
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function executeScript(bin: string, execArgs: string[], cwd: string): Promise<ToolResult> {
   return new Promise((resolve) => {
     try {
       const opSignal = operationSignal()
       let settled = false
+      let timedOut = false
+      let timer: ReturnType<typeof setTimeout> | null = null
       const finish = (r: ToolResult): void => {
         if (settled) return
         settled = true
+        if (timer) clearTimeout(timer)
         opSignal?.removeEventListener('abort', onAbort)
         resolve(r)
       }
       const onAbort = (): void => {
-        try {
-          if (child.pid) {
-            if (process.platform === 'win32') {
-              spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
-            } else {
-              child.kill('SIGKILL')
-            }
-          }
-        } catch {
-          /* ignore */
-        }
+        killTree(child)
         finish(errorText('已被用户急停中断（脚本已终止）'))
       }
       const child = execFile(
@@ -117,22 +136,28 @@ function executeScript(bin: string, execArgs: string[], cwd: string): Promise<To
         execArgs,
         {
           cwd,
-          timeout: SCRIPT_TIMEOUT_MS,
           windowsHide: true,
           maxBuffer: MAX_BUFFER,
           encoding: 'utf8'
         },
         (error, stdout, stderr) => {
           const output = truncateOutput(`${stdout ?? ''}${stderr ?? ''}`)
+          if (timedOut) {
+            finish(errorText(`脚本执行超时（${SCRIPT_TIMEOUT_MS / 1000} 秒）\n${output}`))
+            return
+          }
           if (error) {
             const code = typeof error.code === 'number' ? error.code : -1
-            const extra = error.killed ? `（执行超时，${SCRIPT_TIMEOUT_MS / 1000} 秒）` : ''
-            finish(errorText(`exit code: ${code}${extra}\n${output}`))
+            finish(errorText(`exit code: ${code}\n${output}`))
             return
           }
           finish(text(`exit code: 0\n${output}`))
         }
       )
+      timer = setTimeout(() => {
+        timedOut = true
+        killTree(child)
+      }, SCRIPT_TIMEOUT_MS)
       if (opSignal) {
         if (opSignal.aborted) onAbort()
         else opSignal.addEventListener('abort', onAbort, { once: true })
@@ -205,10 +230,24 @@ export function createSkillToolHandlers(
       const execArgs = runtime.args(scriptPath, scriptArgs)
       const command = [runtime.bin, ...execArgs].map(quoteArg).join(' ')
 
+      let preview: string | undefined
+      try {
+        preview = contentPreview(fs.readFileSync(scriptPath, 'utf8'))
+      } catch {
+        /* preview is best-effort; the command is still shown */
+      }
+
       let approved = false
       try {
         approved = await interruptibleAwait(
-          confirm({ command, cwd: skill.dir, skill: skill.id, tool: 'run_skill_script' }),
+          confirm({
+            command,
+            cwd: skill.dir,
+            skill: skill.id,
+            tool: 'run_skill_script',
+            kind: 'script',
+            preview
+          }),
           false
         )
       } catch {

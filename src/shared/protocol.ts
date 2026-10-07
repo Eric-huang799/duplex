@@ -113,7 +113,15 @@ export interface MirrorAnnotationEvent {
   url: string
   summary: string
   elementCount: number
+  source?: 'opencode' | 'agent'
   ts: number
+}
+
+/** Main → renderer: page load failed (shown as a toast with retry). */
+export interface LoadErrorInfo {
+  url: string
+  code: number
+  desc: string
 }
 
 export interface MirrorSessionEvent {
@@ -131,6 +139,13 @@ export interface Injection {
   text: string
   createdAt: number
   source: 'panel' | 'annotation' | 'api'
+}
+
+/** Result of chat:send — warning is set when no AI consumer is connected. */
+export interface ChatSendResult {
+  ok: boolean
+  id?: string
+  warning?: string
 }
 
 /** Events sent from main process to renderer. */

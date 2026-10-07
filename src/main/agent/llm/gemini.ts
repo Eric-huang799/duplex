@@ -5,6 +5,7 @@
  */
 import { sseRequest } from './sse'
 import { safeToolArgs } from './parse'
+import { assertTrustedImportedEndpoint } from '../auth-import'
 import type { ChatMessage, ChatStreamOptions, ChatStreamResult, ToolCall } from './types'
 
 function streamUrl(baseUrl: string, model: string): string {
@@ -73,8 +74,16 @@ export function toGeminiContents(messages: ChatMessage[]): {
 }
 
 export async function geminiChatStream(opts: ChatStreamOptions): Promise<ChatStreamResult> {
+  assertTrustedImportedEndpoint({
+    authType: opts.authType,
+    authSource: opts.authSource,
+    baseUrl: opts.baseUrl,
+    allowCustomHost: opts.allowCustomHost
+  })
+  if (!opts.apiKey) throw new Error('未填写 API Key')
   const { system, contents } = toGeminiContents(opts.messages)
   let text = ''
+  let usageLogged = false
   const toolCalls: ToolCall[] = []
 
   await sseRequest(
@@ -83,11 +92,14 @@ export async function geminiChatStream(opts: ChatStreamOptions): Promise<ChatStr
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        ...(opts.apiKey ? { 'x-goog-api-key': opts.apiKey } : {})
+        'x-goog-api-key': opts.apiKey
       },
       body: JSON.stringify({
         contents,
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+        ...(opts.maxTokens && opts.maxTokens > 0
+          ? { generationConfig: { maxOutputTokens: Math.floor(opts.maxTokens) } }
+          : {}),
         ...(opts.tools && opts.tools.length > 0
           ? {
               tools: [
@@ -106,7 +118,15 @@ export async function geminiChatStream(opts: ChatStreamOptions): Promise<ChatStr
     {
       signal: opts.signal,
       idleTimeoutMs: opts.idleTimeoutMs,
+      isCompletionEvent: (ev) => {
+        const candidates = ev.candidates as Array<{ finishReason?: unknown }> | undefined
+        return Array.isArray(candidates) && candidates.some((c) => c?.finishReason != null)
+      },
       onJson: (ev) => {
+        if (ev.usageMetadata && !usageLogged) {
+          usageLogged = true
+          console.error(`[llm] usage: ${JSON.stringify(ev.usageMetadata)}`)
+        }
         const candidates = ev.candidates as
           | Array<{ content?: { parts?: GeminiPart[] } }>
           | undefined

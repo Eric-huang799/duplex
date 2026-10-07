@@ -3,8 +3,8 @@
  *
  * Each tool execution runs inside its own AbortController context
  * (AsyncLocalStorage), so concurrent tool calls never abort each other.
- * The overlay Esc handler (or status-bar click) aborts ALL in-flight
- * operations immediately so long waits (page loads, sleeps) end right away.
+ * The emergency stop (takeover) aborts ALL in-flight operations immediately
+ * so long waits (page loads, sleeps) end right away.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 

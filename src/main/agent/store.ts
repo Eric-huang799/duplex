@@ -74,21 +74,95 @@ export function trimSessionsForSave(sessions: AgentSession[]): AgentSession[] {
   })
 }
 
+/** Human-readable summary of the caps a raw/session list exceeds (empty = none). */
+function capViolations(raw: unknown): string[] {
+  const notes: string[] = []
+  if (!Array.isArray(raw)) return notes
+  if (raw.length > MAX_SESSIONS) notes.push(`会话数 ${raw.length} 超过上限 ${MAX_SESSIONS}`)
+  let overMessages = 0
+  let overEvents = 0
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    if (Array.isArray(o.messages) && o.messages.length > MAX_MESSAGES) overMessages++
+    if (Array.isArray(o.uiEvents) && o.uiEvents.length > MAX_UI_EVENTS) overEvents++
+  }
+  if (overMessages > 0) notes.push(`${overMessages} 个会话的消息数超过 ${MAX_MESSAGES}`)
+  if (overEvents > 0) notes.push(`${overEvents} 个会话的 UI 事件数超过 ${MAX_UI_EVENTS}`)
+  return notes
+}
+
+function readJson(file: string): unknown {
+  return JSON.parse(fs.readFileSync(file, 'utf8')) as unknown
+}
+
+/** Copy the current store to agent-sessions.json.bak when it is non-empty and parseable. */
+function refreshBackup(file: string): void {
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(file)
+  } catch {
+    return
+  }
+  if (!stat.isFile() || stat.size === 0) return
+  try {
+    JSON.parse(fs.readFileSync(file, 'utf8'))
+    fs.copyFileSync(file, `${file}.bak`)
+  } catch {
+    console.error('[agent-store] 会话文件无法解析，保留已有 .bak 不覆盖')
+  }
+}
+
+/** Atomic write: same-directory tmp file + rename. */
+function atomicWrite(file: string, data: string): void {
+  const dir = path.dirname(file)
+  const tmp = path.join(dir, `.agent-sessions-${process.pid}-${Date.now().toString(36)}.tmp`)
+  try {
+    fs.writeFileSync(tmp, data, 'utf8')
+    fs.renameSync(tmp, file)
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp)
+    } catch {
+      /* tmp cleanup is best-effort */
+    }
+    throw e
+  }
+}
+
 export function loadAgentSessions(): AgentSession[] {
   if (IN_TEST) return []
+  const file = sessionsFile()
+  let raw: unknown
   try {
-    const raw = JSON.parse(fs.readFileSync(sessionsFile(), 'utf8')) as unknown
-    return normalizeRawSessions(raw)
+    raw = readJson(file)
   } catch {
-    return []
+    try {
+      raw = readJson(`${file}.bak`)
+      console.error('[agent-store] 会话主文件读取失败，已回退读取 agent-sessions.json.bak')
+    } catch {
+      return []
+    }
   }
+  const notes = capViolations(raw)
+  if (notes.length > 0) {
+    console.error(`[agent-store] 加载时按上限截断：${notes.join('；')}`)
+  }
+  return normalizeRawSessions(raw)
 }
 
 export function saveAgentSessions(sessions: AgentSession[]): void {
   if (IN_TEST) return
+  const file = sessionsFile()
   try {
     fs.mkdirSync(cobrowseDir(), { recursive: true })
-    fs.writeFileSync(sessionsFile(), JSON.stringify(trimSessionsForSave(sessions)), 'utf8')
+    const notes = capViolations(sessions)
+    if (notes.length > 0) {
+      console.error(`[agent-store] 持久化前按上限截断：${notes.join('；')}`)
+    }
+    const trimmed = trimSessionsForSave(sessions)
+    refreshBackup(file)
+    atomicWrite(file, JSON.stringify(trimmed))
   } catch {
     /* persistence must never crash the agent */
   }

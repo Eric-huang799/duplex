@@ -28,6 +28,7 @@ function mockFetch(lines: string[]): ReturnType<typeof vi.fn> {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 const base = { baseUrl: 'https://example.test', apiKey: 'K', model: 'm' }
@@ -58,11 +59,59 @@ describe('openai-chat protocol', () => {
     expect(fn.mock.calls[0][0]).toBe('https://x.test/v1/chat/completions')
   })
 
-  it('rejects on non-2xx HTTP status', async () => {
+  it('rejects on non-2xx HTTP status with a Chinese attribution', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('nope', { status: 500 })))
     await expect(
       chatStream({ ...base, messages: [{ role: 'user', content: 'x' }] })
-    ).rejects.toThrow('模型接口返回 500')
+    ).rejects.toThrow('服务端错误')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('bad key', { status: 401 })))
+    await expect(
+      chatStream({ ...base, messages: [{ role: 'user', content: 'x' }] })
+    ).rejects.toThrow('凭据无效或无权访问')
+  })
+
+  it('reports network failures with a Chinese hint', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('fetch failed')))
+    await expect(
+      chatStream({ ...base, messages: [{ role: 'user', content: 'x' }] })
+    ).rejects.toThrow('连接失败')
+  })
+
+  it('merges multi-line SSE data events before parsing', async () => {
+    mockFetch([
+      'data: {"choices":[',
+      'data: {"delta":{"content":"ml"}}',
+      'data: ]}',
+      '',
+      'data: [DONE]'
+    ])
+    const res = await chatStream({ ...base, messages: [{ role: 'user', content: 'x' }] })
+    expect(res.text).toBe('ml')
+  })
+
+  it('blocks imported credentials to non-official hosts before any request', async () => {
+    const fn = mockFetch([])
+    await expect(
+      chatStream({
+        ...base,
+        baseUrl: 'https://evil.example.com',
+        authType: 'import',
+        authSource: 'codex',
+        messages: [{ role: 'user', content: 'x' }]
+      })
+    ).rejects.toThrow('导入的 OAuth 凭据只能发往官方域名')
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('logs usage once when the gateway reports it', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    mockFetch([
+      'data: {"choices":[{"delta":{"content":"x"}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}',
+      'data: [DONE]'
+    ])
+    await chatStream({ ...base, messages: [{ role: 'user', content: 'x' }] })
+    const usageLogs = spy.mock.calls.filter((c) => String(c[0]).includes('[llm] usage'))
+    expect(usageLogs).toHaveLength(1)
   })
 })
 
@@ -139,6 +188,27 @@ describe('anthropic-messages protocol', () => {
       })
     ).rejects.toThrow('overloaded')
   })
+
+  it('applies maxTokens and appends the truncation marker on max_tokens stop', async () => {
+    const fn = mockFetch([
+      'data: {"type":"message_start"}',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}',
+      'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":5}}',
+      'data: {"type":"message_stop"}'
+    ])
+    const res = await chatStream({
+      ...base,
+      baseUrl: 'https://api.anthropic.com',
+      protocol: 'anthropic-messages',
+      maxTokens: 1234,
+      messages: [{ role: 'user', content: 'hi' }]
+    })
+    expect(res.text).toBe('partial…（输出已达 max_tokens 上限，可能被截断）')
+    const body = JSON.parse((fn.mock.calls[0][1] as RequestInit).body as string) as {
+      max_tokens: number
+    }
+    expect(body.max_tokens).toBe(1234)
+  })
 })
 
 describe('openai-responses protocol', () => {
@@ -192,6 +262,19 @@ describe('openai-responses protocol', () => {
       })
     ).rejects.toThrow('boom')
   })
+
+  it('sends store:false in the request body', async () => {
+    const fn = mockFetch(['data: {"type":"response.completed"}'])
+    await chatStream({
+      ...base,
+      protocol: 'openai-responses',
+      messages: [{ role: 'user', content: 'x' }]
+    })
+    const body = JSON.parse((fn.mock.calls[0][1] as RequestInit).body as string) as {
+      store: unknown
+    }
+    expect(body.store).toBe(false)
+  })
 })
 
 describe('gemini protocol', () => {
@@ -234,5 +317,23 @@ describe('gemini protocol', () => {
     expect(fn.mock.calls[0][0]).toBe(
       'https://generativelanguage.googleapis.com/v1beta/models/m:streamGenerateContent?alt=sse'
     )
+  })
+
+  it('requires an API key and forwards maxTokens to generationConfig', async () => {
+    const fn = vi.fn()
+    vi.stubGlobal('fetch', fn)
+    await expect(
+      chatStream({ ...base, apiKey: '', protocol: 'gemini', messages: [] })
+    ).rejects.toThrow('未填写 API Key')
+    expect(fn).not.toHaveBeenCalled()
+
+    const fn2 = mockFetch([
+      'data: {"candidates":[{"content":{"parts":[{"text":"x"}]},"finishReason":"STOP"}]}'
+    ])
+    await chatStream({ ...base, protocol: 'gemini', maxTokens: 321, messages: [] })
+    const body = JSON.parse((fn2.mock.calls[0][1] as RequestInit).body as string) as {
+      generationConfig?: { maxOutputTokens?: number }
+    }
+    expect(body.generationConfig?.maxOutputTokens).toBe(321)
   })
 })

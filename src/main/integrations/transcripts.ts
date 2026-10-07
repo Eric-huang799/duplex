@@ -26,6 +26,27 @@ export interface TranscriptMessage {
 const MAX_MESSAGES = 2000
 const MAX_SESSIONS = 100
 const HEAD_BYTES = 131072
+/** Files above this size are only partially read (tail for messages, head for titles). */
+const LARGE_FILE_BYTES = 20 * 1024 * 1024
+const TAIL_READ_BYTES = 4 * 1024 * 1024
+
+/** Decode a byte buffer whose end may fall inside a UTF-8 character, dropping the partial tail. */
+export function decodeUtf8Complete(buf: Buffer): string {
+  let end = buf.length
+  let lead = end - 1
+  let steps = 0
+  while (lead >= 0 && steps < 3 && (buf[lead] & 0xc0) === 0x80) {
+    lead--
+    steps++
+  }
+  if (lead >= 0 && lead < end) {
+    const b = buf[lead]
+    const need =
+      b < 0x80 ? 1 : (b & 0xe0) === 0xc0 ? 2 : (b & 0xf0) === 0xe0 ? 3 : (b & 0xf8) === 0xf0 ? 4 : 1
+    if (lead + need > end) end = lead
+  }
+  return buf.subarray(0, end).toString('utf8')
+}
 
 function readHead(file: string, bytes = HEAD_BYTES): string {
   try {
@@ -33,13 +54,71 @@ function readHead(file: string, bytes = HEAD_BYTES): string {
     try {
       const buf = Buffer.alloc(bytes)
       const n = fs.readSync(fd, buf, 0, bytes, 0)
-      return buf.subarray(0, n).toString('utf8')
+      // never leave a split multi-byte character at the truncation point
+      return decodeUtf8Complete(buf.subarray(0, n))
     } finally {
       fs.closeSync(fd)
     }
   } catch {
     return ''
   }
+}
+
+/**
+ * Read at most maxBytes from the end of a file. When the read starts mid-file,
+ * the (likely partial) first line is dropped so callers get whole JSONL lines.
+ */
+function readTail(file: string, maxBytes = TAIL_READ_BYTES): string {
+  try {
+    const fd = fs.openSync(file, 'r')
+    try {
+      const size = fs.fstatSync(fd).size
+      const start = Math.max(0, size - maxBytes)
+      const length = size - start
+      const buf = Buffer.alloc(length)
+      const n = fs.readSync(fd, buf, 0, length, start)
+      let text = buf.subarray(0, n).toString('utf8')
+      if (start > 0) {
+        const nl = text.indexOf('\n')
+        text = nl >= 0 ? text.slice(nl + 1) : ''
+      }
+      return text
+    } finally {
+      fs.closeSync(fd)
+    }
+  } catch {
+    return ''
+  }
+}
+
+interface ParseCacheEntry {
+  mtimeMs: number
+  size: number
+  value: unknown
+}
+
+const PARSE_CACHE_MAX = 200
+const parseCache = new Map<string, ParseCacheEntry>()
+
+/**
+ * LRU parse cache keyed by file path + mtime + size. During the 20s
+ * "new session" polling loop the list functions are called every second;
+ * this keeps them from re-parsing unchanged transcript files each time.
+ */
+function cachedParse<T>(file: string, mtimeMs: number, size: number, compute: () => T): T {
+  const hit = parseCache.get(file)
+  if (hit && hit.mtimeMs === mtimeMs && hit.size === size) {
+    parseCache.delete(file)
+    parseCache.set(file, hit)
+    return hit.value as T
+  }
+  const value = compute()
+  parseCache.set(file, { mtimeMs, size, value })
+  if (parseCache.size > PARSE_CACHE_MAX) {
+    const oldest = parseCache.keys().next().value
+    if (oldest !== undefined) parseCache.delete(oldest)
+  }
+  return value
 }
 
 function walkJsonl(dir: string, depth = 0, out: string[] = []): string[] {
@@ -68,7 +147,13 @@ function readJsonlMessages(
 ): TranscriptMessage[] {
   let content: string
   try {
-    content = fs.readFileSync(file, 'utf8')
+    const size = fs.statSync(file).size
+    if (size > LARGE_FILE_BYTES) {
+      console.error(`[transcripts] 会话文件超过 20MB，仅解析末尾 4MB：${file}`)
+      content = readTail(file)
+    } else {
+      content = fs.readFileSync(file, 'utf8')
+    }
   } catch {
     return []
   }
@@ -90,33 +175,33 @@ function buildSessions(
   mapper: (o: unknown) => TranscriptMessage[],
   keep: (file: string) => boolean
 ): TranscriptSession[] {
-  const entries: Array<{ file: string; mtime: number }> = []
+  const entries: Array<{ file: string; mtime: number; size: number }> = []
   for (const f of files) {
     if (!keep(f)) continue
     try {
-      entries.push({ file: f, mtime: fs.statSync(f).mtimeMs })
+      const st = fs.statSync(f)
+      entries.push({ file: f, mtime: st.mtimeMs, size: st.size })
     } catch {
       /* skip */
     }
   }
   entries.sort((a, b) => b.mtime - a.mtime)
   const out: TranscriptSession[] = []
-  for (const { file, mtime } of entries.slice(0, MAX_SESSIONS)) {
-    let title = ''
-    for (const line of readHead(file).split('\n')) {
-      const t = line.trim()
-      if (!t) continue
-      try {
-        const msgs = mapper(JSON.parse(t))
-        const firstUser = msgs.find((m) => m.role === 'user')
-        if (firstUser) {
-          title = firstUser.text.replace(/\s+/g, ' ').slice(0, 60)
-          break
+  for (const { file, mtime, size } of entries.slice(0, MAX_SESSIONS)) {
+    const title = cachedParse(file, mtime, size, () => {
+      for (const line of readHead(file).split('\n')) {
+        const t = line.trim()
+        if (!t) continue
+        try {
+          const msgs = mapper(JSON.parse(t))
+          const firstUser = msgs.find((m) => m.role === 'user')
+          if (firstUser) return firstUser.text.replace(/\s+/g, ' ').slice(0, 60)
+        } catch {
+          /* skip */
         }
-      } catch {
-        /* skip */
       }
-    }
+      return ''
+    })
     out.push({
       id: path.basename(file, '.jsonl'),
       title: title || '（无标题）',
@@ -325,25 +410,31 @@ export function listGeminiSessions(dir: string): TranscriptSession[] {
     }
   }
   walk(dir)
-  const entries: Array<{ file: string; mtime: number }> = []
+  const entries: Array<{ file: string; mtime: number; size: number }> = []
   for (const f of files) {
     try {
-      entries.push({ file: f, mtime: fs.statSync(f).mtimeMs })
+      const st = fs.statSync(f)
+      entries.push({ file: f, mtime: st.mtimeMs, size: st.size })
     } catch {
       /* skip */
     }
   }
   entries.sort((a, b) => b.mtime - a.mtime)
   const out: TranscriptSession[] = []
-  for (const { file, mtime } of entries.slice(0, MAX_SESSIONS)) {
-    let title = ''
-    try {
-      const msgs = geminiJsonToMessages(JSON.parse(fs.readFileSync(file, 'utf8')))
-      const firstUser = msgs.find((m) => m.role === 'user')
-      if (firstUser) title = firstUser.text.replace(/\s+/g, ' ').slice(0, 60)
-    } catch {
-      /* skip */
-    }
+  for (const { file, mtime, size } of entries.slice(0, MAX_SESSIONS)) {
+    const title = cachedParse(file, mtime, size, () => {
+      if (size > LARGE_FILE_BYTES) {
+        console.error(`[transcripts] 会话文件超过 20MB，跳过标题解析：${file}`)
+        return ''
+      }
+      try {
+        const msgs = geminiJsonToMessages(JSON.parse(fs.readFileSync(file, 'utf8')))
+        const firstUser = msgs.find((m) => m.role === 'user')
+        return firstUser ? firstUser.text.replace(/\s+/g, ' ').slice(0, 60) : ''
+      } catch {
+        return ''
+      }
+    })
     out.push({
       id: path.basename(file, '.json'),
       title: title || '（无标题）',
@@ -417,25 +508,50 @@ function listCustomJsonSessions(dir: string, seen: Set<string>): TranscriptSessi
     if (!e.isFile() || !e.name.endsWith('.json')) continue
     const full = path.join(dir, e.name)
     if (seen.has(full)) continue
+    let st: fs.Stats
     try {
-      const msgs = readCustomSession(full)
-      if (msgs.length === 0) continue
-      const st = fs.statSync(full)
-      const firstUser = msgs.find((m) => m.role === 'user')
-      out.push({
-        id: path.basename(full, '.json'),
-        title: firstUser ? firstUser.text.replace(/\s+/g, ' ').slice(0, 60) : '（无标题）',
-        updatedAt: st.mtimeMs,
-        file: full
-      })
+      st = fs.statSync(full)
     } catch {
-      /* skip */
+      continue
     }
+    const title = cachedParse<string | null>(full, st.mtimeMs, st.size, () => {
+      if (st.size > LARGE_FILE_BYTES) {
+        console.error(`[transcripts] 会话文件超过 20MB，跳过标题解析：${full}`)
+        return null
+      }
+      try {
+        const msgs = readCustomSession(full)
+        if (msgs.length === 0) return null
+        const firstUser = msgs.find((m) => m.role === 'user')
+        return firstUser ? firstUser.text.replace(/\s+/g, ' ').slice(0, 60) : '（无标题）'
+      } catch {
+        return null
+      }
+    })
+    if (title === null) continue
+    out.push({
+      id: path.basename(full, '.json'),
+      title: title || '（无标题）',
+      updatedAt: st.mtimeMs,
+      file: full
+    })
   }
   return out
 }
 
 export function readCustomSession(file: string): TranscriptMessage[] {
+  let size = 0
+  try {
+    size = fs.statSync(file).size
+  } catch {
+    return []
+  }
+  // Whole-file JSON is not parseable without reading everything, so very large
+  // files are treated as JSONL and only their tail is read.
+  if (size > LARGE_FILE_BYTES) {
+    console.error(`[transcripts] 会话文件超过 20MB，按 JSONL 仅解析末尾 4MB：${file}`)
+    return readJsonlMessages(file, customLineMessages)
+  }
   let content = ''
   try {
     content = fs.readFileSync(file, 'utf8')

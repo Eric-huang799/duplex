@@ -4,6 +4,7 @@
  * any OpenAI-style API.
  */
 import { sseRequest } from './sse'
+import { assertTrustedImportedEndpoint } from '../auth-import'
 import type { ChatStreamOptions, ChatStreamResult, ToolCall } from './types'
 
 function completionsUrl(baseUrl: string): string {
@@ -25,7 +26,14 @@ function deltaText(content: unknown): string {
 }
 
 export async function openaiChatStream(opts: ChatStreamOptions): Promise<ChatStreamResult> {
+  assertTrustedImportedEndpoint({
+    authType: opts.authType,
+    authSource: opts.authSource,
+    baseUrl: opts.baseUrl,
+    allowCustomHost: opts.allowCustomHost
+  })
   let text = ''
+  let usageLogged = false
   const toolAcc = new Map<number, { id: string; name: string; args: string }>()
 
   await sseRequest(
@@ -47,7 +55,16 @@ export async function openaiChatStream(opts: ChatStreamOptions): Promise<ChatStr
     {
       signal: opts.signal,
       idleTimeoutMs: opts.idleTimeoutMs,
+      isCompletionEvent: (json) => {
+        const choices = (json as { choices?: Array<{ finish_reason?: unknown }> }).choices
+        return Array.isArray(choices) && choices.some((c) => c?.finish_reason != null)
+      },
       onJson: (json) => {
+        const usage = (json as { usage?: unknown }).usage
+        if (usage && !usageLogged) {
+          usageLogged = true
+          console.error(`[llm] usage: ${JSON.stringify(usage)}`)
+        }
         const delta = (
           json as {
             choices?: Array<{

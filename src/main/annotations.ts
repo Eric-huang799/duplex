@@ -41,7 +41,21 @@ export interface AnnotateInfo {
   anchor: { selector: string; tag: string; text?: string } | null
   text: string
   points: Array<{ tag: string; el: AnnotateElementInfo | null }>
+  /** Total distinct elements hit inside the box (before the sampling cap). */
   elementCount: number
+  /** True when the hit list was capped and the returned element list is partial. */
+  truncated?: boolean
+}
+
+/** One submitted annotation, ready for whichever downstream channel delivers it. */
+export interface AnnotationDelivery {
+  text: string
+  question?: string
+  tool: AnnotationTool
+  url: string
+  summary: string
+  elementCount: number
+  annotationId: string
 }
 
 export interface AnnotationSubmitPayload {
@@ -89,7 +103,16 @@ export function buildAnnotationText(
 
   lines.push('')
   if (info.anchor) lines.push(`区域锚点: ${info.anchor.selector} <${info.anchor.tag}>`)
-  lines.push(`框内元素数: ${info.elementCount}`)
+  // The element lists below are capped (and the sampler caps its hit list),
+  // so state the truncation explicitly once the count exceeds what is shown.
+  const listedPrimary = info.primary.length
+  const truncated =
+    info.truncated === true ||
+    info.elementCount > info.elements.length ||
+    info.elementCount > listedPrimary
+  lines.push(
+    `框内元素数: ${info.elementCount}` + (truncated ? `（仅列出前 ${listedPrimary} 个）` : '')
+  )
   lines.push('')
   lines.push('框内主要元素（按可交互性/命中密度排序）:')
   for (const el of info.primary) lines.push(fmtElementLine(el))
@@ -117,8 +140,25 @@ export type AnnotationSubmitHandler = (
 
 export function createAnnotationSubmitHandler(
   tabs: TabManager,
-  mirror: MirrorStore
+  mirror: MirrorStore,
+  deliver?: (d: AnnotationDelivery) => void
 ): AnnotationSubmitHandler {
+  // Default (single-channel) delivery: injection queue for the AI session plus
+  // the side-panel annotation card. A caller-supplied deliver takes over both.
+  const defaultDeliver = (d: AnnotationDelivery): void => {
+    mirror.addInjection(d.text, 'annotation')
+    mirror.add({
+      kind: 'annotation',
+      annotationId: d.annotationId,
+      text: d.text,
+      question: d.question,
+      tool: d.tool,
+      url: d.url,
+      summary: d.summary,
+      elementCount: d.elementCount
+    })
+  }
+  const deliverAnnotation = deliver ?? defaultDeliver
   return async (payload) => {
     const tab: Tab | null = tabs.getActive()
     if (!tab) return { ok: false, error: 'no active tab' }
@@ -142,26 +182,27 @@ export function createAnnotationSubmitHandler(
       return { ok: false, error: 'sampling failed (empty result)' }
     }
 
-    const question = (payload.question ?? '').trim()
-    const text = buildAnnotationText(info, {
-      tool: payload.tool,
-      question: question || undefined
-    })
-    const summary =
-      `${ANNOTATION_TOOL_LABELS[payload.tool] ?? payload.tool} · ${info.elementCount} 个元素` +
-      (question ? ` · 「${question.slice(0, 40)}」` : '')
-
-    mirror.addInjection(text, 'annotation')
-    mirror.add({
-      kind: 'annotation',
-      annotationId: payload.annotationId,
-      text,
-      question: question || undefined,
-      tool: payload.tool,
-      url: info.url,
-      summary,
-      elementCount: info.elementCount
-    })
+    try {
+      const question = (payload.question ?? '').trim()
+      const text = buildAnnotationText(info, {
+        tool: payload.tool,
+        question: question || undefined
+      })
+      const summary =
+        `${ANNOTATION_TOOL_LABELS[payload.tool] ?? payload.tool} · ${info.elementCount} 个元素` +
+        (question ? ` · 「${question.slice(0, 40)}」` : '')
+      deliverAnnotation({
+        text,
+        question: question || undefined,
+        tool: payload.tool,
+        url: info.url,
+        summary,
+        elementCount: info.elementCount,
+        annotationId: payload.annotationId
+      })
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message ?? String(e) }
+    }
     return { ok: true }
   }
 }

@@ -27,6 +27,8 @@ interface Props {
   onExternalToolChange: (id: string) => void
   confirms: PermissionRequest[]
   onConfirmRespond: (id: number, ok: boolean) => void
+  onAgentSessionDeleted?: () => void
+  initialShowProviders?: boolean
 }
 
 function timeAgo(ts: number): string {
@@ -55,7 +57,7 @@ function AnnotationNotice({ ev }: { ev: MirrorAnnotationEvent }): React.JSX.Elem
   )
 }
 
-function MirrorItem({ ev, pendingTool }: { ev: MirrorEvent; pendingTool?: string }): React.JSX.Element | null {
+function MirrorItem({ ev, pendingToolId }: { ev: MirrorEvent; pendingToolId?: number | null }): React.JSX.Element | null {
   const [open, setOpen] = useState(false)
 
   if (ev.kind === 'annotation') {
@@ -83,7 +85,7 @@ function MirrorItem({ ev, pendingTool }: { ev: MirrorEvent; pendingTool?: string
         ev={ev}
         open={open}
         onToggle={() => setOpen((v) => !v)}
-        waiting={pendingTool != null && ev.tool === pendingTool && ev.status === 'running'}
+        waiting={pendingToolId != null && ev.id === pendingToolId && ev.status === 'running'}
       />
     )
   }
@@ -108,12 +110,14 @@ export function SidePanel({
   externalTool,
   onExternalToolChange,
   confirms,
-  onConfirmRespond
+  onConfirmRespond,
+  onAgentSessionDeleted,
+  initialShowProviders
 }: Props): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [autoScroll, setAutoScroll] = useState(true)
   const [sessionMenu, setSessionMenu] = useState(false)
-  const [showProviders, setShowProviders] = useState(false)
+  const [showProviders, setShowProviders] = useState(initialShowProviders ?? false)
   const [showSkills, setShowSkills] = useState(false)
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
@@ -127,6 +131,7 @@ export function SidePanel({
   const [addCmd, setAddCmd] = useState('')
   const [addErr, setAddErr] = useState('')
   const [addBusy, setAddBusy] = useState(false)
+  const composerRef = useRef<HTMLTextAreaElement>(null)
 
   const refreshTools = async (): Promise<void> => {
     try {
@@ -176,6 +181,16 @@ export function SidePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Composer grows with its content (1–2 rows up to ~8 rows) without jumping.
+  useEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const maxHeight = 164
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [draft])
+
   useEffect(() => {
     const off = window.cobrowse.onAgentsChildren((n) => setAgentChildren(n))
     return off
@@ -191,6 +206,22 @@ export function SidePanel({
     stage: number
   } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  // Esc closes the session pickers and the add-tool dialog.
+  useEffect(() => {
+    if (!sessionMenu && !agentSessionMenu && !addOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      if (addOpen) {
+        setAddOpen(false)
+        return
+      }
+      setSessionMenu(false)
+      setAgentSessionMenu(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sessionMenu, agentSessionMenu, addOpen])
 
   const isAgent = mode === 'agent'
 
@@ -219,8 +250,15 @@ export function SidePanel({
       return
     }
     setConfirmAgentDel(null)
-    void window.cobrowse.agentDeleteSession(id).then(() => {
+    const wasCurrent = agentSessions.find((s) => s.id === id)?.current === true
+    void window.cobrowse.agentDeleteSession(id).then((r) => {
+      if (!r.ok) {
+        if (r.error) setAgentError(r.error)
+        return
+      }
       void window.cobrowse.agentSessions().then(setAgentSessions)
+      // only reset the visible transcript when the CURRENT session was deleted
+      if (wasCurrent) onAgentSessionDeleted?.()
     })
   }
 
@@ -267,34 +305,44 @@ export function SidePanel({
     if (mode === 'external') {
       if (extReplyReady) {
         if (externalPending) return
-        setDraft('')
         setExternalErr('')
         setExternalPending(true)
         void window.cobrowse.agentsSessionSend(externalTool, t).then((r) => {
           setExternalPending(false)
-          if (!r.ok) setExternalErr(r.error ?? '发送失败')
+          if (!r.ok) {
+            setExternalErr(r.error ?? '发送失败')
+            return
+          }
+          setDraft((d) => (d.trim() === t ? '' : d))
         })
         return
       }
       if (!externalCanStart || externalPending) return
-      setDraft('')
       setExternalErr('')
       setExternalPending(true)
       void window.cobrowse.agentsStartSession(externalTool, t).then((r) => {
         setExternalPending(false)
-        if (!r.ok) setExternalErr(r.error ?? '启动失败')
+        if (!r.ok) {
+          setExternalErr(r.error ?? '启动失败')
+          return
+        }
+        setDraft((d) => (d.trim() === t ? '' : d))
+      })
+      return
+    }
+    if (isAgent) {
+      setAgentError('')
+      void window.cobrowse.agentSend(t).then((res) => {
+        if (res.ok) {
+          setDraft((d) => (d.trim() === t ? '' : d))
+          return
+        }
+        if (res.error) setAgentError(res.error)
       })
       return
     }
     setDraft('')
-    if (isAgent) {
-      setAgentError('')
-      void window.cobrowse.agentSend(t).then((res) => {
-        if (!res.ok && res.error) setAgentError(res.error)
-      })
-    } else {
-      onSend(t)
-    }
+    onSend(t)
   }
 
   // ------- opencode-mode derived state -------
@@ -376,9 +424,20 @@ export function SidePanel({
   }
   const agentConfigured = agentReady
   const agentVisible = agentEvents.filter((e) => e.kind !== 'session')
-  // while a permission request is pending, the matching running tool card
-  // shows a "waiting for your permission" state instead of a spinner
-  const pendingTool = confirms.find((c) => c.state === 'pending')?.tool
+  // While a permission request is pending, only the most recent running tool
+  // card with the same tool name shows "waiting for your permission"; when the
+  // same tool runs concurrently the older cards keep their own state.
+  const pendingConfirmTool = confirms.find((c) => c.state === 'pending')?.tool
+  let pendingToolId: number | null = null
+  if (pendingConfirmTool) {
+    for (let i = displayEvents.length - 1; i >= 0; i--) {
+      const e = displayEvents[i]
+      if (e.kind === 'tool' && e.tool === pendingConfirmTool && e.status === 'running') {
+        pendingToolId = e.id
+        break
+      }
+    }
+  }
 
   return (
     <div className="panel" style={{ width }}>
@@ -582,16 +641,16 @@ export function SidePanel({
               </div>
             )}
             {agentVisible.map((ev) => (
-              <MirrorItem key={ev.id} ev={ev} pendingTool={pendingTool} />
+              <MirrorItem key={ev.id} ev={ev} pendingToolId={pendingToolId} />
             ))}
           </>
         ) : (
           <>
-            {events.length === 0 && localMsgs.length === 0 && (
+            {visibleEvents.length === 0 && localMsgs.length === 0 && (
               <div className="empty">向 AI 发送消息开始协作</div>
             )}
             {visibleEvents.map((ev) => (
-              <MirrorItem key={ev.id} ev={ev} pendingTool={pendingTool} />
+              <MirrorItem key={ev.id} ev={ev} pendingToolId={pendingToolId} />
             ))}
             {localMsgs.map((lm) => (
               <div key={lm.id} className="msg user pending-send">
@@ -610,7 +669,13 @@ export function SidePanel({
       )}
 
       {addOpen && (
-        <div className="confirm-overlay">
+        <div
+          className="confirm-overlay"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (e.target === e.currentTarget) setAddOpen(false)
+          }}
+        >
           <div className="confirm-box">
             <div className="confirm-title">添加自定义 Agent 工具</div>
             <label className="add-tool-field">
@@ -662,7 +727,8 @@ export function SidePanel({
 
       <div className="composer">
         <textarea
-          rows={2}
+          ref={composerRef}
+          rows={1}
           value={draft}
           disabled={
             mode === 'external' && (externalPending || (!extReplyReady && !externalCanStart))

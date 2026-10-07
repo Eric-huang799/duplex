@@ -3,11 +3,16 @@
  * headless start plans, and the Gemini-family / generic-JSON transcript
  * readers.
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { buildStartPlan, splitCommandLine } from '../src/main/integrations/agents'
+import {
+  addCustomAgent,
+  buildStartPlan,
+  escapeWindowsCmdArg,
+  splitCommandLine
+} from '../src/main/integrations/agents'
 import {
   geminiJsonToMessages,
   listGeminiSessions,
@@ -88,11 +93,95 @@ describe('buildStartPlan', () => {
   it('custom {prompt} replacement is literal ($ patterns are not expanded)', () => {
     const p = buildStartPlan({ kind: 'custom', command: 'my-agent --p={prompt}' }, 'a$&b')
     if ('error' in p) throw new Error(p.error)
-    expect(p.args).toContain('--p=a$&b')
+    // on Windows the bare argument gets cmd metacharacters caret-escaped
+    expect(p.args).toContain(isWin ? '--p=a$^&b' : '--p=a$&b')
+  })
+
+  it('custom plans use tool.cwd when it is an existing directory', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-cwd-'))
+    try {
+      const p = buildStartPlan({ kind: 'custom', command: 'my-agent', cwd: dir }, 'hi')
+      if ('error' in p) throw new Error(p.error)
+      expect(p.cwd).toBe(dir)
+      const p2 = buildStartPlan(
+        { kind: 'custom', command: 'my-agent', cwd: path.join(dir, 'missing') },
+        'hi'
+      )
+      if ('error' in p2) throw new Error(p2.error)
+      expect(p2.cwd).toBe(os.homedir())
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('opencode cannot be started from the panel', () => {
     expect('error' in buildStartPlan({ kind: 'opencode' }, 'x')).toBe(true)
+  })
+})
+
+describe('escapeWindowsCmdArg', () => {
+  it('escapes cmd metacharacters in bare arguments on Windows', () => {
+    if (!isWin) {
+      expect(escapeWindowsCmdArg('a&b|c<d>e^f(g)%h!')).toBe('a&b|c<d>e^f(g)%h!')
+      return
+    }
+    expect(escapeWindowsCmdArg('a&b')).toBe('a^&b')
+    expect(escapeWindowsCmdArg('a|b')).toBe('a^|b')
+    expect(escapeWindowsCmdArg('a<b>c')).toBe('a^<b^>c')
+    expect(escapeWindowsCmdArg('(a)')).toBe('^(a^)')
+    expect(escapeWindowsCmdArg('x^y')).toBe('x^^y')
+    expect(escapeWindowsCmdArg('%PATH%')).toBe('^%PATH^%')
+  })
+
+  it('leaves quoted arguments to cmd quoting and neutralizes unbalanced quotes', () => {
+    if (!isWin) return
+    expect(escapeWindowsCmdArg('say "hello" & bye')).toBe('say "hello" & bye')
+    expect(escapeWindowsCmdArg('help me & explain')).toBe('help me & explain')
+    // an odd quote count would let `&` escape the quotes and start a new command
+    expect(escapeWindowsCmdArg('x"&echo PWNED')).toBe('x""&echo PWNED')
+    // a metacharacter inside the text's own quoted region breaks cmd toggling too
+    expect(escapeWindowsCmdArg('"a&b"')).toBe('""a&b""')
+    expect(escapeWindowsCmdArg('run "npm run build & test"')).toBe(
+      'run ""npm run build & test""'
+    )
+  })
+
+  it('flattens line breaks that cannot travel through cmd.exe arguments', () => {
+    if (!isWin) return
+    expect(escapeWindowsCmdArg('line1\nline2')).toBe('line1 line2')
+    expect(escapeWindowsCmdArg('a\r\nb')).toBe('a b')
+  })
+})
+
+describe('addCustomAgent cwd support', () => {
+  const originalDataDir = process.env.DUPLEX_DATA_DIR
+
+  afterEach(() => {
+    if (originalDataDir === undefined) delete process.env.DUPLEX_DATA_DIR
+    else process.env.DUPLEX_DATA_DIR = originalDataDir
+  })
+
+  it('stores an existing cwd and rejects a missing one', () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-agents-data-'))
+    const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-agents-sessions-'))
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-agents-cwd-'))
+    process.env.DUPLEX_DATA_DIR = dataDir
+    try {
+      const missing = addCustomAgent('X', sessionsDir, 'my-agent', path.join(workDir, 'nope'))
+      expect(missing.ok).toBe(false)
+      expect(missing.error).toContain('工作目录不存在')
+
+      const added = addCustomAgent('X', sessionsDir, 'my-agent', workDir)
+      expect(added.ok).toBe(true)
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(dataDir, 'agents.json'), 'utf8')
+      ) as { custom: Array<{ id: string; cwd?: string }> }
+      expect(raw.custom[0].cwd).toBe(workDir)
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true })
+      fs.rmSync(sessionsDir, { recursive: true, force: true })
+      fs.rmSync(workDir, { recursive: true, force: true })
+    }
   })
 })
 

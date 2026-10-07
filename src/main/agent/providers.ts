@@ -19,6 +19,10 @@ export interface AgentProvider {
   /** 'key' = apiKey stored locally; 'import' = read from a local CLI login. */
   authType: AuthType
   authSource?: AuthSource
+  /** Allow a non-standard/self-hosted host for this provider. */
+  allowCustomHost?: boolean
+  /** Per-provider streaming idle timeout in milliseconds. */
+  idleTimeoutMs?: number
 }
 
 export interface MaskedProvider {
@@ -30,6 +34,8 @@ export interface MaskedProvider {
   protocol: LlmProtocol
   authType: AuthType
   authSource?: AuthSource
+  allowCustomHost?: boolean
+  idleTimeoutMs?: number
 }
 
 export function newProviderId(): string {
@@ -53,7 +59,9 @@ export function maskProviders(list: AgentProvider[]): MaskedProvider[] {
     hasKey: p.apiKey.length > 0,
     protocol: p.protocol,
     authType: p.authType,
-    authSource: p.authSource
+    authSource: p.authSource,
+    allowCustomHost: p.allowCustomHost,
+    idleTimeoutMs: p.idleTimeoutMs
   }))
 }
 
@@ -84,7 +92,15 @@ export function normalizeProviderState(input: {
         protocol: isLlmProtocol(o.protocol) ? o.protocol : 'openai-chat',
         authType: o.authType === 'import' ? 'import' : 'key',
         authSource:
-          o.authSource === 'codex' || o.authSource === 'opencode' ? o.authSource : undefined
+          o.authSource === 'codex' || o.authSource === 'opencode' ? o.authSource : undefined,
+        allowCustomHost:
+          typeof o.allowCustomHost === 'boolean' ? o.allowCustomHost : undefined,
+        idleTimeoutMs:
+          typeof o.idleTimeoutMs === 'number' &&
+          Number.isFinite(o.idleTimeoutMs) &&
+          o.idleTimeoutMs >= 0
+            ? Math.floor(o.idleTimeoutMs)
+            : undefined
       })
     }
   }
@@ -125,6 +141,21 @@ function protocolFromNpm(npm: string): LlmProtocol {
   return 'openai-chat'
 }
 
+/**
+ * Pick a sensible default model when importing from opencode: prefer a common
+ * chat model (contains "chat", not an embedding/vision/audio specialty), then
+ * any model that is not such a specialty, then the first listed model.
+ */
+function pickDefaultModel(models: string[]): string {
+  if (models.length === 0) return ''
+  const specialty = /(embed|rerank|vision|image|audio|speech|tts|whisper)/
+  const lower = (m: string): string => m.toLowerCase()
+  const chat = models.find((m) => lower(m).includes('chat') && !specialty.test(lower(m)))
+  if (chat) return chat
+  const general = models.find((m) => !specialty.test(lower(m)))
+  return general ?? models[0]
+}
+
 /** Extract every usable provider from an opencode config object (key optional — local services like Ollama need none). */
 export function providersFromOpencode(config: unknown): AgentProvider[] {
   const out: AgentProvider[] = []
@@ -144,7 +175,7 @@ export function providersFromOpencode(config: unknown): AgentProvider[] {
       name: name,
       baseUrl: baseUrl.trim(),
       apiKey,
-      model: models[0] ?? '',
+      model: pickDefaultModel(models),
       protocol: protocolFromNpm(
         typeof (raw as { npm?: unknown }).npm === 'string' ? (raw as { npm: string }).npm : ''
       ),
@@ -154,16 +185,29 @@ export function providersFromOpencode(config: unknown): AgentProvider[] {
   return out
 }
 
-/** Append imported providers, skipping ones already present (same baseUrl+model). */
+/**
+ * Credential fingerprint for dedupe: auth type/source + whether a key is set +
+ * a hash of the key prefix. Configs that only differ by credential must not be
+ * treated as duplicates, while the raw key never enters the dedupe key.
+ */
+function credentialFingerprint(p: Pick<AgentProvider, 'authType' | 'authSource' | 'apiKey'>): string {
+  const auth = p.authType === 'import' ? `import:${p.authSource ?? ''}` : 'key'
+  const prefix = p.apiKey.slice(0, 8)
+  let hash = 5381
+  for (let i = 0; i < prefix.length; i++) hash = ((hash << 5) + hash + prefix.charCodeAt(i)) >>> 0
+  return `${auth}|${p.apiKey ? 'k' : 'n'}|${hash.toString(36)}`
+}
+
+/** Append imported providers, skipping ones already present (same baseUrl+model+credential). */
 export function mergeProviders(
   existing: AgentProvider[],
   imported: AgentProvider[]
 ): { providers: AgentProvider[]; added: number } {
-  const keys = new Set(existing.map((p) => `${p.baseUrl}|${p.model}`))
+  const keys = new Set(existing.map((p) => `${p.baseUrl}|${p.model}|${credentialFingerprint(p)}`))
   let added = 0
   const next = existing.slice()
   for (const p of imported) {
-    const key = `${p.baseUrl}|${p.model}`
+    const key = `${p.baseUrl}|${p.model}|${credentialFingerprint(p)}`
     if (keys.has(key)) continue
     keys.add(key)
     next.push(p)

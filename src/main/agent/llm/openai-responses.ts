@@ -3,6 +3,7 @@
  * calls. Also the protocol used by ChatGPT-subscription (Codex) credentials.
  */
 import { sseRequest } from './sse'
+import { assertTrustedImportedEndpoint } from '../auth-import'
 import type { ChatMessage, ChatStreamOptions, ChatStreamResult, ToolCall } from './types'
 
 function responsesUrl(baseUrl: string): string {
@@ -46,9 +47,16 @@ export function toResponsesInput(messages: ChatMessage[]): unknown[] {
 }
 
 export async function responsesChatStream(opts: ChatStreamOptions): Promise<ChatStreamResult> {
+  assertTrustedImportedEndpoint({
+    authType: opts.authType,
+    authSource: opts.authSource,
+    baseUrl: opts.baseUrl,
+    allowCustomHost: opts.allowCustomHost
+  })
   let text = ''
   const pending = new Map<string, { callId: string; name: string; args: string }>()
   const order: string[] = []
+  let usageLogged = false
 
   await sseRequest(
     responsesUrl(opts.baseUrl),
@@ -61,6 +69,8 @@ export async function responsesChatStream(opts: ChatStreamOptions): Promise<Chat
       body: JSON.stringify({
         model: opts.model,
         input: toResponsesInput(opts.messages),
+        // never persist user traffic server-side on the provider's side
+        store: false,
         stream: true,
         ...(opts.tools && opts.tools.length > 0
           ? {
@@ -77,8 +87,17 @@ export async function responsesChatStream(opts: ChatStreamOptions): Promise<Chat
     {
       signal: opts.signal,
       idleTimeoutMs: opts.idleTimeoutMs,
+      isCompletionEvent: (ev) => ev.type === 'response.completed',
       onJson: (ev) => {
         const type = ev.type as string | undefined
+        if (type === 'response.completed') {
+          const usage = (ev.response as { usage?: unknown } | undefined)?.usage
+          if (usage && !usageLogged) {
+            usageLogged = true
+            console.error(`[llm] usage: ${JSON.stringify(usage)}`)
+          }
+          return
+        }
         if (type === 'response.output_text.delta') {
           const d = typeof ev.delta === 'string' ? ev.delta : ''
           if (d) {

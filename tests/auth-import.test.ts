@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -25,10 +25,17 @@ vi.mock('node:fs', () => ({
   }
 }))
 
-import { importStatus, resolveImportedKey } from '../src/main/agent/auth-import'
+import {
+  assertTrustedImportedEndpoint,
+  importStatus,
+  isTrustedImportedHost,
+  resolveImportedKey
+} from '../src/main/agent/auth-import'
 
 const CODEX_PATH = path.join(os.homedir(), '.codex', 'auth.json')
 const OPENCODE_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json')
+
+const originalXdgDataHome = process.env['XDG_DATA_HOME']
 
 function b64url(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url')
@@ -44,6 +51,12 @@ const past = (): number => Math.floor(Date.now() / 1000) - 3600
 
 beforeEach(() => {
   files.clear()
+  delete process.env['XDG_DATA_HOME']
+})
+
+afterEach(() => {
+  if (originalXdgDataHome === undefined) delete process.env['XDG_DATA_HOME']
+  else process.env['XDG_DATA_HOME'] = originalXdgDataHome
 })
 
 describe('resolveImportedKey / importStatus (codex)', () => {
@@ -199,5 +212,99 @@ describe('resolveImportedKey / importStatus (opencode)', () => {
     expect(s.path).toBe(OPENCODE_PATH)
     expect(s.providers).toEqual([])
     expect(s.error).toBeTruthy()
+  })
+
+  it('prefers $XDG_DATA_HOME over ~/.local/share for the auth file', () => {
+    const xdg = path.join(os.tmpdir(), 'fake-xdg-data')
+    const xdgPath = path.join(xdg, 'opencode', 'auth.json')
+    process.env['XDG_DATA_HOME'] = xdg
+    files.set(xdgPath, JSON.stringify({ deepseek: { type: 'api', key: 'sk-xdg' } }))
+
+    const r = resolveImportedKey('opencode')
+    expect(r.ok).toBe(true)
+    expect(r.apiKey).toBe('sk-xdg')
+    expect(importStatus('opencode').path).toBe(xdgPath)
+  })
+})
+
+describe('isTrustedImportedHost / assertTrustedImportedEndpoint', () => {
+  it('allows the official codex and opencode hosts', () => {
+    expect(isTrustedImportedHost('https://api.openai.com/v1', 'codex')).toBe(true)
+    expect(isTrustedImportedHost('https://chatgpt.com/backend-api', 'codex')).toBe(true)
+    expect(isTrustedImportedHost('https://auth.openai.com/oauth', 'codex')).toBe(true)
+    expect(isTrustedImportedHost('https://openrouter.ai/api/v1', 'opencode')).toBe(true)
+    expect(isTrustedImportedHost('https://api.anthropic.com', 'opencode')).toBe(true)
+    expect(
+      isTrustedImportedHost('https://generativelanguage.googleapis.com/v1beta', 'opencode')
+    ).toBe(true)
+  })
+
+  it('always allows loopback hosts (local gateways)', () => {
+    expect(isTrustedImportedHost('http://localhost:11434/v1', 'codex')).toBe(true)
+    expect(isTrustedImportedHost('http://127.0.0.1:8080/v1', 'opencode')).toBe(true)
+    expect(isTrustedImportedHost('http://[::1]:8080/v1', 'codex')).toBe(true)
+  })
+
+  it('rejects custom hosts for both sources', () => {
+    expect(isTrustedImportedHost('https://evil.example.com/v1', 'codex')).toBe(false)
+    expect(isTrustedImportedHost('https://api.openai.com.evil.com/v1', 'codex')).toBe(false)
+    expect(isTrustedImportedHost('https://my-gateway.corp/v1', 'opencode')).toBe(false)
+    expect(isTrustedImportedHost('not-a-url', 'codex')).toBe(false)
+    expect(isTrustedImportedHost('https://api.openai.com/v1', 'unknown')).toBe(false)
+  })
+
+  it('assertTrustedImportedEndpoint only gates import-mode providers', () => {
+    expect(() =>
+      assertTrustedImportedEndpoint({ authType: 'key', authSource: 'codex', baseUrl: 'https://evil.example.com' })
+    ).not.toThrow()
+    expect(() =>
+      assertTrustedImportedEndpoint({ authType: 'import', authSource: 'codex', baseUrl: 'https://api.openai.com/v1' })
+    ).not.toThrow()
+    expect(() =>
+      assertTrustedImportedEndpoint({
+        authType: 'import',
+        authSource: 'codex',
+        baseUrl: 'https://evil.example.com/v1'
+      })
+    ).toThrow('导入的 OAuth 凭据只能发往官方域名')
+    expect(() =>
+      assertTrustedImportedEndpoint({
+        authType: 'import',
+        authSource: 'opencode',
+        baseUrl: 'https://evil.example.com/v1',
+        allowCustomHost: true
+      })
+    ).not.toThrow()
+  })
+})
+
+describe('importStatus expiringSoon', () => {
+  it('flags credentials expiring within 24h for codex', () => {
+    files.set(
+      CODEX_PATH,
+      JSON.stringify({ tokens: { access_token: fakeJwt(Math.floor(Date.now() / 1000) + 3600) } })
+    )
+    expect(importStatus('codex').expiringSoon).toBe(true)
+  })
+
+  it('flags credentials expiring within 24h for opencode', () => {
+    files.set(
+      OPENCODE_PATH,
+      JSON.stringify({ anthropic: { type: 'oauth', access: 'a', expires: Date.now() + 3600_000 } })
+    )
+    expect(importStatus('opencode').expiringSoon).toBe(true)
+  })
+
+  it('omits the flag when credentials are valid for more than 24h', () => {
+    files.set(
+      CODEX_PATH,
+      JSON.stringify({ tokens: { access_token: fakeJwt(Math.floor(Date.now() / 1000) + 172800) } })
+    )
+    expect(importStatus('codex').expiringSoon).toBeUndefined()
+  })
+
+  it('omits the flag for non-expiring api keys', () => {
+    files.set(CODEX_PATH, JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'sk-fake' }))
+    expect(importStatus('codex').expiringSoon).toBeUndefined()
   })
 })

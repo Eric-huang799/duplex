@@ -1,6 +1,7 @@
 import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { app } from 'electron'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toolDefs } from '../shared/tools'
@@ -20,8 +21,16 @@ export interface HttpServerDeps {
   captureUI?: () => Promise<string | null>
   /** Debug helper (only wired when COBROWSE_DEBUG_UI=1): run JS in the panel renderer. */
   panelEval?: (js: string) => Promise<unknown>
-  /** Built-in agent control (fire-and-forget; watch /api/agent/state). */
-  sendAgent?: (text: string) => Promise<void>
+  /** Debug helpers (only wired when COBROWSE_DEBUG_UI=1): synthetic input injection. */
+  debugExec?: (target: 'chrome' | 'page', js: string) => Promise<unknown>
+  debugKey?: (
+    target: 'chrome' | 'page',
+    key: string,
+    modifiers?: Array<'shift' | 'control' | 'alt' | 'meta'>
+  ) => Promise<void>
+  debugType?: (target: 'chrome' | 'page', text: string, delayMs?: number) => Promise<void>
+  /** Built-in agent control; resolves with the run result (or void). */
+  sendAgent?: (text: string) => Promise<void | { ok?: boolean; error?: string }>
   agentBusy?: () => boolean
   /** Returns false when the panel is mirroring an external tool (drop opencode pushes). */
   mirrorGate?: () => boolean
@@ -70,6 +79,20 @@ function sendJson(res: ServerResponse, code: number, obj: unknown): void {
 
 const PUSH_KINDS = new Set(['text', 'reasoning', 'tool', 'session', 'annotation', 'session-info'])
 
+/** Debug routes must never be reachable in a packaged (production) build. */
+function debugRoutesEnabled(): boolean {
+  try {
+    return app.isPackaged !== true
+  } catch {
+    return true
+  }
+}
+
+function isLocalOriginHost(hostname: string): boolean {
+  const h = hostname.toLowerCase()
+  return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]'
+}
+
 function isValidPush(b: unknown): b is MirrorPush {
   if (!b || typeof b !== 'object') return false
   const o = b as { kind?: unknown; text?: unknown; ts?: unknown }
@@ -102,7 +125,18 @@ async function handle(
 ): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
 
-  res.setHeader('Access-Control-Allow-Origin', '*')
+  // CORS: only local pages (or no Origin at all, e.g. node/curl scripts) get
+  // the ACAO header — an arbitrary web page must not be able to read replies.
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+  let originAllowed = true
+  if (origin) {
+    try {
+      originAllowed = isLocalOriginHost(new URL(origin).hostname)
+    } catch {
+      originAllowed = false
+    }
+  }
+  if (originAllowed) res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader(
     'Access-Control-Allow-Headers',
     'authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id'
@@ -120,8 +154,7 @@ async function handle(
   }
 
   const auth = req.headers.authorization ?? ''
-  const authorized =
-    auth === `Bearer ${deps.token}` || url.searchParams.get('token') === deps.token
+  const authorized = auth === `Bearer ${deps.token}`
   if (!authorized) {
     sendJson(res, 401, { error: 'unauthorized (missing or bad bearer token)' })
     return
@@ -222,8 +255,20 @@ async function handle(
       return
     }
     deps.onUserActivity?.()
-    void deps.sendAgent(text).catch(() => undefined)
-    sendJson(res, 200, { ok: true })
+    // Await the run so immediate failures (missing config, bad credentials)
+    // are reported instead of silently swallowed. A long run keeps this
+    // request open until the agent finishes; callers may poll
+    // /api/agent/state meanwhile.
+    try {
+      const result = await deps.sendAgent(text)
+      if (result && result.ok === false) {
+        sendJson(res, 500, { ok: false, error: result.error ?? 'agent failed to start' })
+      } else {
+        sendJson(res, 200, { ok: true })
+      }
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: (e as Error)?.message ?? String(e) })
+    }
     return
   }
 
@@ -266,7 +311,11 @@ async function handle(
     return
   }
 
-  if (url.pathname === '/api/debug/ui-snapshot' && req.method === 'GET') {
+  // In a packaged build the debug routes below are not served at all: requests
+  // fall through to the final 404.
+  const debugOk = debugRoutesEnabled()
+
+  if (debugOk && url.pathname === '/api/debug/ui-snapshot' && req.method === 'GET') {
     if (!deps.captureUI) {
       sendJson(res, 501, { error: 'captureUI not available' })
       return
@@ -276,7 +325,7 @@ async function handle(
     return
   }
 
-  if (url.pathname === '/api/debug/panel-eval' && req.method === 'POST') {
+  if (debugOk && url.pathname === '/api/debug/panel-eval' && req.method === 'POST') {
     if (!deps.panelEval) {
       sendJson(res, 501, { error: 'panelEval not available (set COBROWSE_DEBUG_UI=1)' })
       return
@@ -302,8 +351,85 @@ async function handle(
     return
   }
 
+  if (debugOk && url.pathname === '/api/debug/exec' && req.method === 'POST') {
+    if (!deps.debugExec) {
+      sendJson(res, 501, { error: 'debugExec not available (set COBROWSE_DEBUG_UI=1)' })
+      return
+    }
+    const body = (await readBody(req)) as { target?: string; js?: string } | undefined
+    const js = body?.js ?? ''
+    if (!js) {
+      sendJson(res, 400, { error: 'js is required' })
+      return
+    }
+    try {
+      const result = await deps.debugExec(body?.target === 'page' ? 'page' : 'chrome', js)
+      let safe: unknown = null
+      try {
+        safe = JSON.parse(JSON.stringify(result ?? null))
+      } catch {
+        safe = String(result)
+      }
+      sendJson(res, 200, { ok: true, result: safe })
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: String(e) })
+    }
+    return
+  }
+
+  if (debugOk && url.pathname === '/api/debug/key' && req.method === 'POST') {
+    if (!deps.debugKey) {
+      sendJson(res, 501, { error: 'debugKey not available (set COBROWSE_DEBUG_UI=1)' })
+      return
+    }
+    const body = (await readBody(req)) as
+      | { target?: string; key?: string; modifiers?: string[] }
+      | undefined
+    const key = body?.key ?? ''
+    if (!key) {
+      sendJson(res, 400, { error: 'key is required' })
+      return
+    }
+    try {
+      const mods = (body?.modifiers ?? []).filter(
+        (m): m is 'shift' | 'control' | 'alt' | 'meta' =>
+          m === 'shift' || m === 'control' || m === 'alt' || m === 'meta'
+      )
+      await deps.debugKey(body?.target === 'page' ? 'page' : 'chrome', key, mods)
+      sendJson(res, 200, { ok: true })
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: String(e) })
+    }
+    return
+  }
+
+  if (debugOk && url.pathname === '/api/debug/type' && req.method === 'POST') {
+    if (!deps.debugType) {
+      sendJson(res, 501, { error: 'debugType not available (set COBROWSE_DEBUG_UI=1)' })
+      return
+    }
+    const body = (await readBody(req)) as
+      | { target?: string; text?: string; delayMs?: number }
+      | undefined
+    const text = body?.text ?? ''
+    try {
+      await deps.debugType(
+        body?.target === 'page' ? 'page' : 'chrome',
+        text,
+        Number(body?.delayMs) || 50
+      )
+      sendJson(res, 200, { ok: true, typed: text.length })
+    } catch (e) {
+      sendJson(res, 500, { ok: false, error: String(e) })
+    }
+    return
+  }
+
   if (url.pathname === '/api/injections' && req.method === 'GET') {
     const waitMs = Math.min(Math.max(Number(url.searchParams.get('wait')) || 0, 0), 30000)
+    // A consumer is polling: let the mirror know so idle re-delivery stops
+    // (optional method — provided by mirror.ts).
+    ;(deps.mirror as unknown as { touchConsumer?: () => void }).touchConsumer?.()
     // Both modes TAKE: with several plugin instances polling, peeking would
     // deliver the same message to all of them (duplicate fan-out).
     const items =

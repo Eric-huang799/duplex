@@ -3,6 +3,8 @@
  * See docs/blueprints/2026-09-27-p1-interaction-layer.md (state C).
  */
 import type { Tab } from './tabs'
+import { displayParts } from '../shared/hotkeys'
+import { loadSettings } from './settings'
 
 export interface OverlayRect {
   x: number
@@ -26,6 +28,13 @@ export type OverlayCommand =
     }
   | { kind: 'clearStatus' }
   | { kind: 'annotationMode'; active?: boolean }
+  | {
+      kind: 'annotationResult'
+      annotationId: string
+      ok: boolean
+      error?: string
+      elementCount?: number
+    }
   | { kind: 'hideAll' }
 
 export function overlaySend(tab: Tab, cmd: OverlayCommand): void {
@@ -76,4 +85,22 @@ export function hideAllVisuals(tab: Tab | null): void {
   if (tab) overlaySend(tab, { kind: 'hideAll' })
 }
 
-export const TAKEOVER_HINT = 'Esc 接管'
+/**
+ * Build the emergency-stop hint from the configured keys ("F2 急停"). Esc is
+ * reserved for the annotation UI, so a non-Esc key is preferred when present.
+ */
+export function formatTakeoverHint(keys: string[]): string {
+  const usable = keys.filter((k) => typeof k === 'string' && k.length > 0)
+  const key = usable.find((k) => k !== 'Escape') ?? usable[0]
+  if (!key) return '急停（未设置快捷键）'
+  return `${displayParts(key).join('+')} 急停`
+}
+
+/** The takeover hint for the current settings (dynamic — stop keys are configurable). */
+export function takeoverHint(): string {
+  try {
+    return formatTakeoverHint(loadSettings().emergencyStopKeys)
+  } catch {
+    return '急停'
+  }
+}

@@ -36,6 +36,13 @@ type OverlayCommand =
   | { kind: 'status'; text: string; hint?: string; tone?: 'info' | 'busy' | 'error'; ttl?: number }
   | { kind: 'clearStatus' }
   | { kind: 'annotationMode'; active?: boolean }
+  | {
+      kind: 'annotationResult'
+      annotationId: string
+      ok: boolean
+      error?: string
+      elementCount?: number
+    }
   | { kind: 'hideAll' }
 
 interface Nodes {
@@ -59,13 +66,17 @@ interface Nodes {
 interface MarkerState {
   id: string
   tool: ToolKind
+  /** Document coordinates (clientX + scrollX); screen position = doc - current scroll. */
   rect: Rect
   el: HTMLElement
   submitted: boolean
+  /** Arrow endpoints in document coordinates. */
   arrow?: { x1: number; y1: number; x2: number; y2: number }
   anchorEl: Element | null
   anchorDx: number
   anchorDy: number
+  /** Question text kept when an unsubmitted card is dismissed (marker stays dashed). */
+  pendingQuestion?: string
 }
 
 const TEMPLATE = `
@@ -141,6 +152,9 @@ const TEMPLATE = `
   .cb-status.visible { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; cursor: pointer; }
   .cb-status.shifted { bottom: 64px; }
   .cb-status.error { border-color: rgba(224, 108, 108, 0.55); }
+  .cb-status.error .text { color: #f0a6a6; }
+  .cb-status.success { border-color: rgba(84, 200, 120, 0.55); }
+  .cb-status.success .text { color: #c9efd3; }
   .cb-status .spin {
     display: none;
     width: 11px; height: 11px;
@@ -186,6 +200,13 @@ const TEMPLATE = `
     border-color: rgba(77, 163, 255, 0.45);
     background: rgba(77, 163, 255, 0.05);
   }
+  /* unsubmitted marker left behind by a dismissed card: dashed, click to edit */
+  .cb-marker.unsubmitted .shape {
+    border-style: dashed;
+    border-color: rgba(232, 184, 75, 0.60);
+    background: rgba(232, 184, 75, 0.07);
+  }
+  .cb-marker.unsubmitted { pointer-events: auto; cursor: pointer; }
   .cb-marker .remove {
     position: absolute;
     left: -11px; top: -11px;
@@ -310,6 +331,7 @@ const TEMPLATE = `
   <button class="cb-tool" data-tool="arrow" title="箭头 (3)">↗</button>
   <button class="cb-tool" data-tool="point" title="点选 (4)">⌖</button>
   <span class="cb-sep"></span>
+  <button class="cb-tool" data-act="clear" title="清空全部标注">🗑</button>
   <button class="cb-tool" data-act="exit" title="退出标注模式 (Esc)">✕</button>
 </div>
 <div class="cb-annot-card">
@@ -345,6 +367,8 @@ let draft: {
 } | null = null
 let cardFor: string | null = null
 let pointStart: { x: number; y: number } | null = null
+let pointRaf = 0
+let pointLast: { x: number; y: number } | null = null
 
 function clearTimer(key: 'cursor' | 'highlight' | 'status'): void {
   if (timers[key]) {
@@ -413,6 +437,9 @@ function setup(): void {
     b.addEventListener('click', () => {
       setAnnotTool((b.getAttribute('data-tool') ?? 'rect') as ToolKind)
     })
+  })
+  tools.querySelector('button[data-act="clear"]')?.addEventListener('click', () => {
+    clearMarkers()
   })
   tools.querySelector('button[data-act="exit"]')?.addEventListener('click', () => {
     setAnnotationActive(false)
@@ -496,10 +523,14 @@ function setup(): void {
   annotLayer.addEventListener('mousedown', onAnnotDown)
   window.addEventListener('mousemove', onAnnotMove)
   window.addEventListener('mouseup', onAnnotUp)
+  window.addEventListener('scroll', onWindowScroll, { passive: true })
+  window.addEventListener('blur', onWindowBlur)
 
   window.addEventListener(
     'keydown',
     (e) => {
+      // Esc only resolves the local annotation flow; emergency stop is driven
+      // exclusively by the configured hotkeys below.
       if (e.key === 'Escape') {
         if (cardFor) {
           e.preventDefault()
@@ -521,12 +552,16 @@ function setup(): void {
         ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'hotkey' })
         return
       }
-      if (e.key === 'Escape') {
-        ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'escape' })
-        return
-      }
-      // tool hotkeys 1-4 while annotating (not while typing)
-      if (annotActive && !cardFor && e.key >= '1' && e.key <= '4') {
+      // tool hotkeys 1-4 while annotating (not while typing, no ctrl/alt/meta)
+      if (
+        annotActive &&
+        !cardFor &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey &&
+        e.key >= '1' &&
+        e.key <= '4'
+      ) {
         const t = e.target as HTMLElement | null
         const typing =
           !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
@@ -619,7 +654,7 @@ function apply(cmd: OverlayCommand): void {
       statusText.textContent = cmd.text
       statusHint.textContent = cmd.hint ?? ''
       statusSep.style.display = cmd.hint ? '' : 'none'
-      status.classList.remove('busy', 'error')
+      status.classList.remove('busy', 'error', 'success')
       if (cmd.tone === 'busy') status.classList.add('busy')
       if (cmd.tone === 'error') status.classList.add('error')
       status.classList.add('visible')
@@ -633,6 +668,19 @@ function apply(cmd: OverlayCommand): void {
     }
     case 'annotationMode': {
       setAnnotationActive(cmd.active === undefined ? !annotActive : !!cmd.active)
+      break
+    }
+    case 'annotationResult': {
+      if (cmd.ok) {
+        const count = typeof cmd.elementCount === 'number' ? cmd.elementCount : null
+        flashStatus(count == null ? '已发送给 AI' : `已发送给 AI（${count} 个元素）`, {
+          tone: 'success',
+          ttl: 2500
+        })
+      } else {
+        const reason = (cmd.error ?? '').trim()
+        flashStatus(reason || '发送失败', { tone: 'error', ttl: 4000 })
+      }
       break
     }
     case 'hideAll': {
@@ -651,7 +699,9 @@ function apply(cmd: OverlayCommand): void {
 // ============================ annotation mode ============================
 
 function setAnnotationActive(active: boolean): void {
+  const changed = annotActive !== active
   annotActive = active
+  if (changed) ipcRenderer.send('overlay:event', { kind: 'annotationState', active })
   if (!nodes) return
   nodes.annotLayer.classList.toggle('active', active)
   nodes.tools.classList.toggle('visible', active)
@@ -660,13 +710,48 @@ function setAnnotationActive(active: boolean): void {
     setAnnotTool(annotTool)
   } else {
     if (cardFor) closeCard(true)
+    cancelPointFrame()
     if (draft) {
       draft.el.remove()
       draft = null
     }
     nodes.pointHint.style.display = 'none'
     pointStart = null
+    clearMarkers()
   }
+}
+
+/** Local status message (not routed through the main-process command channel). */
+function flashStatus(
+  text: string,
+  opts: { tone?: 'error' | 'success'; hint?: string; ttl: number }
+): void {
+  if (!nodes) return
+  const { status, statusText, statusHint, statusSep } = nodes
+  statusText.textContent = text
+  statusHint.textContent = opts.hint ?? ''
+  statusSep.style.display = opts.hint ? '' : 'none'
+  status.classList.remove('busy', 'error', 'success')
+  if (opts.tone) status.classList.add(opts.tone)
+  status.classList.add('visible')
+  armTimer('status', opts.ttl, () => status.classList.remove('visible'))
+}
+
+/** Remove every annotation marker (local Map + DOM). */
+function clearMarkers(): void {
+  if (!nodes) return
+  cardFor = null
+  nodes.card.classList.remove('visible')
+  for (const m of markers.values()) m.el.remove()
+  markers.clear()
+}
+
+function cancelPointFrame(): void {
+  if (pointRaf) {
+    cancelAnimationFrame(pointRaf)
+    pointRaf = 0
+  }
+  pointLast = null
 }
 
 function setAnnotTool(t: ToolKind): void {
@@ -685,6 +770,48 @@ function normRect(x0: number, y0: number, x1: number, y1: number): Rect {
     w: Math.round(Math.abs(x1 - x0)),
     h: Math.round(Math.abs(y1 - y0))
   }
+}
+
+/** Document-coordinate rect from client (viewport) corners. */
+function docRect(x0: number, y0: number, x1: number, y1: number): Rect {
+  const sx = window.scrollX
+  const sy = window.scrollY
+  return normRect(x0 + sx, y0 + sy, x1 + sx, y1 + sy)
+}
+
+/** Screen (viewport) rect of a marker, recomputed for the current scroll. */
+function markerScreenRect(m: MarkerState): Rect {
+  return {
+    x: m.rect.x - window.scrollX,
+    y: m.rect.y - window.scrollY,
+    w: m.rect.w,
+    h: m.rect.h
+  }
+}
+
+function positionMarker(m: MarkerState): void {
+  positionShape(m.el, markerScreenRect(m))
+}
+
+function onWindowScroll(): void {
+  if (!nodes) return
+  for (const m of markers.values()) positionMarker(m)
+  if (cardFor) {
+    const m = markers.get(cardFor)
+    if (m) positionCard(m)
+  }
+}
+
+/** Blur is the safety net for drafts that never saw their mouseup (released
+ *  outside the window). */
+function onWindowBlur(): void {
+  if (draft) {
+    draft.el.remove()
+    draft = null
+  }
+  pointStart = null
+  cancelPointFrame()
+  if (nodes) nodes.pointHint.style.display = 'none'
 }
 
 /** Hit-test below the annotation layer (layer is temporarily click-transparent). */
@@ -777,13 +904,14 @@ function createMarker(
     removeMarker(id, true)
   })
   el.appendChild(rm)
-  positionShape(el, rect)
-  nodes?.markersBox.appendChild(el)
 
   // code-layer anchor: element under the rect center + offset from its box
   let anchorEl: Element | null = null
   try {
-    anchorEl = elementBelow(rect.x + rect.w / 2, rect.y + rect.h / 2)
+    anchorEl = elementBelow(
+      rect.x - window.scrollX + rect.w / 2,
+      rect.y - window.scrollY + rect.h / 2
+    )
   } catch {
     anchorEl = null
   }
@@ -800,9 +928,16 @@ function createMarker(
   }
   if (anchorEl) {
     const ar = anchorEl.getBoundingClientRect()
-    state.anchorDx = rect.x - ar.x
-    state.anchorDy = rect.y - ar.y
+    state.anchorDx = rect.x - (ar.x + window.scrollX)
+    state.anchorDy = rect.y - (ar.y + window.scrollY)
   }
+  el.addEventListener('mousedown', (ev) => ev.stopPropagation())
+  el.addEventListener('click', (ev) => {
+    ev.stopPropagation()
+    if (!state.submitted) openCard(id)
+  })
+  nodes?.markersBox.appendChild(el)
+  positionMarker(state)
   markers.set(id, state)
   return state
 }
@@ -854,18 +989,25 @@ function onAnnotMove(e: MouseEvent): void {
     return
   }
   if (annotTool === 'point' && !cardFor) {
-    const el = elementBelow(e.clientX, e.clientY)
-    if (!el) {
-      nodes.pointHint.style.display = 'none'
-      return
-    }
-    const r = el.getBoundingClientRect()
-    const hint = nodes.pointHint
-    hint.style.display = 'block'
-    hint.style.left = `${Math.round(r.x)}px`
-    hint.style.top = `${Math.round(r.y)}px`
-    hint.style.width = `${Math.round(r.width)}px`
-    hint.style.height = `${Math.round(r.height)}px`
+    pointLast = { x: e.clientX, y: e.clientY }
+    if (pointRaf) return
+    pointRaf = requestAnimationFrame(() => {
+      pointRaf = 0
+      const p = pointLast
+      if (!p || !nodes || !annotActive || annotTool !== 'point' || cardFor) return
+      const el = elementBelow(p.x, p.y)
+      if (!el) {
+        nodes.pointHint.style.display = 'none'
+        return
+      }
+      const r = el.getBoundingClientRect()
+      const hint = nodes.pointHint
+      hint.style.display = 'block'
+      hint.style.left = `${Math.round(r.x)}px`
+      hint.style.top = `${Math.round(r.y)}px`
+      hint.style.width = `${Math.round(r.width)}px`
+      hint.style.height = `${Math.round(r.height)}px`
+    })
   }
 }
 
@@ -875,10 +1017,30 @@ function onAnnotUp(e: MouseEvent): void {
     const d = draft
     draft = null
     d.el.remove()
-    const rect = normRect(d.x0, d.y0, d.x1, d.y1)
-    if (d.tool !== 'point' && (rect.w < 8 || rect.h < 8)) return
+    if (d.tool === 'arrow') {
+      // An arrow is valid on endpoint distance alone: a vertical arrow's
+      // bounding box can be narrower than 8px.
+      if (Math.hypot(d.x1 - d.x0, d.y1 - d.y0) < 8) {
+        flashStatus('框选太小，请拖大一点', { ttl: 2200 })
+        return
+      }
+    } else {
+      const viewport = normRect(d.x0, d.y0, d.x1, d.y1)
+      if (viewport.w < 8 || viewport.h < 8) {
+        flashStatus('框选太小，请拖大一点', { ttl: 2200 })
+        return
+      }
+    }
+    const rect = docRect(d.x0, d.y0, d.x1, d.y1)
     const arrow =
-      d.tool === 'arrow' ? { x1: d.x0, y1: d.y0, x2: d.x1, y2: d.y1 } : undefined
+      d.tool === 'arrow'
+        ? {
+            x1: d.x0 + window.scrollX,
+            y1: d.y0 + window.scrollY,
+            x2: d.x1 + window.scrollX,
+            y2: d.y1 + window.scrollY
+          }
+        : undefined
     const m = createMarker(d.tool, rect, arrow)
     openCard(m.id)
     return
@@ -892,8 +1054,8 @@ function onAnnotUp(e: MouseEvent): void {
     const r = el.getBoundingClientRect()
     if (r.width < 2 || r.height < 2) return
     const rect = {
-      x: Math.round(r.x),
-      y: Math.round(r.y),
+      x: Math.round(r.x + window.scrollX),
+      y: Math.round(r.y + window.scrollY),
       w: Math.round(r.width),
       h: Math.round(r.height)
     }
@@ -902,23 +1064,30 @@ function onAnnotUp(e: MouseEvent): void {
   }
 }
 
+function positionCard(m: MarkerState): void {
+  if (!nodes) return
+  const card = nodes.card
+  const width = Math.min(Math.max(m.rect.w, 300), 420)
+  card.style.width = `${width}px`
+  const screen = markerScreenRect(m)
+  const left = Math.min(Math.max(screen.x, 12), window.innerWidth - width - 12)
+  let top = screen.y + screen.h + 16
+  const h = card.offsetHeight
+  if (top + h > window.innerHeight - 12) top = Math.max(12, screen.y - h - 16)
+  card.style.left = `${Math.max(12, left)}px`
+  card.style.top = `${top}px`
+}
+
 function openCard(markerId: string): void {
   if (!nodes) return
   if (cardFor) closeCard(true)
   const m = markers.get(markerId)
   if (!m) return
   cardFor = markerId
-  const card = nodes.card
-  nodes.cardInput.value = ''
-  card.classList.add('visible')
-  const width = Math.min(Math.max(m.rect.w, 300), 420)
-  card.style.width = `${width}px`
-  let left = Math.min(Math.max(m.rect.x, 12), window.innerWidth - width - 12)
-  let top = m.rect.y + m.rect.h + 16
-  const h = card.offsetHeight
-  if (top + h > window.innerHeight - 12) top = Math.max(12, m.rect.y - h - 16)
-  card.style.left = `${Math.max(12, left)}px`
-  card.style.top = `${top}px`
+  m.el.classList.remove('unsubmitted')
+  nodes.cardInput.value = m.pendingQuestion ?? ''
+  nodes.card.classList.add('visible')
+  positionCard(m)
   setTimeout(() => nodes?.cardInput.focus(), 30)
 }
 
@@ -926,7 +1095,12 @@ function closeCard(cancel: boolean): void {
   if (!nodes) return
   if (cancel && cardFor) {
     const m = markers.get(cardFor)
-    if (m && !m.submitted) removeMarker(cardFor, false)
+    if (m && !m.submitted) {
+      // Keep the dismissed annotation around (dashed) with its text: clicking
+      // the marker reopens the card instead of silently dropping the work.
+      m.pendingQuestion = nodes.cardInput.value.trim()
+      m.el.classList.add('unsubmitted')
+    }
   }
   cardFor = null
   nodes.card.classList.remove('visible')
@@ -941,8 +1115,18 @@ function submitCard(): void {
     return
   }
   const question = nodes.cardInput.value.trim()
+  // Sampling runs in viewport coordinates; markers live in document
+  // coordinates, so convert back for the current scroll.
+  const base = markerScreenRect(m)
+  let rect: Rect = {
+    x: Math.round(base.x),
+    y: Math.round(base.y),
+    w: m.rect.w,
+    h: m.rect.h
+  }
+  let dx = 0
+  let dy = 0
   // Anchor-corrected rect if the page scrolled since drawing.
-  let rect = m.rect
   if (m.anchorEl && m.anchorEl.isConnected) {
     try {
       const ar = m.anchorEl.getBoundingClientRect()
@@ -953,20 +1137,32 @@ function submitCard(): void {
           w: m.rect.w,
           h: m.rect.h
         }
+        dx = rect.x - base.x
+        dy = rect.y - base.y
       }
     } catch {
       /* keep original rect */
     }
   }
+  const arrow = m.arrow
+    ? {
+        x1: Math.round(m.arrow.x1 - window.scrollX + dx),
+        y1: Math.round(m.arrow.y1 - window.scrollY + dy),
+        x2: Math.round(m.arrow.x2 - window.scrollX + dx),
+        y2: Math.round(m.arrow.y2 - window.scrollY + dy)
+      }
+    : undefined
   ipcRenderer.send('overlay:event', {
     kind: 'annotationSubmit',
     annotationId: id,
     tool: m.tool,
     rect,
     question,
-    arrow: m.arrow
+    arrow
   })
   m.submitted = true
+  m.pendingQuestion = undefined
+  m.el.classList.remove('unsubmitted')
   m.el.classList.add('submitted')
   cardFor = null
   nodes.card.classList.remove('visible')

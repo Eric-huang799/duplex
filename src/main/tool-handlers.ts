@@ -1,10 +1,10 @@
 import type { Tab, TabManager } from './tabs'
 import * as cdp from './cdp'
 import * as scripts from './page-scripts'
-import { markAiActive, overlaySend, TAKEOVER_HINT } from './overlay'
+import { markAiActive, overlaySend, takeoverHint } from './overlay'
 import { interruptibleSleep, operationSignal } from './interrupt'
 import { resolveAddress } from '../shared/url'
-import { searchUrl } from '../shared/search'
+import { DEFAULT_ENGINE, SEARCH_ENGINES, searchUrl } from '../shared/search'
 
 export type ToolContent =
   | { type: 'text'; text: string }
@@ -32,7 +32,7 @@ function json(obj: unknown): string {
 }
 
 const interruptedText = (): ToolResult =>
-  text('操作已被用户中断（用户按下 Esc 接管了浏览器）。请等待用户的下一步指示。')
+  text(`操作已被用户中断（用户触发「${takeoverHint()}」接管了浏览器）。请等待用户的下一步指示，不要重试。`)
 
 interface ResolveInfo {
   error?: string
@@ -41,11 +41,63 @@ interface ResolveInfo {
   tag: string
   text: string
   visible: boolean
+  /** A4 page script sets this when the target's center sat outside the viewport and the click point had to be clamped. */
+  clamped?: boolean
   rect: { x: number; y: number; w: number; h: number }
 }
 
 async function resolveTarget(tab: Tab, target: string): Promise<ResolveInfo> {
   return cdp.evalInPage<ResolveInfo>(tab, scripts.buildResolveScript(target))
+}
+
+/**
+ * Resolve a target; when the page script had to clamp the click point to the
+ * viewport edge, scroll the element into view once and resolve again.
+ */
+async function resolveTargetForClick(tab: Tab, target: string): Promise<ResolveInfo> {
+  let r = await resolveTarget(tab, target)
+  if (r && !r.error && r.clamped) {
+    await cdp.evalInPage(tab, scripts.buildScrollScript(target, 0, 0)).catch(() => undefined)
+    await interruptibleSleep(180)
+    r = await resolveTarget(tab, target)
+  }
+  return r
+}
+
+/**
+ * Report whether a native <select> would have several equally-good matches for
+ * the requested option (same matching tiers as buildSelectScript). Selection
+ * must then be rejected so the AI can re-choose a more specific value.
+ */
+function buildSelectAmbiguityProbe(target: string, option: string): string {
+  const t = JSON.stringify(target)
+  const o = JSON.stringify(option)
+  return `(() => {
+  const target = ${t};
+  const wanted = ${o};
+  let el = null;
+  if (/^e\\d+$/.test(target)) {
+    el = (window.__cobrowse && window.__cobrowse.refMap && window.__cobrowse.refMap.get(target)) || null;
+  } else {
+    try { el = document.querySelector(target); } catch (e) { return { error: 'invalid selector: ' + target }; }
+  }
+  if (!el) return { error: 'element not found: ' + target };
+  if (el.tagName !== 'SELECT') return { notSelect: true };
+  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const w = norm(wanted);
+  const opts = Array.from(el.options);
+  const exactText = opts.filter((x) => norm(x.textContent) === w);
+  const exactValue = opts.filter((x) => norm(x.value) === w);
+  const containsText = opts.filter((x) => norm(x.textContent).includes(w));
+  const containsValue = opts.filter((x) => norm(x.value).includes(w));
+  const tier = exactText.length ? exactText : exactValue.length ? exactValue : containsText.length ? containsText : containsValue;
+  if (tier.length > 1) {
+    return {
+      ambiguous: tier.slice(0, 10).map((x) => (x.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) + ' [value=' + String(x.value).slice(0, 40) + ']')
+    };
+  }
+  return {};
+})()`
 }
 
 /** Resolve a target, then show cursor + highlight + status (blueprint state C). */
@@ -55,8 +107,14 @@ async function visualizeTarget(
   verb: string,
   opts?: { sleepMs?: number; activeMs?: number }
 ): Promise<{ r: ResolveInfo; label: string } | { error: string }> {
-  const r = await resolveTarget(tab, target)
+  const r = await resolveTargetForClick(tab, target)
   if (r?.error) return { error: r.error }
+  if (r?.clamped) {
+    return {
+      error:
+        '目标元素的中心点不在可视区域内，点击坐标仍被视口裁剪（clamped）。已跳过本次操作：请先用 scroll 把元素滚入视口，再重试。'
+    }
+  }
   const label = r.text ? `「${r.text.slice(0, 16)}」` : `<${r.tag}>`
   markAiActive(opts?.activeMs ?? 6000)
   overlaySend(tab, { kind: 'showCursor', x: r.x, y: r.y })
@@ -64,7 +122,7 @@ async function visualizeTarget(
   overlaySend(tab, {
     kind: 'status',
     text: `AI 正在${verb} ${label}`,
-    hint: TAKEOVER_HINT,
+    hint: takeoverHint(),
     tone: 'busy',
     ttl: 4200
   })
@@ -105,9 +163,17 @@ async function dispatch(
           : searchUrl(addr.query, getEngine?.())
         : undefined
       const tab = tabs.createTab(url)
-      if (url) await cdp.waitForLoad(tab)
+      let loadTimedOut = false
+      if (url) loadTimedOut = (await cdp.waitForLoad(tab)) === 'timeout'
       const wc = tab.view.webContents
-      return text(json({ tabId: tab.id, url: wc.getURL(), title: wc.getTitle() }))
+      return text(
+        json({
+          tabId: tab.id,
+          url: wc.getURL(),
+          title: wc.getTitle(),
+          ...(loadTimedOut ? { note: '加载超时（15 秒），页面可能未加载完' } : {})
+        })
+      )
     }
 
     case 'close_tab': {
@@ -135,7 +201,7 @@ async function dispatch(
           addr.kind === 'search'
             ? `AI 正在搜索 "${addr.query.slice(0, 30)}"`
             : `AI 正在打开 ${url.slice(0, 60)}`,
-        hint: TAKEOVER_HINT,
+        hint: takeoverHint(),
         tone: 'busy',
         ttl: 4000
       })
@@ -152,6 +218,7 @@ async function dispatch(
           url: wc.getURL(),
           title: wc.getTitle(),
           loading: wc.isLoading(),
+          ...(lr === 'timeout' ? { note: '加载超时（15 秒），页面可能未加载完' } : {}),
           ...(addr.kind === 'search' ? { searched: addr.query } : {})
         })
       )
@@ -160,13 +227,15 @@ async function dispatch(
     case 'search': {
       const tab = tabs.requireTab(args.tabId as number | undefined)
       const query = String(args.query)
-      const engine = typeof args.engine === 'string' ? args.engine : undefined
-      const url = searchUrl(query, engine ?? getEngine?.())
+      const requested = typeof args.engine === 'string' ? args.engine : undefined
+      const engine = (requested && requested in SEARCH_ENGINES ? requested : getEngine?.()) ?? DEFAULT_ENGINE
+      const realEngine = engine in SEARCH_ENGINES ? engine : DEFAULT_ENGINE
+      const url = searchUrl(query, realEngine)
       markAiActive(10000)
       overlaySend(tab, {
         kind: 'status',
         text: `AI 正在搜索 "${query.slice(0, 30)}"`,
-        hint: TAKEOVER_HINT,
+        hint: takeoverHint(),
         tone: 'busy',
         ttl: 4000
       })
@@ -178,7 +247,15 @@ async function dispatch(
       const lr = await cdp.waitForLoad(tab)
       if (lr === 'interrupted') return interruptedText()
       const wc = tab.view.webContents
-      return text(json({ searched: query, engine: engine ?? 'baidu', url: wc.getURL(), title: wc.getTitle() }))
+      return text(
+        json({
+          searched: query,
+          engine: realEngine,
+          url: wc.getURL(),
+          title: wc.getTitle(),
+          ...(lr === 'timeout' ? { note: '加载超时（15 秒），页面可能未加载完' } : {})
+        })
+      )
     }
 
     case 'history': {
@@ -189,7 +266,7 @@ async function dispatch(
       overlaySend(tab, {
         kind: 'status',
         text: `AI 正在${navLabel}页面`,
-        hint: TAKEOVER_HINT,
+        hint: takeoverHint(),
         tone: 'busy',
         ttl: 2500
       })
@@ -207,16 +284,51 @@ async function dispatch(
       }
       const lr = await cdp.waitForLoad(tab)
       if (lr === 'interrupted') return interruptedText()
-      return text(json({ url: tab.view.webContents.getURL(), title: tab.view.webContents.getTitle() }))
+      return text(
+        json({
+          url: tab.view.webContents.getURL(),
+          title: tab.view.webContents.getTitle(),
+          ...(lr === 'timeout' ? { note: '加载超时（15 秒），页面可能未加载完' } : {})
+        })
+      )
     }
 
     case 'snapshot': {
       const tab = tabs.requireTab(args.tabId as number | undefined)
-      const outline = await cdp.evalInPage<string>(tab, scripts.buildSnapshotScript())
-      if (typeof outline !== 'string' || !outline) {
-        return errorText('snapshot failed (empty page or script error)')
+      let outline: string | null = null
+      let evalError: string | null = null
+      try {
+        const r = await cdp.evalInPage<string>(tab, scripts.buildSnapshotScript())
+        if (typeof r === 'string' && r) outline = r
+      } catch (e) {
+        evalError = (e as Error)?.message ?? String(e)
       }
-      return text(outline)
+      if (outline) return text(outline)
+      // Distinguish the usual causes as far as possible: page script blocked
+      // (CSP / cross-origin frame) vs. simply no document body yet.
+      const page = await cdp
+        .evalInPage<{ hasBody?: boolean; url?: string; readyState?: string }>(
+          tab,
+          '({ hasBody: !!document.body, url: location.href, readyState: document.readyState })'
+        )
+        .catch(() => null)
+      if (evalError) {
+        const bodyHint =
+          page?.hasBody === false
+            ? '当前页面还没有文档内容（body 不存在），'
+            : ''
+        return errorText(
+          `snapshot 失败：${bodyHint}页面脚本执行被拒绝（可能是 CSP 限制、页面尚未就绪或位于跨域 iframe）。底层错误：${evalError}`
+        )
+      }
+      if (page?.hasBody === false) {
+        return errorText(
+          `snapshot 失败：页面为空（${page.url ?? ''}，readyState=${page.readyState ?? '?'}），没有可读取的文档结构。请先 navigate 打开页面或用 wait 等待加载。`
+        )
+      }
+      return errorText(
+        'snapshot 失败：未取得页面结构（页面可能仍在加载或内容全部不可见）。可先用 wait 等待元素出现，再重试 snapshot。'
+      )
     }
 
     case 'get_html': {
@@ -258,6 +370,11 @@ async function dispatch(
         tab,
         '({ w: innerWidth, h: innerHeight, ph: Math.round(document.documentElement.scrollHeight) })'
       )
+      if (fullPage && size.ph > 20000) {
+        return errorText(
+          `页面高度 ${size.ph}px 超过整页截图上限（20000px），已拒绝整页截图以防卡死。请改用普通截图（fullPage=false），或先 scroll 到目标区域再截图。`
+        )
+      }
       const data = await cdp.captureScreenshot(tab, fullPage)
       const label = fullPage
         ? `full-page screenshot (${size.w}px wide, ${size.ph}px tall)`
@@ -340,7 +457,7 @@ async function dispatch(
       overlaySend(tab, {
         kind: 'status',
         text: `AI 正在拖拽 ${r.from.tag} → ${r.to.tag}`,
-        hint: TAKEOVER_HINT,
+        hint: takeoverHint(),
         tone: 'busy',
         ttl: 3000
       })
@@ -362,6 +479,17 @@ async function dispatch(
       const tab = tabs.requireTab(args.tabId as number | undefined)
       const target = String(args.target)
       const option = String(args.option)
+      const probe = await cdp.evalInPage<{
+        error?: string
+        ambiguous?: string[]
+        notSelect?: boolean
+      }>(tab, buildSelectAmbiguityProbe(target, option))
+      if (probe?.error) return errorText(probe.error)
+      if (probe?.ambiguous && probe.ambiguous.length > 1) {
+        return errorText(
+          `「${option}」在该下拉框中匹配到多个选项，无法确定要选哪一个。请改用更精确的选项文本或 value 重试。候选：${probe.ambiguous.join(' / ')}`
+        )
+      }
       const r = await cdp.evalInPage<{
         error?: string
         options?: string[]
@@ -410,7 +538,7 @@ async function dispatch(
       overlaySend(tab, {
         kind: 'status',
         text: `AI 正在输入到 ${label}`,
-        hint: TAKEOVER_HINT,
+        hint: takeoverHint(),
         tone: 'busy',
         ttl: 2200
       })
@@ -430,7 +558,7 @@ async function dispatch(
           length: value.length,
           actualNow: actual.slice(0, 120),
           submitted: submit,
-          note: filled ? undefined : 'value read back differs from what was typed; the field may reject the input'
+          warning: filled ? undefined : '输入可能未生效（页面受控组件）'
         })
       )
     }
@@ -454,7 +582,7 @@ async function dispatch(
       overlaySend(tab, {
         kind: 'status',
         text: selector ? `AI 正在滚动到 ${selector.slice(0, 40)}` : `AI 正在${dirText}滚动`,
-        hint: TAKEOVER_HINT,
+        hint: takeoverHint(),
         tone: 'busy',
         ttl: 1600
       })
@@ -493,14 +621,23 @@ async function dispatch(
       const tab = tabs.requireTab(args.tabId as number | undefined)
       const selector = typeof args.selector === 'string' && args.selector ? args.selector : null
       const wantedText = typeof args.text === 'string' && args.text ? args.text : null
-      const timeout = Math.min(Math.max(Number(args.timeout) || 10000, 500), 30000)
+      const requestedTimeout = Number(args.timeout) || 10000
+      const timeout = Math.min(Math.max(requestedTimeout, 500), 30000)
+      const timeoutCapped = requestedTimeout > 30000
+      const capNote = timeoutCapped ? { note: '已按上限等待 30 秒' } : {}
 
       if (selector || wantedText) {
         const t0 = Date.now()
         const deadline = t0 + timeout
         while (Date.now() < deadline) {
           if (operationSignal()?.aborted) {
-            return text(json({ found: false, interrupted: true, note: '等待被用户中断（Esc）' }))
+            return text(
+              json({
+                found: false,
+                interrupted: true,
+                note: timeoutCapped ? '等待被用户中断（急停）；已按上限等待 30 秒' : '等待被用户中断（急停）'
+              })
+            )
           }
           const check = await cdp.evalInPage<boolean>(
             tab,
@@ -510,18 +647,40 @@ async function dispatch(
           )
           if (check) {
             return text(
-              json({ found: true, kind: selector ? 'selector' : 'text', value: selector ?? wantedText, waitedMs: Date.now() - t0 })
+              json({
+                found: true,
+                kind: selector ? 'selector' : 'text',
+                value: selector ?? wantedText,
+                waitedMs: Date.now() - t0,
+                ...capNote
+              })
             )
           }
           await interruptibleSleep(300)
         }
-        return text(json({ found: false, timeoutMs: timeout, note: 'timed out; page state did not change' }))
+        return text(
+          json({
+            found: false,
+            timeoutMs: timeout,
+            ...(timeoutCapped
+              ? { note: '等待超时，已按上限等待 30 秒；页面状态未变化' }
+              : { note: 'timed out; page state did not change' })
+          })
+        )
       }
 
-      const ms = Math.min(Math.max(Number(args.ms) || 1000, 1), 30000)
+      const requestedMs = Number(args.ms) || 1000
+      const ms = Math.min(Math.max(requestedMs, 1), 30000)
+      const msCapped = requestedMs > 30000
       const t0 = Date.now()
       await interruptibleSleep(ms)
-      return text(json({ waitedMs: Date.now() - t0, interrupted: operationSignal()?.aborted ?? false }))
+      return text(
+        json({
+          waitedMs: Date.now() - t0,
+          interrupted: operationSignal()?.aborted ?? false,
+          ...(msCapped ? { note: '已按上限等待 30 秒' } : {})
+        })
+      )
     }
 
     case 'get_console': {

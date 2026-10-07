@@ -22,7 +22,8 @@ export function buildOpenAiTools(): OpenAiTool[] {
         string,
         unknown
       >
-    } catch {
+    } catch (e) {
+      console.error(`[agent] failed to build the JSON schema for tool "${def.name}":`, e)
       parameters = { type: 'object', properties: {} }
     }
     // some gateways reject the $schema key

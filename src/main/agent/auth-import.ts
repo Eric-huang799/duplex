@@ -6,7 +6,8 @@
  * Sources:
  *  - codex:    ~/.codex/auth.json
  *              { auth_mode, OPENAI_API_KEY, tokens: { access_token, ... }, last_refresh }
- *  - opencode: ~/.local/share/opencode/auth.json (xdg data dir)
+ *  - opencode: $XDG_DATA_HOME/opencode/auth.json, falling back to
+ *              ~/.local/share/opencode/auth.json when XDG_DATA_HOME is unset
  *              { [provider]: { type: 'oauth', access, refresh, expires (epoch ms) }
  *                           | { type: 'api', key } }
  */
@@ -30,8 +31,33 @@ export interface ImportStatus {
   /** 已登录/可用的 provider 名称列表 */
   providers: string[]
   expiresAt?: number
+  /** 凭据有效期不足 24 小时（含已过期）时为 true，供 UI 提前提示重新登录。 */
+  expiringSoon?: true
   error?: string
 }
+
+/** Minimal provider shape needed to check an imported-credential endpoint. */
+export interface ImportedEndpointProvider {
+  authType?: string
+  authSource?: string
+  baseUrl?: string
+  allowCustomHost?: boolean
+}
+
+const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
+
+/** Official hosts an imported OAuth credential may be sent to. */
+const OFFICIAL_IMPORT_HOSTS: Record<ImportSource, string[]> = {
+  codex: ['api.openai.com', 'chatgpt.com', 'auth.openai.com'],
+  opencode: [
+    'openrouter.ai',
+    'api.anthropic.com',
+    'api.openai.com',
+    'generativelanguage.googleapis.com'
+  ]
+}
+
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
 
 const CODEX_EXPIRED = 'Codex 凭据已过期，请先运行一次 codex CLI 刷新'
 const OPENCODE_EXPIRED = 'opencode 凭据已过期，请先运行一次 opencode CLI 刷新'
@@ -41,12 +67,54 @@ function authFilePath(source: ImportSource): string {
   switch (source) {
     case 'codex':
       return path.join(os.homedir(), '.codex', 'auth.json')
-    case 'opencode':
-      // opencode resolves its data dir through xdg-basedir (XDG_DATA_HOME or ~/.local/share).
-      return path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json')
+    case 'opencode': {
+      // opencode resolves its data dir through xdg-basedir: XDG_DATA_HOME wins,
+      // otherwise ~/.local/share.
+      const xdg = (process.env['XDG_DATA_HOME'] ?? '').trim()
+      const dataHome = xdg || path.join(os.homedir(), '.local', 'share')
+      return path.join(dataHome, 'opencode', 'auth.json')
+    }
     default:
       return ''
   }
+}
+
+function isOfficialHost(hostname: string, domains: string[]): boolean {
+  return domains.some((d) => hostname === d || hostname.endsWith(`.${d}`))
+}
+
+/**
+ * True when the base URL is safe for an imported (likely OAuth) credential:
+ * localhost is always fine, official provider domains are fine, everything
+ * else needs an explicit opt-in (`allowCustomHost`) checked by the caller.
+ */
+export function isTrustedImportedHost(baseUrl: string, source?: string): boolean {
+  let hostname = ''
+  try {
+    hostname = new URL((baseUrl ?? '').trim()).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+  if (!hostname) return false
+  if (LOCAL_HOSTNAMES.has(hostname)) return true
+  if (source === 'codex' || source === 'opencode') {
+    return isOfficialHost(hostname, OFFICIAL_IMPORT_HOSTS[source])
+  }
+  return false
+}
+
+/**
+ * Hard gate for imported credentials: refuse to send a CLI-imported OAuth
+ * token to a custom gateway unless the user explicitly trusted it. Key-mode
+ * providers are unaffected.
+ */
+export function assertTrustedImportedEndpoint(provider: ImportedEndpointProvider): void {
+  if (provider.authType !== 'import') return
+  if (provider.allowCustomHost === true) return
+  if (isTrustedImportedHost(provider.baseUrl ?? '', provider.authSource)) return
+  throw new Error(
+    '导入的 OAuth 凭据只能发往官方域名；如确认信任该网关，请在模型配置中勾选「我信任此网关」'
+  )
 }
 
 /** Read + parse a JSON file; all failures become a Chinese message, never a throw. */
@@ -227,13 +295,17 @@ function opencodeStatus(): ImportStatus {
 
 /** UI-facing status without any secret values. Never throws. */
 export function importStatus(source: ImportSource): ImportStatus {
-  let file = ''
+  let status: ImportStatus
   try {
-    file = authFilePath(source)
-    if (source === 'codex') return codexStatus()
-    if (source === 'opencode') return opencodeStatus()
-    return { found: false, path: file, providers: [], error: `不支持的凭据来源: ${String(source)}` }
+    const file = authFilePath(source)
+    if (source === 'codex') status = codexStatus()
+    else if (source === 'opencode') status = opencodeStatus()
+    else status = { found: false, path: file, providers: [], error: `不支持的凭据来源: ${String(source)}` }
   } catch {
-    return { found: false, path: file, providers: [], error: '读取凭据时发生未知错误' }
+    status = { found: false, path: '', providers: [], error: '读取凭据时发生未知错误' }
   }
+  if (status.expiresAt !== undefined && status.expiresAt - Date.now() < EXPIRING_SOON_MS) {
+    status.expiringSoon = true
+  }
+  return status
 }

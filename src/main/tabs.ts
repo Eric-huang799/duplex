@@ -1,5 +1,5 @@
 import { BrowserWindow, WebContentsView } from 'electron'
-import type { ContentBounds, TabInfo } from '../shared/protocol'
+import type { ContentBounds, LoadErrorInfo, TabInfo } from '../shared/protocol'
 
 export interface ConsoleEntry {
   level: string
@@ -21,6 +21,7 @@ export class TabManager {
   private closedUrls: string[] = []
   private chromeOverlays = new Set<string>()
   private bounds: ContentBounds = { x: 0, y: 88, width: 1200, height: 760 }
+  private watchdog: ReturnType<typeof setInterval> | null = null
 
   constructor(
     private win: BrowserWindow,
@@ -28,7 +29,8 @@ export class TabManager {
     private onChanged: () => void,
     private onNavigate: (url: string, title: string, favicon?: string) => void,
     private onShortcut: (action: string) => void,
-    private onMetadata: (url: string, title: string, favicon?: string) => void
+    private onMetadata: (url: string, title: string, favicon?: string) => void,
+    private onLoadError?: (info: LoadErrorInfo) => void
   ) {
     // Chromium can leave a WebContentsView "hidden" (suspended rendering,
     // rAF stopped) after the window was minimized/occluded. Nudge the active
@@ -36,7 +38,9 @@ export class TabManager {
     this.win.on('show', () => this.activateView())
     this.win.on('restore', () => this.activateView())
     this.win.on('focus', () => this.activateView())
-    setInterval(() => void this.reviveActiveView(), 30_000)
+    this.watchdog = setInterval(() => void this.reviveActiveView(), 30_000)
+    // the watchdog must never keep the process alive on its own
+    this.watchdog.unref?.()
   }
 
   /** If the active view lost its visibility (Electron quirk after occlusion),
@@ -44,7 +48,6 @@ export class TabManager {
   private async reviveActiveView(): Promise<void> {
     try {
       if (!this.win.isVisible() || this.win.isMinimized()) return
-      if (this.chromeOverlays.size > 0) return
       const active = this.activeId != null ? this.tabs.get(this.activeId) : null
       if (!active || this.isBlank(active)) return
       const state = await active.view.webContents.executeJavaScript(
@@ -54,9 +57,17 @@ export class TabManager {
       if (state === 'hidden') {
         active.view.setVisible(false)
         setTimeout(() => {
-          if (this.chromeOverlays.size > 0) return
-          active.view.setVisible(true)
-          active.view.setBounds(this.bounds)
+          // Always schedule the restore: while a chrome overlay (library /
+          // find) is open the view stays hidden, but it must become visible
+          // again once the overlay closes — never leave it stuck hidden.
+          try {
+            active.view.setVisible(
+              this.chromeOverlays.size === 0 && this.activeId === active.id && !this.isBlank(active)
+            )
+            active.view.setBounds(this.bounds)
+          } catch {
+            /* view already torn down */
+          }
         }, 80)
       }
     } catch {
@@ -94,13 +105,57 @@ export class TabManager {
   private wireEvents(tab: Tab): void {
     const wc = tab.view.webContents
     wc.on('before-input-event', (event, input) => {
-      if (input.type !== 'keyDown' || !(input.control || input.meta) || input.alt) return
+      if (input.type !== 'keyDown') return
+      // Alt+Left / Alt+Right: history navigation
+      if (
+        input.alt &&
+        !input.control &&
+        !input.meta &&
+        (input.key === 'ArrowLeft' || input.key === 'ArrowRight')
+      ) {
+        event.preventDefault()
+        const nav = wc.navigationHistory
+        if (input.key === 'ArrowLeft' && nav.canGoBack()) nav.goBack()
+        else if (input.key === 'ArrowRight' && nav.canGoForward()) nav.goForward()
+        return
+      }
+      if (!(input.control || input.meta) || input.alt) return
+      // Ctrl+= / Ctrl+- / Ctrl+0: page zoom, clamped to Chromium's -5..5 range
+      if (
+        input.key === '=' ||
+        input.key === '+' ||
+        input.key === '-' ||
+        input.key === '_' ||
+        input.key === '0'
+      ) {
+        event.preventDefault()
+        const current = wc.getZoomLevel()
+        const next =
+          input.key === '0'
+            ? 0
+            : input.key === '=' || input.key === '+'
+              ? Math.min(5, current + 0.5)
+              : Math.max(-5, current - 0.5)
+        wc.setZoomLevel(next)
+        return
+      }
+      // Ctrl+1..8 switches to the Nth tab, Ctrl+9 to the last one
+      if (/^[1-9]$/.test(input.key)) {
+        event.preventDefault()
+        const ids = Array.from(this.tabs.keys())
+        const target = input.key === '9' ? ids[ids.length - 1] : ids[Number(input.key) - 1]
+        if (target != null) this.setActive(target)
+        return
+      }
       const key = input.key.toLowerCase()
       const actions: Record<string, string> = {
         l: 'focusAddress', t: input.shift ? 'reopenClosed' : 'newTab',
         w: 'closeTab', r: 'reload', d: 'bookmark', f: 'find'
       }
-      const action = input.key === 'Tab' ? (input.shift ? 'previousTab' : 'nextTab') : actions[key]
+      let action = input.key === 'Tab' ? (input.shift ? 'previousTab' : 'nextTab') : actions[key]
+      // app-level shortcuts while the page has focus (mirrors the chrome UI)
+      if (!action && !input.shift && key === 'b') action = 'togglePanel'
+      if (!action && input.shift && key === 'a') action = 'annotationToggle'
       if (!action) return
       event.preventDefault()
       if (action === 'closeTab') this.closeTab(tab.id)
@@ -129,6 +184,12 @@ export class TabManager {
     wc.on('page-title-updated', (_event, title) => this.onMetadata(wc.getURL(), title, tab.favicon))
     wc.on('did-navigate-in-page', changed)
     wc.on('page-title-updated', changed)
+    wc.on('did-fail-load', (_event, code, desc, url, isMainFrame) => {
+      // -3 = ERR_ABORTED (a new navigation started or the user stopped the
+      // load): not a real failure, keep it out of the error toast.
+      if (isMainFrame === false || code === -3) return
+      this.onLoadError?.({ url, code, desc })
+    })
     wc.on('did-fail-load', changed)
     wc.on('render-process-gone', changed)
 
@@ -200,6 +261,10 @@ export class TabManager {
       this.closedUrls.push(closedUrl)
       if (this.closedUrls.length > 10) this.closedUrls.shift()
     }
+    // capture the tab order BEFORE the closed tab leaves the map so the new
+    // active tab is its right neighbor (falling back to the left one)
+    const ids = Array.from(this.tabs.keys())
+    const index = ids.indexOf(id)
     this.tabs.delete(id)
     try {
       this.win.contentView.removeChildView(tab.view)
@@ -208,8 +273,16 @@ export class TabManager {
       /* already gone */
     }
     if (this.activeId === id) {
-      const rest = Array.from(this.tabs.keys())
-      this.activeId = rest.length ? rest[rest.length - 1] : null
+      const right = index >= 0 ? ids[index + 1] : undefined
+      const left = index > 0 ? ids[index - 1] : undefined
+      let next: number | null = null
+      if (right != null && this.tabs.has(right)) next = right
+      else if (left != null && this.tabs.has(left)) next = left
+      else {
+        const rest = Array.from(this.tabs.keys())
+        next = rest.length ? rest[rest.length - 1] : null
+      }
+      this.activeId = next
     }
     this.activateView()
     this.emit()
@@ -310,6 +383,10 @@ export class TabManager {
   }
 
   destroy(): void {
+    if (this.watchdog) {
+      clearInterval(this.watchdog)
+      this.watchdog = null
+    }
     for (const id of Array.from(this.tabs.keys())) this.closeTab(id)
   }
 

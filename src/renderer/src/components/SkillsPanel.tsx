@@ -25,6 +25,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
   const [codex, setCodex] = useState<CodexStatus | null>(null)
   const [claudeCmd, setClaudeCmd] = useState<{ command: string; hint: string; bridgeFound: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [delStage, setDelStage] = useState<{ id: string; stage: number } | null>(null)
 
@@ -44,12 +45,22 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
   }, [])
 
   const toggle = async (id: string, enabled: boolean): Promise<void> => {
-    await window.cobrowse.skillsToggle(id, enabled)
-    await refresh()
+    if (togglingId) return
+    setTogglingId(id)
+    setError('')
+    try {
+      await window.cobrowse.skillsToggle(id, enabled)
+      await refresh()
+    } catch (e) {
+      setError((e as Error)?.message ?? '切换失败')
+    } finally {
+      setTogglingId(null)
+    }
   }
 
   const remove = async (id: string): Promise<void> => {
     if (!delStage || delStage.id !== id) {
+      setError('')
       setDelStage({ id, stage: 1 })
       setTimeout(() => setDelStage((c) => (c && c.id === id ? null : c)), 4000)
       return
@@ -59,6 +70,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
       return
     }
     setDelStage(null)
+    setError('')
     const r = await window.cobrowse.skillsRemove(id)
     if (!r.ok) setError(r.error ?? '删除失败')
     await refresh()
@@ -75,6 +87,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
 
   const installCodex = async (): Promise<void> => {
     if (!codex) return
+    setError('')
     const ok = window.confirm(
       `将把 Duplex 的 MCP 配置写入：\n${codex.path}\n\n（会自动备份原文件）确定继续？`
     )
@@ -90,7 +103,12 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     await refresh()
   }
 
-  const showClaude = async (): Promise<void> => {
+  const toggleClaude = async (): Promise<void> => {
+    if (claudeCmd) {
+      setClaudeCmd(null)
+      return
+    }
+    setError('')
     const r = await window.cobrowse.setupClaudeCommand()
     setClaudeCmd(r)
   }
@@ -131,6 +149,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
               <input
                 type="checkbox"
                 checked={s.enabled}
+                disabled={togglingId !== null}
                 onChange={(e) => void toggle(s.id, e.target.checked)}
               />
             </label>
@@ -173,11 +192,12 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
         )}
         <div className="integration-row">
           <div className="provider-sub">Claude Code：复制命令后到终端执行</div>
-          <button className="import-btn" onClick={() => void showClaude()}>
-            显示命令
+          <button className="import-btn" onClick={() => void toggleClaude()}>
+            {claudeCmd ? '隐藏命令' : '显示命令'}
           </button>
         </div>
         {claudeCmd && <pre className="integration-cmd">{claudeCmd.command}</pre>}
+        {claudeCmd && claudeCmd.hint && <div className="import-status">{claudeCmd.hint}</div>}
         {claudeCmd && !claudeCmd.bridgeFound && (
           <div className="import-status">
             注意：未找到 dist-bridge/index.cjs——请先在项目根运行 npm run build:bridge
@@ -185,7 +205,12 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
         )}
       </div>
 
-      {error && <div className="agent-form-err providers-err">{error}</div>}
+      {error && (
+        <div className="agent-form-err providers-err skill-err">
+          <span>{error}</span>
+          <button type="button" title="清除错误提示" onClick={() => setError('')}>×</button>
+        </div>
+      )}
     </div>
   )
 }

@@ -153,11 +153,15 @@ export function buildResolveScript(target: string): string {
   const r = el.getBoundingClientRect();
   const cs = getComputedStyle(el);
   const visible = r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none' && cs.opacity !== '0';
-  const x = Math.min(Math.max(r.x + r.width / 2, 1), innerWidth - 2);
-  const y = Math.min(Math.max(r.y + r.height / 2, 1), innerHeight - 2);
+  const cx = r.x + r.width / 2;
+  const cy = r.y + r.height / 2;
+  const x = Math.min(Math.max(cx, 1), innerWidth - 2);
+  const y = Math.min(Math.max(cy, 1), innerHeight - 2);
+  const clamped = x !== cx || y !== cy;
   return {
     ok: true,
     x: x, y: y,
+    clamped: clamped || undefined,
     rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
     visible: visible,
     tag: el.tagName.toLowerCase(),
@@ -419,11 +423,28 @@ export function buildAnnotateScript(
     return parts.join(' > ');
   };
 
+  // Climb out of shadow trees through their host (Node.contains cannot see
+  // across a shadow boundary on its own).
+  const parentOf = (node) => {
+    if (node.parentElement) return node.parentElement;
+    const root = node.getRootNode ? node.getRootNode() : null;
+    return root && root.host ? root.host : null;
+  };
+
+  const containsComposed = (ancestor, node) => {
+    let cur = node;
+    while (cur) {
+      if (cur === ancestor) return true;
+      cur = parentOf(cur);
+    }
+    return false;
+  };
+
   const lca = (els) => {
     if (!els.length) return null;
     let cur = els[0];
     for (const el of els.slice(1)) {
-      while (cur && !cur.contains(el)) cur = cur.parentElement;
+      while (cur && !containsComposed(cur, el)) cur = parentOf(cur);
       if (!cur) return null;
     }
     return cur;
@@ -451,12 +472,40 @@ export function buildAnnotateScript(
     };
   };
 
+  // document.elementsFromPoint only exposes shadow hosts; descend through open
+  // shadow roots (<= 8 levels) to take the innermost real element at the point.
+  const deepestAt = (x, y, seed) => {
+    let el = seed || null;
+    if (!el) {
+      try {
+        const list = document.elementsFromPoint(x, y);
+        for (const cand of list) {
+          if (!cand || cand.id === HOST_ID || cand === document.documentElement) continue;
+          el = cand;
+          break;
+        }
+      } catch (e) { el = null; }
+    }
+    let depth = 0;
+    while (el && el.shadowRoot && depth < 8) {
+      let inner = null;
+      try { inner = el.shadowRoot.elementFromPoint(x, y); } catch (e) { inner = null; }
+      if (!inner || inner === el || inner.id === HOST_ID) break;
+      el = inner;
+      depth++;
+    }
+    return el;
+  };
+
   const host = document.getElementById(HOST_ID);
   const prevPE = host ? host.style.pointerEvents : null;
   if (host) host.style.pointerEvents = 'none';
   try {
-    const cols = Math.max(3, Math.min(12, Math.round(rect.w / 50)));
-    const rows = Math.max(3, Math.min(12, Math.round(rect.h / 50)));
+    // Denser grid for large boxes: area > 50000px² allows up to 20 cells per axis.
+    const dense = rect.w * rect.h > 50000;
+    const maxCells = dense ? 20 : 12;
+    const cols = Math.max(3, Math.min(maxCells, Math.round(rect.w / 50)));
+    const rows = Math.max(3, Math.min(maxCells, Math.round(rect.h / 50)));
     const hits = new Map();
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -464,8 +513,10 @@ export function buildAnnotateScript(
         const y = rect.y + (rect.h * (r + 0.5)) / rows;
         if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) continue;
         const els = document.elementsFromPoint(x, y);
-        for (const el of els) {
-          if (!el || el.id === HOST_ID || el === document.documentElement) continue;
+        for (const raw of els) {
+          if (!raw || raw.id === HOST_ID || raw === document.documentElement) continue;
+          const el = deepestAt(x, y, raw);
+          if (!el || el.id === HOST_ID) continue;
           hits.set(el, (hits.get(el) || 0) + 1);
         }
       }
@@ -478,9 +529,11 @@ export function buildAnnotateScript(
       } catch (e) { return false; }
     };
 
-    let list = Array.from(hits.entries()).filter(function (pair) { return alive(pair[0]); });
-    list.sort(function (a, b) { return b[1] - a[1]; });
-    list = list.slice(0, 80);
+    const aliveList = Array.from(hits.entries()).filter(function (pair) { return alive(pair[0]); });
+    aliveList.sort(function (a, b) { return b[1] - a[1]; });
+    const elementCount = aliveList.length;
+    const truncated = elementCount > 80;
+    const list = aliveList.slice(0, 80);
 
     const elements = list.slice(0, 40).map(function (pair) { return describe(pair[0], pair[1]); });
     const primary = elements.slice().sort(function (a, b) {
@@ -510,12 +563,7 @@ export function buildAnnotateScript(
 
     const pointInfos = extraPoints.map(function (p) {
       let el = null;
-      try {
-        const els = document.elementsFromPoint(p.x, p.y).filter(function (e) {
-          return e && e.id !== HOST_ID && e !== document.documentElement;
-        });
-        el = els.length ? els[0] : null;
-      } catch (e) { el = null; }
+      try { el = deepestAt(p.x, p.y); } catch (e) { el = null; }
       return { tag: p.tag, el: el ? describe(el, 1) : null };
     });
 
@@ -531,7 +579,8 @@ export function buildAnnotateScript(
         : null,
       text: textParts.join(' ').slice(0, 2000),
       points: pointInfos,
-      elementCount: list.length
+      elementCount: elementCount,
+      truncated: truncated || undefined
     };
   } finally {
     if (host) host.style.pointerEvents = prevPE == null ? 'none' : prevPE;

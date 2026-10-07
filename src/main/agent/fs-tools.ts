@@ -10,12 +10,24 @@ import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
 import { interruptibleAwait, operationSignal } from '../interrupt'
+import { cobrowseDir } from '../../shared/endpoint'
 
 export type FsConfirmFn = (payload: {
   kind: 'write' | 'command'
   detail: string
   cwd: string
+  /** Content preview for writes (at most 2000 chars, truncated marker included). */
+  preview?: string
 }) => Promise<boolean>
+
+const PREVIEW_LIMIT = 2000
+
+/** A ≤2000-char preview with an explicit truncation marker. */
+function contentPreview(content: string): string {
+  if (content.length <= PREVIEW_LIMIT) return content
+  const suffix = '\n…（内容已截断）'
+  return content.slice(0, PREVIEW_LIMIT - suffix.length) + suffix
+}
 
 const text = (s: string): ToolResult => ({ content: [{ type: 'text', text: s }] })
 const errorText = (s: string): ToolResult => ({
@@ -24,17 +36,23 @@ const errorText = (s: string): ToolResult => ({
 })
 
 /** Protected write targets — refused regardless of confirmation.
- *  Only truly dangerous areas: OS dirs and credential stores. Per-write
- *  approval is the first line of defense; this is the hard backstop.
- *  (AppData is intentionally NOT blocked: Temp lives under it.) */
+ *  Only truly dangerous areas: OS dirs, credential stores and the app's own
+ *  data dir. Per-write approval is the first line of defense; this is the
+ *  hard backstop. (AppData is intentionally NOT blocked: Temp lives under it.) */
 function isProtectedWriteTarget(abs: string): boolean {
   const win = process.platform === 'win32'
   const home = os.homedir()
+  const homeDirs = ['.ssh', '.aws', '.gnupg', '.codex', '.claude', '.config'].map((d) =>
+    path.join(home, d)
+  )
+  homeDirs.push(path.join(home, '.local', 'share', 'opencode'))
   const blocked = [
     ...(win
       ? ['c:\\windows', 'c:\\program files', 'c:\\program files (x86)']
       : ['/etc', '/private/etc', '/usr', '/bin', '/sbin']),
-    ...['.ssh', '.aws', '.gnupg'].map((d) => path.join(home, d))
+    ...homeDirs,
+    // Duplex's own settings/session store
+    cobrowseDir()
   ].map((p) => (win ? p.toLowerCase() : p))
   // resolve links so junctions/symlinks into protected areas are caught
   let real = abs
@@ -63,7 +81,10 @@ export function createFsToolHandlers(
       if (typeof args.content !== 'string') return errorText('缺少参数 content')
       const abs = path.resolve(filePath)
       if (isProtectedWriteTarget(abs)) return errorText(`禁止写入受保护目录：${abs}`)
-      const ok = await interruptibleAwait(confirm({ kind: 'write', detail: abs, cwd: path.dirname(abs) }), false)
+      const ok = await interruptibleAwait(
+        confirm({ kind: 'write', detail: abs, cwd: path.dirname(abs), preview: contentPreview(content) }),
+        false
+      )
       if (!ok) {
         return operationSignal()?.aborted ? text('已被用户急停中断（本次写入未执行）') : text('用户拒绝了这次写入。')
       }

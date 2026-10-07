@@ -26,6 +26,8 @@ interface Props {
   onOpenLibrary?: (section: 'bookmarks' | 'history' | 'downloads') => void
   onToggleAI?: () => void
   aiOpen?: boolean
+  annotationActive?: boolean
+  onToggleAnnotation?: () => void
   onChromeOverlayChange?: (id: string, open: boolean) => void
 }
 
@@ -41,7 +43,7 @@ function Icon({ name, filled = false }: { name: 'back' | 'forward' | 'reload' | 
   return <svg {...common}>{paths[name]}</svg>
 }
 
-export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = false, onBookmark, onOpenLibrary, onToggleAI, aiOpen = false, onChromeOverlayChange }: Props): React.JSX.Element {
+export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = false, onBookmark, onOpenLibrary, onToggleAI, aiOpen = false, annotationActive = false, onToggleAnnotation, onChromeOverlayChange }: Props): React.JSX.Element {
   const [input, setInput] = useState('')
   const [editing, setEditing] = useState(false)
   const [theme, setTheme] = useState<ThemeSetting>('system')
@@ -108,6 +110,25 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     window.addEventListener('click', close)
     return () => window.removeEventListener('click', close)
   }, [toolsMenu])
+
+  const closeStopKeys = (): void => {
+    setStopKeysOpen(false)
+    setListening(false)
+    setPendingMods('')
+  }
+
+  useEffect(() => {
+    if (!stopKeysOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      closeStopKeys()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [stopKeysOpen])
+
+  const noPage = !active || !active.url || active.url === 'about:blank'
+  const showAnnotationToggle = annotationActive || typeof onToggleAnnotation === 'function'
 
   const applyTheme = (t: ThemeSetting): void => {
     setTheme(t)
@@ -178,7 +199,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     <div className="toolbar">
       <button className="tb-btn" disabled={!active?.canGoBack} onClick={() => onAction('back')} title="后退"><Icon name="back" /></button>
       <button className="tb-btn" disabled={!active?.canGoForward} onClick={() => onAction('forward')} title="前进"><Icon name="forward" /></button>
-      <button className="tb-btn" onClick={() => onAction('reload')} title="刷新"><Icon name="reload" /></button>
+      <button className="tb-btn" disabled={noPage} onClick={() => onAction('reload')} title="刷新"><Icon name="reload" /></button>
       <input
         className="urlbar"
         value={input}
@@ -199,23 +220,45 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
         <button className="tb-btn engine-trigger" title={`搜索引擎：${engines.find((e) => e.key === engine)?.name ?? engine}`} onClick={(e) => { e.stopPropagation(); setEngineMenu((v) => !v) }}>{engines.find((e) => e.key === engine)?.name ?? '搜索'}　⌄</button>
         {engineMenu && <div className="engine-menu" onClick={(e) => e.stopPropagation()}>{engines.map((en) => <button key={en.key} className={engine === en.key ? 'on' : ''} onClick={() => applyEngine(en.key)}>{en.name}</button>)}</div>}
       </div>
-      <button className={`tb-btn bookmark-button ${bookmarked ? 'is-bookmarked' : ''}`} title={bookmarked ? '移除书签' : '添加书签'} onClick={onBookmark}><Icon name="star" filled={bookmarked} /></button>
-      <button
-        className={`tb-btn tools-trigger ${toolsMenu ? 'selected' : ''}`}
-        title="浏览器工具和主题"
-        onClick={(e) => { e.stopPropagation(); setToolsMenu((v) => !v) }}
-      ><Icon name="more" /></button>
-      {toolsMenu && <div className="browser-tools-menu" onClick={(e) => e.stopPropagation()}>
-        <button onClick={() => { onOpenLibrary?.('bookmarks'); setToolsMenu(false) }}>书签</button><button onClick={() => { onOpenLibrary?.('history'); setToolsMenu(false) }}>浏览记录</button><button onClick={() => { onOpenLibrary?.('downloads'); setToolsMenu(false) }}>下载内容</button>
-        <button onClick={() => { onAction('annotationMode'); setToolsMenu(false) }}>页面标注</button><button onClick={() => { setToolsMenu(false); setStopKeysOpen(true); setStopError(''); setVkOpen(false); setListening(false); setPendingMods(''); void window.cobrowse.emergencyKeysGet().then((s) => setStopKeys(s.keys)) }}>设置急停键</button>
-        <div className="tools-menu-divider" />
-        {(['system', 'light', 'dark'] as const).map((t) => <button key={t} className={theme === t ? 'on' : ''} onClick={() => applyTheme(t)}>{THEME_ICON[t]}　{THEME_LABEL[t]}</button>)}
-      </div>}
-      {active?.loading && <span className="load-dot" title="加载中" />}
-      <button className={`tb-btn ai-toggle ${aiOpen ? 'selected' : ''}`} title={aiOpen ? '隐藏 AI 面板' : '打开 AI 面板'} onClick={onToggleAI}>AI</button>
+      <button className={`tb-btn bookmark-button ${bookmarked ? 'is-bookmarked' : ''}`} disabled={noPage} title={bookmarked ? '移除书签' : '添加书签'} onClick={onBookmark}><Icon name="star" filled={bookmarked} /></button>
+      <div className="tools-wrap">
+        <button
+          className={`tb-btn tools-trigger ${toolsMenu ? 'selected' : ''}`}
+          title="浏览器工具和主题"
+          onClick={(e) => { e.stopPropagation(); setToolsMenu((v) => !v) }}
+        ><Icon name="more" /></button>
+        {toolsMenu && <div className="browser-tools-menu" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { onOpenLibrary?.('bookmarks'); setToolsMenu(false) }}>书签</button><button onClick={() => { onOpenLibrary?.('history'); setToolsMenu(false) }}>浏览记录</button><button onClick={() => { onOpenLibrary?.('downloads'); setToolsMenu(false) }}>下载内容</button>
+          <button onClick={() => { onAction('annotationMode'); setToolsMenu(false) }}>页面标注</button><button onClick={() => { setToolsMenu(false); setStopKeysOpen(true); setStopError(''); setVkOpen(false); setListening(false); setPendingMods(''); void window.cobrowse.emergencyKeysGet().then((s) => setStopKeys(s.keys)) }}>设置急停键</button>
+          <div className="tools-menu-divider" />
+          {(['system', 'light', 'dark'] as const).map((t) => <button key={t} className={theme === t ? 'on' : ''} onClick={() => applyTheme(t)}>{THEME_ICON[t]}　{THEME_LABEL[t]}</button>)}
+        </div>}
+      </div>
+      {showAnnotationToggle && (
+        <button
+          className={`tb-btn annotation-toggle ${annotationActive ? 'selected' : ''}`}
+          title={annotationActive ? '退出页面标注模式' : '进入页面标注模式'}
+          onClick={() => {
+            if (onToggleAnnotation) onToggleAnnotation()
+            else onAction('annotationMode')
+          }}
+        >
+          ✎ 标注
+        </button>
+      )}
+      <div className="ai-wrap">
+        {active?.loading && <span className="load-dot" title="加载中" />}
+        <button className={`tb-btn ai-toggle ${aiOpen ? 'selected' : ''}`} title={aiOpen ? '隐藏 AI 面板' : '打开 AI 面板'} onClick={onToggleAI}>AI</button>
+      </div>
 
       {stopKeysOpen && (
-        <div className="confirm-overlay" onClick={(e) => e.stopPropagation()}>
+        <div
+          className="confirm-overlay"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (e.target === e.currentTarget) closeStopKeys()
+          }}
+        >
           <div className="confirm-box stopkey-box">
             <div className="confirm-title">急停快捷键</div>
             <div className="stopkey-hint">
@@ -260,7 +303,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
             </button>
             {vkOpen && <VirtualKeyboard onPick={(c) => addBinding(c)} />}
             <div className="confirm-row">
-              <button className="import-btn" onClick={() => setStopKeysOpen(false)}>
+              <button className="import-btn" onClick={closeStopKeys}>
                 取消
               </button>
               <button

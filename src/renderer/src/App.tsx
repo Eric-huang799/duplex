@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { MirrorEvent, TabInfo } from '../../shared/protocol'
+import type { LoadErrorInfo, MirrorEvent, TabInfo } from '../../shared/protocol'
 import { matchesBinding } from '../../shared/hotkeys'
 import type { PermissionRequest } from './components/PermissionCard'
 import { TabBar } from './components/TabBar'
@@ -30,6 +30,12 @@ function mergeMirror(prev: MirrorEvent[], ev: MirrorEvent): MirrorEvent[] {
   return next.length > 600 ? next.slice(next.length - 600) : next
 }
 
+/** Last panel mode the user explicitly picked; null when never chosen. */
+function savedPanelMode(): PanelMode | null {
+  const saved = localStorage.getItem('duplex-panel-mode')
+  return saved === 'agent' || saved === 'external' || saved === 'opencode' ? saved : null
+}
+
 export default function App(): React.JSX.Element {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
@@ -42,21 +48,51 @@ export default function App(): React.JSX.Element {
   const [localMsgs, setLocalMsgs] = useState<LocalMessage[]>([])
   const [panelWidth, setPanelWidth] = useState(400)
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('duplex-ai-open') !== 'true')
-  const [panelMode, setPanelMode] = useState<PanelMode>(() => {
-    const saved = localStorage.getItem('duplex-panel-mode')
-    return saved === 'agent' || saved === 'external' ? saved : 'opencode'
-  })
+  const [panelMode, setPanelMode] = useState<PanelMode>(() => savedPanelMode() ?? 'agent')
   const [externalTool, setExternalTool] = useState<string>(
     () => localStorage.getItem('duplex-external-tool') ?? 'codex'
   )
   const [agentEvents, setAgentEvents] = useState<MirrorEvent[]>([])
   const [confirms, setConfirms] = useState<PermissionRequest[]>([])
-  const [stopKeys, setStopKeys] = useState<string[]>(['Escape', 'F2'])
+  const [stopKeys, setStopKeys] = useState<string[]>(['F2', 'Ctrl+Shift+K'])
   const [stopToast, setStopToast] = useState('')
+  const [toast, setToast] = useState('')
+  const [loadError, setLoadError] = useState<LoadErrorInfo | null>(null)
+  const [annotationActive, setAnnotationActive] = useState(false)
   const [aiPaused, setAiPaused] = useState(false)
+  const [providersChecked, setProvidersChecked] = useState(() => savedPanelMode() !== null)
+  const [initialShowProviders, setInitialShowProviders] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const toggleBookmarkRef = useRef<() => void>(() => {})
+  const toastTimerRef = useRef<number | null>(null)
+  const stopToastTimerRef = useRef<number | null>(null)
+  const loadErrTimerRef = useRef<number | null>(null)
+  const pausedRef = useRef(false)
   const setChromeOverlay = useCallback((id: string, open: boolean) => {
     window.cobrowse.setChromeOverlay(id, open)
+  }, [])
+
+  const closeFind = useCallback((): void => {
+    setFindOpen(false)
+    setFindText('')
+    void window.cobrowse.tabAction({ type: 'find', url: '' })
+  }, [])
+
+  const toggleAI = useCallback((): void => {
+    setCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('duplex-ai-open', String(!next))
+      return next
+    })
+  }, [])
+
+  const showToast = useCallback((text: string, ms = 3600): void => {
+    setToast(text)
+    if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current)
+    toastTimerRef.current = window.setTimeout(() => {
+      toastTimerRef.current = null
+      setToast('')
+    }, ms)
   }, [])
 
   useEffect(() => {
@@ -79,11 +115,33 @@ export default function App(): React.JSX.Element {
     const offBrowserData = window.cobrowse.onBrowserData(setBrowserData)
     void window.cobrowse.downloadsList().then(setDownloads)
     const offDownloads = window.cobrowse.onDownloads(setDownloads)
+    const offAnnotation = window.cobrowse.onAnnotationState(setAnnotationActive)
+    const offLoadError = window.cobrowse.onLoadError((info) => {
+      setLoadError(info)
+      if (loadErrTimerRef.current != null) window.clearTimeout(loadErrTimerRef.current)
+      loadErrTimerRef.current = window.setTimeout(() => {
+        loadErrTimerRef.current = null
+        setLoadError(null)
+      }, 8000)
+    })
     const offShortcut = window.cobrowse.onBrowserShortcut((action) => {
       if (action === 'focusAddress') window.dispatchEvent(new Event('duplex:focus-address'))
-      if (action === 'bookmark') void toggleBookmark()
+      if (action === 'bookmark') toggleBookmarkRef.current()
       if (action === 'find') setFindOpen(true)
+      if (action === 'togglePanel') toggleAI()
+      if (action === 'annotationToggle') void window.cobrowse.annotationToggle()
     })
+    // No explicit mode chosen yet: default to the built-in agent (opencode is
+    // opt-in) and open the provider setup when nothing is configured.
+    if (savedPanelMode() === null) {
+      void window.cobrowse
+        .agentProviders()
+        .then((s) => {
+          if (!(s.providers.length > 0 && s.activeId)) setInitialShowProviders(true)
+        })
+        .catch(() => setInitialShowProviders(true))
+        .finally(() => setProvidersChecked(true))
+    }
     // built-in agent stream (restored across panel reloads)
     void window.cobrowse.agentEvents().then((evs) => {
       if (Array.isArray(evs) && evs.length > 0) {
@@ -121,10 +179,10 @@ export default function App(): React.JSX.Element {
       setAgentEvents((prev) => mergeMirror(prev, ev))
     })
     const offConfirm = window.cobrowse.onAgentConfirm((req) => {
-      setConfirms((prev) => [
-        ...prev.filter((c) => c.id !== req.id),
-        { ...req, state: 'pending' as const }
-      ])
+      setConfirms((prev) => {
+        const next = [...prev.filter((c) => c.id !== req.id), { ...req, state: 'pending' as const }]
+        return next.length > 20 ? next.slice(next.length - 20) : next
+      })
       // a blocked run must never hide behind a collapsed panel
       setCollapsed(false)
       localStorage.setItem('duplex-ai-open', 'true')
@@ -145,6 +203,8 @@ export default function App(): React.JSX.Element {
       offConfirm()
       offConfirmCancel()
       offDownloads()
+      offAnnotation()
+      offLoadError()
       offShortcut()
       offBrowserData()
     }
@@ -157,19 +217,30 @@ export default function App(): React.JSX.Element {
       const editing = (e.target as HTMLElement | null)?.matches?.('input,textarea,[contenteditable="true"]')
       if (key === 'l') { e.preventDefault(); window.dispatchEvent(new Event('duplex:focus-address')) }
       else if (key === 't' && e.shiftKey) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reopenClosed' }) }
-      else if (key === 't') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'newTab' }) }
-      else if (key === 'w' && tabs.length) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'closeTab', tabId: activeTabId ?? undefined }) }
+      else if (key === 't') {
+        e.preventDefault()
+        void window.cobrowse.tabAction({ type: 'newTab' }).then(() => {
+          window.setTimeout(() => window.dispatchEvent(new Event('duplex:focus-address')), 0)
+        })
+      }
+      else if (key === 'w' && !e.shiftKey && tabs.length) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'closeTab', tabId: activeTabId ?? undefined }) }
       else if (key === 'r') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reload' }) }
       else if (key === 'd') { e.preventDefault(); void toggleBookmark() }
       else if (key === 'f' && !editing) { e.preventDefault(); setFindOpen(true) }
+      else if (key === 'b' && !e.shiftKey) { e.preventDefault(); toggleAI() }
+      else if (key === 'a' && e.shiftKey) { e.preventDefault(); void window.cobrowse.annotationToggle() }
       else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cycleTab(-1) }
       else if (e.key === 'Tab') { e.preventDefault(); cycleTab(1) }
     }
-    const onEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape' && findOpen) { setFindOpen(false); void window.cobrowse.tabAction({ type: 'find', url: '' }) } }
+    const onEscape = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      if (library) { setLibrary(null); return }
+      if (findOpen) closeFind()
+    }
     window.addEventListener('keydown', onKey)
     window.addEventListener('keydown', onEscape)
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onEscape) }
-  }, [tabs, activeTabId, browserData, findOpen])
+  }, [tabs, activeTabId, browserData, findOpen, library, closeFind, toggleAI])
 
   const cycleTab = (step: number): void => {
     if (!tabs.length) return
@@ -184,6 +255,13 @@ export default function App(): React.JSX.Element {
     setBrowserData(await window.cobrowse.browserData())
   }
 
+  // keep the toolbar-shortcut callback pointing at the latest active tab
+  useEffect(() => {
+    toggleBookmarkRef.current = (): void => {
+      void toggleBookmark()
+    }
+  })
+
   const respondConfirm = (id: number, ok: boolean): void => {
     void window.cobrowse.agentConfirmRespond(id, ok)
     setConfirms((prev) =>
@@ -192,9 +270,12 @@ export default function App(): React.JSX.Element {
   }
 
   useEffect(() => {
-    void window.cobrowse.emergencyKeysGet().then((s) => {
-      if (Array.isArray(s.keys) && s.keys.length > 0) setStopKeys(s.keys)
-    })
+    void window.cobrowse
+      .emergencyKeysGet()
+      .then((s) => {
+        if (Array.isArray(s.keys) && s.keys.length > 0) setStopKeys(s.keys)
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -215,21 +296,49 @@ export default function App(): React.JSX.Element {
   }, [stopKeys])
 
   useEffect(() => {
-    const offState = window.cobrowse.onEmergencyState((s) => setAiPaused(!!s.paused))
+    const offState = window.cobrowse.onEmergencyState((s) => {
+      const paused = !!s.paused
+      setAiPaused(paused)
+      if (!paused && pausedRef.current) showToast('AI 已恢复')
+      pausedRef.current = paused
+    })
     const offStop = window.cobrowse.onEmergencyStop(() => {
-      setStopToast('已急停：AI 操作已全部切断（发消息、搜索或点「恢复」继续）')
-      window.setTimeout(() => setStopToast(''), 3600)
+      setStopToast('已急停：AI 操作已全部切断（发消息或点「恢复」继续）')
+      if (stopToastTimerRef.current != null) window.clearTimeout(stopToastTimerRef.current)
+      stopToastTimerRef.current = window.setTimeout(() => {
+        stopToastTimerRef.current = null
+        setStopToast('')
+      }, 3600)
     })
     return () => {
       offState()
       offStop()
     }
+  }, [showToast])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current)
+      if (stopToastTimerRef.current != null) window.clearTimeout(stopToastTimerRef.current)
+      if (loadErrTimerRef.current != null) window.clearTimeout(loadErrTimerRef.current)
+    }
   }, [])
+
+  // keep the main process aligned with the panel mode (including on startup)
+  useEffect(() => {
+    void window.cobrowse.setPanelMode(panelMode)
+  }, [panelMode])
+
+  // initialShowProviders is a first-mount hint only: drop it once the panel
+  // actually rendered so collapsing/reopening does not reopen provider setup
+  useEffect(() => {
+    if (!collapsed && providersChecked && initialShowProviders) setInitialShowProviders(false)
+  }, [collapsed, providersChecked, initialShowProviders])
 
   const changeMode = (m: PanelMode): void => {
     setPanelMode(m)
     localStorage.setItem('duplex-panel-mode', m)
-    if (m !== 'external') void window.cobrowse.agentsSetMirrorSource('opencode')
+    void window.cobrowse.agentsSetMirrorSource(m === 'external' ? 'external' : 'opencode')
   }
 
   const changeExternalTool = (id: string): void => {
@@ -238,7 +347,9 @@ export default function App(): React.JSX.Element {
     changeMode('external')
   }
 
-  // Remove optimistic local messages once the same user message arrives through the mirror.
+  // Remove optimistic local messages once the same user message arrives through
+  // the mirror. A queued send can echo long after 60s, so the match never
+  // expires; it only requires an echo that is not older than the send.
   useEffect(() => {
     let changed = false
     const remaining = localMsgs.filter((lm) => {
@@ -247,7 +358,7 @@ export default function App(): React.JSX.Element {
           ev.kind === 'text' &&
           ev.role === 'user' &&
           (ev.text ?? '').trim() === lm.text &&
-          Math.abs(ev.ts - lm.ts) < 60_000
+          ev.ts >= lm.ts - 2000
       )
       if (hit) changed = true
       return !hit
@@ -300,7 +411,18 @@ export default function App(): React.JSX.Element {
   const send = async (text: string): Promise<void> => {
     const lm: LocalMessage = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text, ts: Date.now() }
     setLocalMsgs((prev) => [...prev, lm])
-    await window.cobrowse.sendChat(text)
+    try {
+      const res = await window.cobrowse.sendChat(text)
+      if (!res.ok) {
+        setLocalMsgs((prev) => prev.filter((m) => m.id !== lm.id))
+        showToast('消息发送失败')
+        return
+      }
+      if (res.warning) showToast('opencode 未连接：消息已排队')
+    } catch {
+      setLocalMsgs((prev) => prev.filter((m) => m.id !== lm.id))
+      showToast('消息发送失败：无法连接主进程')
+    }
   }
 
   return (
@@ -322,9 +444,11 @@ export default function App(): React.JSX.Element {
           bookmarked={browserData.bookmarks.some((b) => b.url === activeTab?.url)}
           onBookmark={() => void toggleBookmark()}
           onOpenLibrary={setLibrary}
-          onToggleAI={() => { const next = !collapsed; setCollapsed(next); localStorage.setItem('duplex-ai-open', String(!next)) }}
+          onToggleAI={toggleAI}
           aiOpen={!collapsed}
           onChromeOverlayChange={setChromeOverlay}
+          annotationActive={annotationActive}
+          onToggleAnnotation={() => void window.cobrowse.annotationToggle()}
         />
         <div className="content" ref={contentRef}>
           {showStartPage && (
@@ -334,7 +458,6 @@ export default function App(): React.JSX.Element {
               history={browserData.history}
             />
           )}
-          {!activeTab && !showStartPage && <div className="content-empty">没有打开的标签页</div>}
         </div>
         {library && <div className="library-overlay"><BrowserPanel
           section={library} data={browserData} downloads={downloads} onClose={() => setLibrary(null)}
@@ -346,7 +469,7 @@ export default function App(): React.JSX.Element {
           onOpenDownload={(id) => { void window.cobrowse.downloadsOpen(id) }}
           onRevealDownload={(id) => { void window.cobrowse.downloadsReveal(id) }}
         /></div>}
-        {findOpen && <div className="findbar"><input autoFocus placeholder="在页面中查找" value={findText} onChange={(e) => { setFindText(e.target.value); void window.cobrowse.tabAction({ type: 'find', url: e.target.value }) }} onKeyDown={(e) => { if (e.key === 'Escape') setFindOpen(false); if (e.key === 'Enter') void window.cobrowse.tabAction({ type: 'find', url: findText }) }} /><button onClick={() => { setFindOpen(false); void window.cobrowse.tabAction({ type: 'find', url: '' }) }}>关闭</button></div>}
+        {findOpen && <div className="findbar"><input autoFocus placeholder="在页面中查找" value={findText} onChange={(e) => { setFindText(e.target.value); void window.cobrowse.tabAction({ type: 'find', url: e.target.value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void window.cobrowse.tabAction({ type: 'find', url: findText }) }} /><button onClick={closeFind}>关闭</button></div>}
       </div>
 
       {collapsed ? (
@@ -356,29 +479,48 @@ export default function App(): React.JSX.Element {
       ) : (
         <>
           <div className="panel-divider" onMouseDown={startDrag} />
-          <SidePanel
-            width={panelWidth}
-            events={mirror}
-            localMsgs={localMsgs}
-            onSend={(t) => void send(t)}
-          onCollapse={() => { setCollapsed(true); localStorage.setItem('duplex-ai-open', 'false') }}
-            mode={panelMode}
-            onModeChange={changeMode}
-            agentEvents={agentEvents}
-            externalTool={externalTool}
-            onExternalToolChange={changeExternalTool}
-            confirms={confirms}
-            onConfirmRespond={respondConfirm}
-          />
+          {providersChecked && (
+            <SidePanel
+              width={panelWidth}
+              events={mirror}
+              localMsgs={localMsgs}
+              onSend={(t) => void send(t)}
+              onCollapse={() => { setCollapsed(true); localStorage.setItem('duplex-ai-open', 'false') }}
+              mode={panelMode}
+              onModeChange={changeMode}
+              agentEvents={agentEvents}
+              externalTool={externalTool}
+              onExternalToolChange={changeExternalTool}
+              confirms={confirms}
+              onConfirmRespond={respondConfirm}
+              initialShowProviders={initialShowProviders}
+              onAgentSessionDeleted={() => setAgentEvents([])}
+            />
+          )}
         </>
       )}
 
       {stopToast && <div className="stop-toast">{stopToast}</div>}
+      {toast && <div className="stop-toast">{toast}</div>}
+      {loadError && (
+        <div className="stop-toast" style={{ pointerEvents: 'auto' }}>
+          页面加载失败：{loadError.desc}（{loadError.url}）
+          <button
+            style={{ pointerEvents: 'auto', marginLeft: 8, cursor: 'pointer' }}
+            onClick={() => {
+              setLoadError(null)
+              void window.cobrowse.tabAction({ type: 'reload' })
+            }}
+          >
+            重试
+          </button>
+        </div>
+      )}
 
       {aiPaused && (
         <div className="ai-paused-banner">
           <span className="ai-paused-dot" />
-          <span>AI 已急停挂起 · 发消息 / 搜索新内容 即恢复</span>
+          <span>AI 已急停挂起 · 发消息或点「恢复」继续</span>
           <button onClick={() => window.cobrowse.resumeAi()}>恢复</button>
         </div>
       )}

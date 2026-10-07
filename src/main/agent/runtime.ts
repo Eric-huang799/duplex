@@ -35,7 +35,7 @@ const SYSTEM_PROMPT = `你是 Duplex 浏览器的内置操作 agent。你可以�
 - 页面加载慢是正常的；需要时用 wait。
 - 每完成一个关键步骤后再决定下一步，不要臆测页面内容——先读（snapshot）再操作。
 - 完成任务后，用简洁的中文给出最终回答（说明你做了什么、发现了什么）。不要在回答里粘贴大段 HTML。
-- 如果用户按 Esc 接管了浏览器（工具结果里会提示"用户已接管"），立即停止操作并简短告知用户，等待其指示。
+- 如果用户按下了急停快捷键接管了浏览器（工具结果里会提示"用户已接管"），立即停止操作并简短告知用户，等待其指示。
 - 涉及提交表单、发送消息、下单等敏感操作前，如果用户没有明确要求，先说明你将要做什么。`
 
 /** Base prompt plus the currently enabled skills (progressive disclosure:
@@ -62,6 +62,41 @@ function extractResultText(res: ToolResult): string {
   return parts.join('\n') || '(无输出)'
 }
 
+/** Clip a tool result for display/history and say how much was dropped. */
+function truncateWithMarker(s: string, max: number): string {
+  if (s.length <= max) return s
+  return `${s.slice(0, max)}…（已截断：完整 ${s.length} 字符）`
+}
+
+/** Short, user-facing attribution for a failed LLM request (raw text goes to the log). */
+function describeLlmError(e: unknown, idleTimeoutMs: number): string {
+  const msg = (e as Error)?.message ?? String(e ?? '')
+  if (/超时/.test(msg)) {
+    return `模型响应超时（${Math.round(idleTimeoutMs / 1000)} 秒无数据），推理模型建议在模型配置中调大空闲超时`
+  }
+  const status = /(?:模型接口返回|HTTP)\s*(\d{3})/.exec(msg)?.[1]
+  if (status === '401' || status === '403') {
+    return 'API Key 无效或无权访问，请在模型配置中检查'
+  }
+  if (status === '404') return '接口地址或模型名不存在'
+  if (status === '429') return '请求被限流，请稍后重试'
+  if (/fetch failed|network|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|连接/i.test(msg)) {
+    return '网络连接失败'
+  }
+  return `模型调用失败：${msg.slice(0, 120)}`
+}
+
+/** Marker thrown when a run is stopped while a tool call is still awaiting. */
+class AbortedOperationError extends Error {
+  constructor() {
+    super('任务已停止')
+    this.name = 'AbortError'
+  }
+}
+
+/** Thrown after 3 consecutive tool-argument parse failures (message is already user-facing). */
+class ToolArgsAbortError extends Error {}
+
 export interface AgentDeps {
   /** Injectable for tests; defaults to the on-disk store. */
   load?: () => AgentSession[]
@@ -80,8 +115,12 @@ export class AgentRuntime {
   private loadFn: () => AgentSession[]
   private saveFn: (sessions: AgentSession[]) => void
   private persistTimer: ReturnType<typeof setTimeout> | null = null
+  /** Pending 60ms-later auto-send of the next queued message (cancelled by abort). */
+  private autoSendTimer: ReturnType<typeof setTimeout> | null = null
   /** Messages sent while the agent was busy — auto-sent after the current run. */
   private queued: string[] = []
+  /** Set when abort()/abortForEmergency() was called; a stopped run never resends. */
+  private stopRequested = false
 
   constructor(
     private executeTool: ToolExecutor,
@@ -221,32 +260,100 @@ export class AgentRuntime {
   }
 
   abort(): void {
+    const hadPendingAutoSend = this.autoSendTimer !== null
+    if (this.autoSendTimer) {
+      clearTimeout(this.autoSendTimer)
+      this.autoSendTimer = null
+    }
+    const dropped = this.queued.length
+    this.stopRequested = true
+    this.queued.length = 0
     this.abortCtl?.abort()
+    if (this.running || hadPendingAutoSend) {
+      this.emit({
+        kind: 'text',
+        role: 'assistant',
+        partID: `stop${++this.seq}`,
+        text: `已停止；已取消 ${dropped} 条排队消息`,
+        done: true
+      })
+    }
   }
 
   /** Emergency stop: abort the run and drop every queued send. */
   abortForEmergency(): void {
+    if (this.autoSendTimer) {
+      clearTimeout(this.autoSendTimer)
+      this.autoSendTimer = null
+    }
+    this.stopRequested = true
     this.queued.length = 0
     this.abortCtl?.abort()
   }
 
+  /**
+   * A human page annotation routed to the built-in agent (A5 calls this).
+   * With a question it starts a run; without one it only records the text as
+   * a user message so the next run still has the annotation in context.
+   */
+  injectAnnotation(
+    text: string,
+    meta: {
+      question?: string
+      summary: string
+      url: string
+      annotationId: string
+      tool: 'rect' | 'circle' | 'arrow' | 'point'
+      elementCount: number
+    }
+  ): void {
+    this.pushUiEvent({
+      kind: 'annotation',
+      source: 'agent',
+      annotationId: meta.annotationId,
+      text,
+      question: meta.question,
+      tool: meta.tool,
+      url: meta.url,
+      summary: meta.summary,
+      elementCount: meta.elementCount,
+      id: this.nextId++,
+      ts: Date.now()
+    })
+    if (meta.question) {
+      // the annotation text carries the question — run it as a normal user turn
+      void this.send(text).catch((e) => {
+        console.error('[agent] annotation run failed to start:', e)
+        this.emit({ kind: 'session', status: 'error', error: (e as Error)?.message ?? String(e) })
+      })
+      return
+    }
+    this.messages.push({ role: 'user', content: text })
+    this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
+  }
+
   private emit(ev: AgentUiEvent): void {
-    const full = {
+    this.pushUiEvent({
       ...ev,
       sessionID: 'builtin',
       messageID: 'builtin',
       id: this.nextId++,
       ts: Date.now()
-    }
+    })
+  }
+
+  /** Append an already-shaped event (text/tool/session/annotation) to the log. */
+  private pushUiEvent(full: Record<string, unknown>): void {
     // collapse streaming updates: replace the previous event with the same
     // (kind, partID) instead of appending every delta snapshot (otherwise a
     // long task persists hundreds of copies of the same growing message)
-    const pid = (full as { partID?: string }).partID
+    const pid = full.partID as string | undefined
+    const kind = full.kind as string | undefined
     let replaced = false
-    if (pid && (full.kind === 'text' || full.kind === 'tool')) {
+    if (pid && (kind === 'text' || kind === 'tool')) {
       for (let i = this.uiLog.length - 1; i >= 0; i--) {
         const e = this.uiLog[i] as { kind?: string; partID?: string }
-        if (e.kind === full.kind && e.partID === pid) {
+        if (e.kind === kind && e.partID === pid) {
           this.uiLog[i] = full
           replaced = true
           break
@@ -263,7 +370,33 @@ export class AgentRuntime {
     }
   }
 
-  async send(text: string): Promise<void> {
+  /** A send that cannot start must keep the user's input visible in the panel. */
+  private failSend(text: string, error: string): { ok: false; error: string } {
+    this.messages.push({ role: 'user', content: text })
+    this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
+    this.emit({ kind: 'session', status: 'error', error })
+    return { ok: false, error }
+  }
+
+  /** Race a tool call against the run signal so abort/watchdog always release the panel. */
+  private awaitWithAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) {
+      p.catch(() => undefined)
+      return Promise.reject(new AbortedOperationError())
+    }
+    let onAbort: (() => void) | null = null
+    const stopped = new Promise<T>((_resolve, reject) => {
+      onAbort = () => reject(new AbortedOperationError())
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    // the abandoned side of the race must not surface as an unhandled rejection
+    p.catch(() => undefined)
+    return Promise.race([p, stopped]).finally(() => {
+      if (onAbort) signal.removeEventListener('abort', onAbort)
+    })
+  }
+
+  async send(text: string): Promise<{ ok: boolean; error?: string }> {
     if (this.running) {
       // busy: queue the message and let the user see it — it will be sent
       // automatically when the current run finishes
@@ -275,31 +408,41 @@ export class AgentRuntime {
         text: `${text}\n\n（已排队：将在当前任务完成后自动发送）`,
         done: true
       })
-      return
+      return { ok: true }
     }
     const cfg = this.getConfig()
     if (!cfg.baseUrl || !cfg.model) {
-      throw new Error('尚未配置模型（请在设置中填写 Base URL 和模型名）')
+      return this.failSend(text, '未配置模型：请在设置中填写 Base URL 和模型名')
     }
     // resolve the runtime key: stored key, or imported from a local CLI login
     let apiKey = cfg.apiKey
     if (cfg.authType === 'import') {
       if (!cfg.authSource) {
-        throw new Error('该模型配置选择了「导入凭据」，但未指定来源（codex / opencode）')
+        return this.failSend(
+          text,
+          '未配置模型：该配置选择了「导入凭据」，但未指定来源（codex / opencode）'
+        )
       }
       const r = resolveImportedKey(cfg.authSource, cfg.providerName)
-      if (!r.ok || !r.apiKey) throw new Error(`导入凭据不可用：${r.error ?? '未知错误'}`)
+      if (!r.ok || !r.apiKey) {
+        return this.failSend(text, `导入凭据不可用：${r.error ?? '未知错误'}`)
+      }
       apiKey = r.apiKey
     }
+    // A1b adds idleTimeoutMs to the provider config; read it safely until then
+    const idleTimeoutMs =
+      (cfg as typeof cfg & { idleTimeoutMs?: number }).idleTimeoutMs ?? 120_000
     this.running = true
-    this.abortCtl = new AbortController()
+    this.stopRequested = false
+    const ctl = new AbortController()
+    this.abortCtl = ctl
     // global watchdog: a run must never leave the panel stuck on "working"
     const watchdogMs = 15 * 60_000
     let watchdogFired = false
     const watchdog = setTimeout(() => {
       watchdogFired = true
       try {
-        this.abortCtl?.abort()
+        ctl.abort()
       } catch {
         /* ignore */
       }
@@ -317,12 +460,14 @@ export class AgentRuntime {
     }
     this.messages.push({ role: 'user', content: text })
     this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
-    const tools = buildOpenAiTools()
+    let sessionError = false
     try {
+      const tools = buildOpenAiTools()
       const MAX_STEPS = 60
       let parseFailures = 0
+      let reachedStepLimit = false
       for (let step = 0; step < MAX_STEPS; step++) {
-        if (this.abortCtl.signal.aborted) break
+        if (ctl.signal.aborted) break
         const partID = `a${++this.seq}`
         let acc = ''
         const { text: assistantText, toolCalls } = await this.chatFn({
@@ -332,7 +477,11 @@ export class AgentRuntime {
           model: cfg.model,
           messages: this.messages,
           tools,
-          signal: this.abortCtl.signal,
+          signal: ctl.signal,
+          idleTimeoutMs,
+          authType: cfg.authType,
+          authSource: cfg.authSource,
+          allowCustomHost: cfg.allowCustomHost,
           onTextDelta: (d) => {
             acc += d
             this.emit({ kind: 'text', role: 'assistant', partID, text: acc, done: false })
@@ -365,7 +514,7 @@ export class AgentRuntime {
           tool_calls: toolCalls
         })
         for (const call of toolCalls) {
-          if (this.abortCtl.signal.aborted) break
+          if (ctl.signal.aborted) break
           const tPart = `t${++this.seq}`
           const parsed = parseToolArguments(call.function.arguments)
           if (!parsed.ok) {
@@ -386,8 +535,10 @@ export class AgentRuntime {
               content: `参数解析失败：${parsed.error}。请重新调用该工具，arguments 必须是合法的 JSON 对象。`
             })
             if (parseFailures >= 3) {
-              throw new Error(
-                '连续 3 次工具参数格式错误，已停止（本地小模型对工具调用格式的遵循较弱，建议重试或换用更强的模型）'
+              throw new ToolArgsAbortError(
+                parsed.reason === 'truncated'
+                  ? '模型响应被截断导致工具参数不完整'
+                  : '模型输出格式不符合工具调用规范'
               )
             }
             continue
@@ -405,10 +556,31 @@ export class AgentRuntime {
           let resultText = ''
           let isErr = false
           try {
-            const res = await this.executeTool(call.function.name, args)
+            const res = await this.awaitWithAbort(
+              this.executeTool(call.function.name, args),
+              ctl.signal
+            )
             resultText = extractResultText(res)
             isErr = !!res.isError
           } catch (e) {
+            const stopped =
+              e instanceof AbortedOperationError ||
+              (e as Error)?.name === 'AbortError' ||
+              ctl.signal.aborted
+            if (stopped) {
+              // the run was stopped (user abort / watchdog): do not write an
+              // error into the history — patchIncompleteToolCalls fills it
+              this.emit({
+                kind: 'tool',
+                partID: tPart,
+                tool: call.function.name,
+                callID: call.id,
+                status: 'error',
+                input: args,
+                output: '（操作已停止）'
+              })
+              throw new AbortedOperationError()
+            }
             resultText = `工具执行失败: ${(e as Error)?.message ?? String(e)}`
             isErr = true
           }
@@ -419,47 +591,90 @@ export class AgentRuntime {
             callID: call.id,
             status: isErr ? 'error' : 'completed',
             input: args,
-            output: resultText.slice(0, 2000)
+            output: truncateWithMarker(resultText, 2000)
           })
           this.messages.push({
             role: 'tool',
             tool_call_id: call.id,
-            content: resultText.slice(0, 30000)
+            content: truncateWithMarker(resultText, 30000)
           })
         }
+        if (step === MAX_STEPS - 1) reachedStepLimit = true
+      }
+      if (reachedStepLimit && !ctl.signal.aborted) {
+        const msg = '已达到单轮 60 步上限，任务可能尚未完成；可继续发消息让 AI 接着做'
+        this.messages.push({ role: 'assistant', content: msg })
+        this.emit({
+          kind: 'text',
+          role: 'assistant',
+          partID: `a${++this.seq}`,
+          text: msg,
+          done: true
+        })
       }
     } catch (e) {
       const err = e as Error
       if (watchdogFired) {
-        const msg = '任务运行超过 15 分钟，已自动中断（模型或工具可能卡住），面板状态已复位。'
-        this.patchIncompleteToolCalls()
+        const msg = '任务超时：运行超过 15 分钟，已自动中断（模型或工具可能卡住），面板状态已复位。'
+        this.patchIncompleteToolCalls('（操作超时已中止）')
         this.messages.push({ role: 'assistant', content: `（${msg}）` })
-        this.emit({ kind: 'session', status: 'idle', error: msg })
-      } else if (err?.name === 'AbortError' || this.abortCtl.signal.aborted) {
+        this.emit({ kind: 'session', status: 'error', error: msg })
+        sessionError = true
+      } else if (err?.name === 'AbortError' || ctl.signal.aborted) {
         this.patchIncompleteToolCalls()
+      } else if (e instanceof ToolArgsAbortError) {
+        // already a user-facing explanation — emit as-is
+        this.emit({ kind: 'session', status: 'error', error: err.message })
+        sessionError = true
       } else {
-        const msg = err?.message ?? String(e)
-        this.messages.push({ role: 'assistant', content: `（模型调用失败：${msg}）` })
-        this.emit({ kind: 'session', status: 'idle', error: msg })
+        // never store the raw API error as a chat message; log it and emit a
+        // short Chinese attribution instead
+        console.error('[agent] run failed:', e)
+        const msg = describeLlmError(e, idleTimeoutMs)
+        this.emit({ kind: 'session', status: 'error', error: msg })
+        sessionError = true
       }
     } finally {
       clearTimeout(watchdog)
       this.running = false
       this.abortCtl = null
-      this.emit({ kind: 'session', status: 'idle' })
+      // a session error event is the terminal event for the panel (it also
+      // clears the busy state); an extra idle would mask the error
+      if (!sessionError) this.emit({ kind: 'session', status: 'idle' })
       this.persistNow()
-      // auto-send the next queued message (if any)
-      const next = this.queued.shift()
-      if (next) {
-        setTimeout(() => {
-          void this.send(next).catch(() => undefined)
+      if (this.stopRequested) {
+        // a stopped run never auto-resends, including messages queued in the
+        // small window between abort() and this finally
+        this.queued.length = 0
+      } else if (this.queued.length > 0) {
+        // auto-send the next queued message (if any)
+        this.autoSendTimer = setTimeout(() => {
+          this.autoSendTimer = null
+          if (this.stopRequested) {
+            this.queued.length = 0
+            return
+          }
+          // a manual run started in the meantime; its finally pumps the queue
+          if (this.running) return
+          const next = this.queued.shift()
+          if (next) {
+            void this.send(next).catch((e) => {
+              console.error('[agent] queued message failed to send:', e)
+              this.emit({
+                kind: 'session',
+                status: 'error',
+                error: (e as Error)?.message ?? String(e)
+              })
+            })
+          }
         }, 60)
       }
     }
+    return { ok: true }
   }
 
-  /** After an abort, keep the history valid for the next request. */
-  private patchIncompleteToolCalls(): void {
+  /** After an abort/timeout, keep the history valid for the next request. */
+  private patchIncompleteToolCalls(reason = '（用户中止了操作）'): void {
     let idx = -1
     for (let i = this.messages.length - 1; i >= 0; i--) {
       const m = this.messages[i]
@@ -480,7 +695,7 @@ export class AgentRuntime {
     )
     for (const id of callIds) {
       if (!resolved.has(id)) {
-        this.messages.push({ role: 'tool', tool_call_id: id, content: '（用户中止了操作）' })
+        this.messages.push({ role: 'tool', tool_call_id: id, content: reason })
       }
     }
   }

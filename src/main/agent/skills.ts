@@ -10,6 +10,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
 
 export interface SkillInfo {
   id: string
@@ -23,6 +24,8 @@ export interface SkillInfo {
 const MAX_SCAN_DEPTH = 4
 const MAX_FILES = 2000
 const MAX_TEXT_BYTES = 200 * 1024
+const SCAN_CACHE_TTL_MS = 5000
+const DISAMBIGUATION_HASH_LENGTH = 6
 
 interface SkillRoots {
   duplex: string
@@ -31,6 +34,15 @@ interface SkillRoots {
 
 let testRoots: SkillRoots | null = null
 
+/** Short-lived content cache for the expensive recursive scan, keyed by root paths. */
+interface SkillScanCache {
+  key: string
+  at: number
+  skills: Omit<SkillInfo, 'enabled'>[]
+}
+
+let scanCache: SkillScanCache | null = null
+
 /**
  * Test hook: point the module at temporary roots; call without arguments to
  * restore the real home-directory roots. The skill-state file lives in the
@@ -38,6 +50,7 @@ let testRoots: SkillRoots | null = null
  */
 export function __setRootsForTest(duplexRoot?: string, claudeRoot?: string): void {
   testRoots = duplexRoot && claudeRoot ? { duplex: duplexRoot, claude: claudeRoot } : null
+  scanCache = null
 }
 
 function roots(): SkillRoots {
@@ -157,21 +170,58 @@ function scanRoot(root: string, source: 'duplex' | 'claude'): Omit<SkillInfo, 'e
   return found
 }
 
+/** SHA1 of the skill's directory (relative to its root) → stable short id suffix. */
+function shortPathHash(rel: string): string {
+  return crypto
+    .createHash('sha1')
+    .update(rel)
+    .digest('hex')
+    .slice(0, DISAMBIGUATION_HASH_LENGTH)
+}
+
+/** Cached recursive scan (SKILL.md discovery + frontmatter parsing). */
+function scanAll(): Omit<SkillInfo, 'enabled'>[] {
+  const r = roots()
+  const key = `${path.resolve(r.duplex)}\n${path.resolve(r.claude)}`
+  const now = Date.now()
+  if (scanCache && scanCache.key === key && now - scanCache.at < SCAN_CACHE_TTL_MS) {
+    return scanCache.skills
+  }
+  const skills = [...scanRoot(r.duplex, 'duplex'), ...scanRoot(r.claude, 'claude')]
+  scanCache = { key, at: now, skills }
+  return skills
+}
+
+function invalidateScanCache(): void {
+  scanCache = null
+}
+
 export function listSkills(): SkillInfo[] {
   try {
     const disabled = new Set(readState().disabled)
-    const all = [
-      ...scanRoot(roots().duplex, 'duplex'),
-      ...scanRoot(roots().claude, 'claude')
-    ]
+    const all = scanAll()
     const seen = new Set<string>()
+    // legacy `~N` suffixes of the previous disambiguation scheme, per base id
+    const legacyCounts = new Map<string, number>()
     const result: SkillInfo[] = []
     for (const skill of all) {
-      // disambiguate same-name skills instead of silently dropping them
+      const n = (legacyCounts.get(skill.id) ?? 0) + 1
+      legacyCounts.set(skill.id, n)
+      const legacyId = n >= 2 ? `${skill.id}~${n}` : null
+      // disambiguate same-name skills with a stable hash of the directory path
       let id = skill.id
-      for (let n = 2; seen.has(id); n++) id = `${skill.id}~${n}`
+      if (n >= 2) {
+        const root = skill.source === 'duplex' ? roots().duplex : roots().claude
+        const rel =
+          path.relative(path.resolve(root), path.resolve(skill.dir)) || path.basename(skill.dir)
+        let hash = shortPathHash(rel)
+        if (seen.has(`${skill.id}~${hash}`)) hash = shortPathHash(`${rel}#${n}`)
+        id = `${skill.id}~${hash}`
+      }
       seen.add(id)
-      result.push({ ...skill, id, enabled: !disabled.has(id) })
+      // keep old disabled entries effective while the user's state file migrates
+      const isDisabled = disabled.has(id) || (legacyId !== null && disabled.has(legacyId))
+      result.push({ ...skill, id, enabled: !isDisabled })
     }
     result.sort((a, b) => a.id.localeCompare(b.id))
     return result
@@ -201,7 +251,18 @@ export function readSkillMarkdown(id: string): { ok: boolean; content?: string; 
   try {
     const skill = findSkill(id)
     if (!skill) return { ok: false, error: `未找到 skill：${id}` }
-    return { ok: true, content: fs.readFileSync(path.join(skill.dir, 'SKILL.md'), 'utf8') }
+    const file = path.join(skill.dir, 'SKILL.md')
+    if (fs.statSync(file).size > MAX_TEXT_BYTES) {
+      const fd = fs.openSync(file, 'r')
+      try {
+        const buf = Buffer.alloc(MAX_TEXT_BYTES)
+        const read = fs.readSync(fd, buf, 0, MAX_TEXT_BYTES, 0)
+        return { ok: true, content: `${buf.subarray(0, read).toString('utf8')}\n…（已截断）` }
+      } finally {
+        fs.closeSync(fd)
+      }
+    }
+    return { ok: true, content: fs.readFileSync(file, 'utf8') }
   } catch (err) {
     return { ok: false, error: `读取 SKILL.md 失败：${errorMessage(err)}` }
   }
@@ -335,6 +396,7 @@ export function importSkillFromFolder(srcDir: string): { ok: boolean; id?: strin
     }
     fs.mkdirSync(path.dirname(dest), { recursive: true })
     fs.cpSync(src, dest, { recursive: true })
+    invalidateScanCache()
     const imported = listSkills().find(
       (s) => s.source === 'duplex' && path.resolve(s.dir) === path.resolve(dest)
     )
@@ -351,6 +413,7 @@ export function removeSkill(id: string): { ok: boolean; error?: string } {
     if (!skill) return { ok: false, error: `未找到 skill：${id}` }
     if (skill.source !== 'duplex') return { ok: false, error: '只能删除 duplex 来源的 skill' }
     fs.rmSync(skill.dir, { recursive: true, force: true })
+    invalidateScanCache()
     setSkillEnabled(skill.id, true)
     return { ok: true }
   } catch (err) {

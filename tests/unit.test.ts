@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { normalizeUrl, resolveAddress } from '../src/shared/url'
 import { searchUrl } from '../src/shared/search'
 import { buildAnnotationText, type AnnotateInfo } from '../src/main/annotations'
@@ -248,11 +248,16 @@ describe('built-in agent mode', () => {
   })
 
   it('parses SSE streams with content and streamed tool calls', async () => {
+    // SSE events are separated by a blank line (spec); the transport relies on it
     const sse = [
       'data: {"choices":[{"delta":{"content":"你好"}}]}',
+      '',
       'data: {"choices":[{"delta":{"content":"，世界"}}]}',
+      '',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"snapshot","arguments":"{\\"sel"}}]}}]}',
+      '',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ector\\":\\"h1\\"}"}}]}}]}',
+      '',
       'data: [DONE]',
       ''
     ].join('\n')
@@ -339,15 +344,69 @@ describe('built-in agent mode', () => {
     expect(events.some((e) => e.kind === 'text' && e.role === 'user')).toBe(true)
   })
 
-  it('rejects send when not configured', async () => {
+  it('reports missing configuration without dropping the input', async () => {
+    const events: Array<Record<string, unknown>> = []
     const rt = new AgentRuntime(
       (async () => ({ content: [] })) as never,
       () => ({ baseUrl: '', apiKey: '', model: '', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
-      () => undefined,
+      (ev) => events.push(ev),
       (async () => ({ text: '', toolCalls: [] })) as never,
       { load: () => [], save: () => undefined } as never
     )
-    await expect(rt.send('hi')).rejects.toThrow(/尚未配置/)
+    const r = await rt.send('hi')
+    expect(r.ok).toBe(false)
+    expect(String(r.error)).toContain('未配置模型')
+    // the user's input stays visible, then a session error explains why
+    expect(events.some((e) => e.kind === 'text' && e.role === 'user' && e.text === 'hi')).toBe(true)
+    expect(
+      events.some(
+        (e) => e.kind === 'session' && e.status === 'error' && String(e.error).includes('未配置模型')
+      )
+    ).toBe(true)
+  })
+
+  it('injects annotations: records without a question, runs with one', async () => {
+    const events: Array<Record<string, unknown>> = []
+    let calls = 0
+    const mockChat = (async () => {
+      calls++
+      return { text: 'ok', toolCalls: [] }
+    }) as never
+    const rt = new AgentRuntime(
+      (async () => ({ content: [] })) as never,
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      (ev) => events.push(ev),
+      mockChat,
+      { load: () => [], save: () => undefined } as never
+    )
+    rt.injectAnnotation('标注文本', {
+      summary: '矩形框选 · 1 个元素',
+      url: 'https://a.com',
+      annotationId: 'an1',
+      tool: 'rect',
+      elementCount: 1
+    })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(calls).toBe(0)
+    const ann1 = events.find((e) => e.kind === 'annotation')
+    expect(ann1?.source).toBe('agent')
+    expect(ann1?.annotationId).toBe('an1')
+    expect(ann1?.summary).toBe('矩形框选 · 1 个元素')
+    expect(events.some((e) => e.kind === 'text' && e.role === 'user' && e.text === '标注文本')).toBe(true)
+    expect(rt.events().some((e) => e.kind === 'annotation' && e.annotationId === 'an1')).toBe(true)
+
+    rt.injectAnnotation('标注文本2', {
+      question: '为什么？',
+      summary: '圈选 · 2 个元素',
+      url: 'https://a.com',
+      annotationId: 'an2',
+      tool: 'circle',
+      elementCount: 2
+    })
+    await new Promise((r) => setTimeout(r, 60))
+    expect(calls).toBe(1)
+    const ann2 = rt.events().find((e) => e.kind === 'annotation' && e.annotationId === 'an2')
+    expect(ann2?.question).toBe('为什么？')
   })
 })
 
@@ -422,7 +481,7 @@ describe('agent provider management (CC-Switch style)', () => {
       (async () => ({ text: '本地模型回复', toolCalls: [] })) as never,
       { load: () => [], save: () => undefined } as never
     )
-    await expect(rt.send('你好')).resolves.toBeUndefined()
+    await expect(rt.send('你好')).resolves.toMatchObject({ ok: true })
   })
 
   it('keeps sessions isolated: a new session starts empty and context does not leak', async () => {
@@ -567,6 +626,206 @@ describe('local-model hardening (tolerant parsing + watchdogs)', () => {
         (e) => e.kind === 'session' && typeof e.error === 'string' && String(e.error).length > 0
       )
     ).toBe(true)
+  })
+
+  it('classifies tool-argument parse failures (truncated / non-JSON / wrong type)', () => {
+    const truncated = parseToolArguments('{"url":"https://a.com"')
+    expect(truncated.ok).toBe(false)
+    if (!truncated.ok) expect(truncated.reason).toBe('truncated')
+    const notJson = parseToolArguments('完全不是 JSON')
+    expect(notJson.ok).toBe(false)
+    if (!notJson.ok) expect(notJson.reason).toBe('not-json')
+    const wrongType = parseToolArguments('[1,2,3]')
+    expect(wrongType.ok).toBe(false)
+    if (!wrongType.ok) expect(wrongType.reason).toBe('type-mismatch')
+  })
+
+  it('explains a run stopped by truncated tool arguments', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const mockChat = (async () => ({
+      text: '',
+      toolCalls: [
+        {
+          id: 'c1',
+          type: 'function' as const,
+          function: { name: 'navigate', arguments: '{"url":"https://a.com"' }
+        }
+      ]
+    })) as never
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const rt = new AgentRuntime(
+        (async () => ({ content: [] })) as never,
+        () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+        (ev) => events.push(ev),
+        mockChat,
+        { load: () => [], save: () => undefined } as never
+      )
+      await rt.send('go')
+    } finally {
+      spy.mockRestore()
+    }
+    const errEv = events.find((e) => e.kind === 'session' && e.status === 'error')
+    expect(String(errEv?.error)).toBe('模型响应被截断导致工具参数不完整')
+  })
+
+  it('attributes API errors in Chinese and keeps the raw error out of the history', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const mockChat = (async () => {
+      throw new Error('模型接口错误：凭据无效或无权访问（HTTP 401: {"error":"invalid api key"}）')
+    }) as never
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    let consoleCalled = false
+    try {
+      const rt = new AgentRuntime(
+        (async () => ({ content: [] })) as never,
+        () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+        (ev) => events.push(ev),
+        mockChat,
+        { load: () => [], save: () => undefined } as never
+      )
+      await rt.send('go')
+      consoleCalled = spy.mock.calls.length > 0
+    } finally {
+      spy.mockRestore()
+    }
+    const errEv = events.find((e) => e.kind === 'session' && e.status === 'error')
+    expect(String(errEv?.error)).toBe('API Key 无效或无权访问，请在模型配置中检查')
+    expect(consoleCalled).toBe(true)
+    expect(
+      events.some(
+        (e) =>
+          e.kind === 'text' && e.role === 'assistant' && String(e.text).includes('invalid api key')
+      )
+    ).toBe(false)
+  })
+
+  it('notes the 60-step cap when a run hits it', async () => {
+    const events: Array<Record<string, unknown>> = []
+    let n = 0
+    const mockChat = (async () => ({
+      text: '',
+      toolCalls: [
+        {
+          id: `c${n++}`,
+          type: 'function' as const,
+          function: { name: 'snapshot', arguments: '{}' }
+        }
+      ]
+    })) as never
+    const rt = new AgentRuntime(
+      (async () => ({ content: [{ type: 'text' as const, text: 'ok' }] })) as never,
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      (ev) => events.push(ev),
+      mockChat,
+      { load: () => [], save: () => undefined } as never
+    )
+    await rt.send('go')
+    expect(
+      events.some((e) => e.kind === 'text' && String(e.text).includes('已达到单轮 60 步上限'))
+    ).toBe(true)
+  })
+
+  it('abort clears the queue, notices it, and never auto-resends', async () => {
+    const events: Array<Record<string, unknown>> = []
+    let calls = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const mockChat = (async () => {
+      calls++
+      if (calls === 1) await gate
+      return { text: 'ok', toolCalls: [] }
+    }) as never
+    const rt = new AgentRuntime(
+      (async () => ({ content: [] })) as never,
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      (ev) => events.push(ev),
+      mockChat,
+      { load: () => [], save: () => undefined } as never
+    )
+    const first = rt.send('第一轮')
+    await new Promise((r) => setTimeout(r, 20))
+    await rt.send('排队消息')
+    rt.abort()
+    release()
+    await first
+    await new Promise((r) => setTimeout(r, 150))
+    expect(calls).toBe(1)
+    expect(
+      events.some(
+        (e) => e.kind === 'text' && String(e.text).includes('已停止；已取消 1 条排队消息')
+      )
+    ).toBe(true)
+  })
+
+  it('still auto-sends the queue after a normal finish', async () => {
+    let calls = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const mockChat = (async () => {
+      calls++
+      if (calls === 1) await gate
+      return { text: 'ok', toolCalls: [] }
+    }) as never
+    const rt = new AgentRuntime(
+      (async () => ({ content: [] })) as never,
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      () => undefined,
+      mockChat,
+      { load: () => [], save: () => undefined } as never
+    )
+    const first = rt.send('第一轮')
+    await new Promise((r) => setTimeout(r, 20))
+    await rt.send('排队消息')
+    release()
+    await first
+    await new Promise((r) => setTimeout(r, 150))
+    expect(calls).toBe(2)
+  })
+
+  it('marks truncated tool results in the UI and in the history', async () => {
+    const longText = 'x'.repeat(31_000)
+    const exec = async () => ({ content: [{ type: 'text' as const, text: longText }] })
+    const events: Array<Record<string, unknown>> = []
+    const toolHistory: string[] = []
+    let turn = 0
+    const mockChat = (async (opts: {
+      messages: Array<{ role: string; content: string | null }>
+    }) => {
+      turn++
+      if (turn === 1) {
+        return {
+          text: '',
+          toolCalls: [
+            {
+              id: 'c1',
+              type: 'function' as const,
+              function: { name: 'snapshot', arguments: '{}' }
+            }
+          ]
+        }
+      }
+      for (const m of opts.messages) if (m.role === 'tool') toolHistory.push(String(m.content))
+      return { text: '完成', toolCalls: [] }
+    }) as never
+    const rt = new AgentRuntime(
+      exec as never,
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      (ev) => events.push(ev),
+      mockChat,
+      { load: () => [], save: () => undefined } as never
+    )
+    await rt.send('go')
+    const toolEv = events.find((e) => e.kind === 'tool' && e.status === 'completed')
+    const output = String(toolEv?.output ?? '')
+    expect(output).toContain('…（已截断：完整 31000 字符）')
+    expect(output.startsWith('x'.repeat(2000))).toBe(true)
+    expect(toolHistory[0]).toContain('…（已截断：完整 31000 字符）')
+    expect(toolHistory[0]!.startsWith('x'.repeat(30000))).toBe(true)
   })
 
   it('aborts a stream that goes silent (idle watchdog)', async () => {

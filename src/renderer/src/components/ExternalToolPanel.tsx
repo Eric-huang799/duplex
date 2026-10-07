@@ -61,6 +61,7 @@ export function ExternalToolPanel({
   const [customInput, setCustomInput] = useState('')
   const [syncStage, setSyncStage] = useState(0)
   const [modelMsg, setModelMsg] = useState('')
+  const [watchError, setWatchError] = useState(false)
 
   const refresh = async (): Promise<void> => {
     setError('')
@@ -77,6 +78,7 @@ export function ExternalToolPanel({
     onOpenedChange?.(null)
     setNewHint(false)
     setMenuOpen(false)
+    setWatchError(false)
     void window.cobrowse.agentsSessionClose()
     void window.cobrowse.agentsSetMirrorSource('external')
     void refresh()
@@ -87,6 +89,25 @@ export function ExternalToolPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toolId])
+
+  // The transcript tail can lose its file handle (moved/deleted/rewritten);
+  // show a banner until the user successfully reopens the session.
+  useEffect(() => {
+    const off = window.cobrowse.onAgentsWatchError((s) => {
+      if (s.toolId === toolId) setWatchError(true)
+    })
+    return off
+  }, [toolId])
+
+  // Esc closes the session menu.
+  useEffect(() => {
+    if (!menuOpen) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setMenuOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menuOpen])
 
   const open = async (s: SessionInfo): Promise<void> => {
     setBusy(true)
@@ -102,6 +123,7 @@ export function ExternalToolPanel({
     onOpenedChange?.(info)
     setNewHint(false)
     setMenuOpen(false)
+    setWatchError(false)
   }
 
   const modelCapable = tool?.kind === 'codex' || tool?.kind === 'claude'
@@ -163,6 +185,14 @@ export function ExternalToolPanel({
 
   const available = !!tool?.available
   const canReply = tool?.kind === 'codex' || tool?.kind === 'claude'
+  /** Mirrors the composer's enable rule so the hint never contradicts it. */
+  const canStartFromPanel =
+    available &&
+    (tool?.kind === 'codex' ||
+      tool?.kind === 'claude' ||
+      tool?.kind === 'gemini' ||
+      tool?.kind === 'qwen' ||
+      (tool?.kind === 'custom' && !!tool?.command))
 
   return (
     <>
@@ -299,11 +329,18 @@ export function ExternalToolPanel({
         </>
       )}
 
+      {watchError && (
+        <div className="watch-error-banner" role="status">
+          会话记录同步已断开；重新打开该会话可恢复
+        </div>
+      )}
       {error && <div className="agent-error">{error}</div>}
       {busy && <div className="external-hint">正在加载会话…</div>}
       {!busy && newHint && !opened && (
         <div className="external-hint">
-          新对话：在下方输入第一条消息，将以无头模式启动（Enter 发送）
+          {canStartFromPanel
+            ? '新对话：在下方输入第一条消息，将以无头模式启动（Enter 发送）'
+            : '该工具不支持从面板发送消息，请在 CLI 中继续'}
         </div>
       )}
       {!busy && opened && (

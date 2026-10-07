@@ -105,7 +105,7 @@ describe('listSkills', () => {
     expect(betas.map((s) => s.id).sort()).toEqual(['claude/beta', 'duplex/beta'])
   })
 
-  it('disambiguates same-name skills inside one source instead of dropping them', () => {
+  it('disambiguates same-name skills with a stable path hash instead of numbers', () => {
     writeFixture(
       path.join(claudeRoot, 'alpha-copy', 'SKILL.md'),
       '---\nname: alpha\ndescription: "Duplicate name"\n---\n\n# Alpha 2\n'
@@ -113,7 +113,21 @@ describe('listSkills', () => {
     const alphas = listSkills().filter((s) => s.name === 'alpha')
     expect(alphas).toHaveLength(2)
     expect(new Set(alphas.map((s) => s.id)).size).toBe(2)
-    expect(alphas.some((s) => s.id.endsWith('~2'))).toBe(true)
+    const ids = alphas.map((s) => s.id).sort()
+    expect(ids[0]).toBe('claude/alpha')
+    expect(ids[1]).toMatch(/^claude\/alpha~[0-9a-f]{6}$/)
+    // the same scan returns identical ids (no scan-order counters)
+    expect(listSkills().filter((s) => s.name === 'alpha').map((s) => s.id).sort()).toEqual(ids)
+  })
+
+  it('keeps legacy ~N disabled ids effective after the hash-id migration', () => {
+    writeFixture(path.join(claudeRoot, 'alpha-copy', 'SKILL.md'), '---\nname: alpha\n---\n\n# A2\n')
+    setSkillEnabled('claude/alpha~2', false)
+    const alphas = listSkills().filter((s) => s.name === 'alpha')
+    const hashed = alphas.find((s) => s.id !== 'claude/alpha')
+    expect(hashed).toBeTruthy()
+    expect(hashed?.enabled).toBe(false)
+    expect(alphas.find((s) => s.id === 'claude/alpha')?.enabled).toBe(true)
   })
 })
 
@@ -172,6 +186,14 @@ describe('reading skills', () => {
     const result = readSkillFile('claude/beta', 'big.txt')
     expect(result.ok).toBe(false)
     expect(result.error).toContain('200KB')
+  })
+
+  it('truncates SKILL.md over 200KB with a marker instead of failing', () => {
+    writeFixture(path.join(claudeRoot, 'huge', 'SKILL.md'), 'y'.repeat(210 * 1024))
+    const result = readSkillMarkdown('claude/huge')
+    expect(result.ok).toBe(true)
+    expect(result.content?.endsWith('…（已截断）')).toBe(true)
+    expect((result.content ?? '').length).toBeLessThan(210 * 1024)
   })
 })
 

@@ -7,11 +7,17 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createFsToolHandlers } from '../src/main/agent/fs-tools'
+import { cobrowseDir } from '../src/shared/endpoint'
 
 function makeConfirm(allow: boolean) {
-  const calls: Array<{ kind: string; detail: string; cwd: string }> = []
+  const calls: Array<{ kind: string; detail: string; cwd: string; preview?: string }> = []
   const fn = vi.fn(
-    async (payload: { kind: 'write' | 'command'; detail: string; cwd: string }): Promise<boolean> => {
+    async (payload: {
+      kind: 'write' | 'command'
+      detail: string
+      cwd: string
+      preview?: string
+    }): Promise<boolean> => {
       calls.push(payload)
       return allow
     }
@@ -67,6 +73,37 @@ describe('fs-tools write_file', () => {
     })
     expect(res.isError).toBe(true)
     expect(calls.length).toBe(0)
+  })
+
+  it('refuses credential dirs and the app data dir without asking', async () => {
+    const { fn, calls } = makeConfirm(true)
+    const handlers = createFsToolHandlers(fn)
+    const targets = ['.codex/auth.json', '.config/evil.js', '.gnupg/key', '.claude/settings.json'].map(
+      (rel) => path.join(os.homedir(), rel)
+    )
+    targets.push(path.join(cobrowseDir(), 'settings.json'))
+    for (const target of targets) {
+      const res = await handlers.write_file({ path: target, content: 'x' })
+      expect(res.isError).toBe(true)
+    }
+    expect(calls.length).toBe(0)
+  })
+
+  it('includes a ≤2000-char content preview in the confirm payload', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-fs-'))
+    try {
+      const { fn, calls } = makeConfirm(true)
+      const handlers = createFsToolHandlers(fn)
+      await handlers.write_file({ path: path.join(dir, 'long.txt'), content: 'x'.repeat(5000) })
+      const preview = calls[0].preview ?? ''
+      expect(preview.length).toBeLessThanOrEqual(2000)
+      expect(preview.endsWith('…（内容已截断）')).toBe(true)
+
+      await handlers.write_file({ path: path.join(dir, 'short.txt'), content: 'hello' })
+      expect(calls[1].preview).toBe('hello')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('rejects missing arguments', async () => {

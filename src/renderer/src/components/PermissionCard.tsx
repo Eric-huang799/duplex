@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export type PermissionState = 'pending' | 'allowed' | 'denied' | 'expired' | 'stopped'
 
@@ -8,7 +8,11 @@ export interface PermissionRequest {
   cwd: string
   skill: string
   tool?: string
+  kind?: 'write' | 'command' | 'script'
+  preview?: string
   state: PermissionState
+  /** Optional absolute deadline (epoch ms) supplied by the main process. */
+  expiresAt?: number
 }
 
 export function ShieldIcon({ className }: { className?: string }): React.JSX.Element {
@@ -31,7 +35,16 @@ export function ShieldIcon({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-function pendingTitle(tool: string | undefined): string {
+const KIND_LABEL: Record<NonNullable<PermissionRequest['kind']>, string> = {
+  write: '写入文件',
+  command: '执行命令',
+  script: '运行脚本'
+}
+
+function pendingTitle(tool: string | undefined, kind: PermissionRequest['kind']): string {
+  if (kind === 'write') return 'AI 请求写入文件'
+  if (kind === 'script') return 'AI 请求运行脚本'
+  if (kind === 'command') return 'AI 请求执行命令'
   if (tool === 'write_file') return 'AI 请求写入文件'
   if (tool === 'run_skill_script') return 'AI 请求运行脚本'
   return 'AI 请求执行命令'
@@ -60,15 +73,27 @@ export function PermissionCard({
   onRespond: (id: number, ok: boolean) => void
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  const [cmdExpanded, setCmdExpanded] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
   const isPending = req.state === 'pending'
+  const expiresAt = req.expiresAt
 
   useEffect(() => {
     if (!isPending) return
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     ref.current?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
+    // Esc must work right away on a blocking request
+    ref.current?.focus({ preventScroll: true })
     // only when this card first appears as pending
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    if (!isPending || !expiresAt) return
+    const t = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(t)
+  }, [isPending, expiresAt])
 
   if (req.state !== 'pending') {
     const meta = RESOLVED[req.state]
@@ -81,21 +106,61 @@ export function PermissionCard({
     )
   }
 
+  const cmdLong = req.command.length > 120 || req.command.split('\n').length > 3
+  const remaining = expiresAt ? Math.max(0, Math.ceil((expiresAt - now) / 1000)) : null
+
   return (
     <div
       className="permission-card pending"
       role="group"
-      aria-label={`权限请求：${pendingTitle(req.tool)}，等待你的许可`}
+      aria-label={`权限请求：${pendingTitle(req.tool, req.kind)}，等待你的许可`}
+      tabIndex={0}
       ref={ref}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          e.stopPropagation()
+          onRespond(req.id, false)
+        }
+      }}
     >
       <div className="permission-head">
         <ShieldIcon className="permission-shield" />
-        <span className="permission-title">{pendingTitle(req.tool)}</span>
+        <span className="permission-title">{pendingTitle(req.tool, req.kind)}</span>
+        {req.kind && <span className="permission-chip kind">{KIND_LABEL[req.kind]}</span>}
         {req.tool && <span className="permission-chip">{req.tool}</span>}
       </div>
-      <pre className="permission-cmd">{req.command}</pre>
+      <div className="permission-cmd-wrap">
+        <pre className={`permission-cmd${cmdExpanded ? ' expanded' : ''}`}>{req.command}</pre>
+        {cmdLong && (
+          <button
+            type="button"
+            className="permission-more"
+            onClick={() => setCmdExpanded((v) => !v)}
+          >
+            {cmdExpanded ? '收起全文' : '展开全文'}
+          </button>
+        )}
+      </div>
+      {req.preview != null && req.preview !== '' && (
+        <div className="permission-preview-wrap">
+          <button
+            type="button"
+            className="permission-more"
+            onClick={() => setShowPreview((v) => !v)}
+          >
+            {showPreview ? '收起内容' : '查看内容'}
+          </button>
+          {showPreview && <pre className="permission-preview">{req.preview}</pre>}
+        </div>
+      )}
       {req.cwd && <div className="permission-cwd">工作目录 · {req.cwd}</div>}
       <div className="permission-actions">
+        <span className="permission-hint">
+          {remaining != null
+            ? `剩余 ${remaining} 秒自动拒绝 · 按 Esc 快速拒绝`
+            : '按 Esc 快速拒绝'}
+        </span>
         <button type="button" className="permission-btn" onClick={() => onRespond(req.id, false)}>
           拒绝
         </button>

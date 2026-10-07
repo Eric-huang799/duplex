@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, type WebContents } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -10,10 +10,17 @@ import { DownloadManager } from './downloads'
 import { MirrorStore } from './mirror'
 import { createToolExecutor, type ToolExecutor } from './tool-handlers'
 import { startHttpServer, type RunningHttpServer } from './http-server'
-import { hideAllVisuals, isAiPaused, pauseAi, resumeAi } from './overlay'
+import {
+  hideAllVisuals,
+  isAiPaused,
+  overlaySend,
+  pauseAi,
+  resumeAi
+} from './overlay'
 import { abortOperation, beginOperation, endOperation, runInOperation } from './interrupt'
 import {
   createAnnotationSubmitHandler,
+  type AnnotationDelivery,
   type AnnotationSubmitHandler,
   type AnnotationSubmitPayload
 } from './annotations'
@@ -22,11 +29,13 @@ import { validateBinding } from '../shared/hotkeys'
 import {
   activeAgentConfig,
   loadSettings,
+  saveAiPaused,
   saveEmergencyStopKeys,
   saveProviders,
   saveSearchEngine,
   saveSession,
   saveTheme,
+  type AgentConfig,
   type ThemeSetting
 } from './settings'
 import {
@@ -77,10 +86,10 @@ import {
 } from './integrations/transcripts'
 import { resolveAddress } from '../shared/url'
 import { SEARCH_ENGINES, searchUrl } from '../shared/search'
-import type { ContentBounds } from '../shared/protocol'
+import type { ChatSendResult, ContentBounds } from '../shared/protocol'
 import { isLlmProtocol } from '../shared/llm'
 
-const VERSION = '0.2.5'
+const VERSION = '0.2.6'
 const TOKEN = crypto.randomBytes(24).toString('hex')
 const LOG_FILE = path.join(cobrowseDir(), 'app.log')
 
@@ -105,6 +114,34 @@ let annotationSubmitHandler: AnnotationSubmitHandler | null = null
 let browserData: BrowserDataStore
 let downloads: DownloadManager
 
+/** Which panel is on screen — decides where annotations are delivered. */
+let currentPanelMode: 'opencode' | 'agent' | 'external' = 'agent'
+/** Per-tab annotation-mode state (mirrors each page overlay's own toggle). */
+const annotationTabState = new Map<number, boolean>()
+/** elementCount by annotationId, attached to the submit-result ack. */
+const annotationElementCounts = new Map<string, number>()
+let lastActiveTabId: number | null = null
+
+/** Locate the tab whose WebContents sent an overlay event. */
+function findTabIdBySender(sender: WebContents): number | null {
+  if (!tabs) return null
+  for (const info of tabs.list()) {
+    const t = tabs.getTab(info.id)
+    if (t && !t.view.webContents.isDestroyed() && t.view.webContents.id === sender.id) {
+      return t.id
+    }
+  }
+  return null
+}
+
+function sendAnnotationState(active: boolean): void {
+  try {
+    win?.webContents.send('annotation:state', active)
+  } catch {
+    /* window is going away */
+  }
+}
+
 function emitBrowserData(): void {
   if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
     win.webContents.send('browser:data-update', browserData.snapshot())
@@ -120,11 +157,17 @@ const confirmScript = (payload: {
   cwd: string
   skill: string
   tool?: string
+  kind?: 'write' | 'command' | 'script'
+  preview?: string
 }): Promise<boolean> =>
   new Promise((resolve) => {
     const id = ++confirmSeq
     pendingConfirms.set(id, resolve)
-    win?.webContents.send('agent:confirm-request', { id, ...payload })
+    win?.webContents.send('agent:confirm-request', {
+      id,
+      ...payload,
+      expiresAt: Date.now() + 120_000
+    })
     setTimeout(() => {
       if (pendingConfirms.delete(id)) {
         resolve(false)
@@ -147,7 +190,10 @@ const fsHandlers = createFsToolHandlers((payload) =>
       command: payload.kind === 'write' ? `写入文件：${payload.detail}` : payload.detail,
       cwd: payload.cwd,
       skill: payload.kind === 'write' ? 'write_file（写文件）' : 'run_command（执行命令）',
-      tool: payload.kind === 'write' ? 'write_file' : 'run_command'
+      tool: payload.kind === 'write' ? 'write_file' : 'run_command',
+      kind: payload.kind,
+      ...(payload.preview ? { preview: payload.preview } : {}),
+      expiresAt: Date.now() + 120_000
     })
     setTimeout(() => {
       if (pendingConfirms.delete(id)) {
@@ -164,7 +210,7 @@ const fsHandlers = createFsToolHandlers((payload) =>
 
 // external agent transcripts: history replay + live tail, plus panel replies
 // (Codex `exec resume` / Claude Code `--resume` write back to the same transcript)
-let agentWatch: { timer: ReturnType<typeof setInterval> } | null = null
+let agentWatch: AgentWatchState | null = null
 let externalEvtSeq = 5_000_000
 /** While an external transcript is open, opencode pushes are muted. */
 let mirrorSource: 'opencode' | 'external' = 'opencode'
@@ -176,10 +222,36 @@ let currentExternalSession: { toolId: string; kind: string; sessionId: string; f
 /** User message just injected via resume — the CLI transcript will echo it; skip that echo. */
 let pendingUserEcho: { text: string; since: number } | null = null
 
+/** Live tail state for one external transcript file. */
+interface AgentWatchState {
+  kind: string
+  file: string
+  sessionID: string
+  toolId: string
+  lastSize: number
+  /** Message keys already streamed for this file (survives offset resets). */
+  emitted: Set<string>
+  statMisses: number
+  tailErrors: number
+  restarts: number
+  timer: ReturnType<typeof setTimeout> | null
+}
+
+const TAIL_ERROR_LIMIT = 5
+const MAX_WATCH_RESTARTS = 3
+const STAT_RETRY_DELAYS = [1000, 2000, 5000]
+
 function stopAgentWatch(): void {
-  if (agentWatch) {
-    clearInterval(agentWatch.timer)
-    agentWatch = null
+  if (agentWatch?.timer) clearTimeout(agentWatch.timer)
+  agentWatch = null
+}
+
+function emitWatchError(toolId: string, error: string): void {
+  logLine(`[agents:watch] ${toolId}: ${error}`)
+  try {
+    win?.webContents.send('agents:watch-error', { toolId, error })
+  } catch {
+    /* the window may be going away */
   }
 }
 
@@ -216,63 +288,133 @@ function parseTranscriptChunk(kind: string, chunk: string): TranscriptMessage[] 
   return out
 }
 
-/** Tail a transcript file; stream newly appended messages into the panel. */
+/**
+ * Tail a transcript file; stream newly appended messages into the panel.
+ *
+ * - stat failures retry with backoff (1s / 2s / 5s); after the last retry an
+ *   `agents:watch-error` event is sent instead of failing silently;
+ * - repeated tail errors restart the watch (up to three times); after that the
+ *   same error event is sent and the watch stops;
+ * - a truncated/rotated file resets the read offset, while a per-file message
+ *   key set prevents re-emitting content already shown.
+ */
 function startAgentWatch(
   kind: string,
   file: string,
   sessionID: string,
-  baselineSize?: number
+  toolId: string,
+  baselineSize?: number,
+  carry?: { lastSize: number; emitted: Set<string>; restarts: number }
 ): void {
   stopAgentWatch()
-  let lastSize = 0
+  const state: AgentWatchState = {
+    kind,
+    file,
+    sessionID,
+    toolId,
+    lastSize: carry ? carry.lastSize : (baselineSize ?? -1),
+    emitted: carry ? carry.emitted : new Set<string>(),
+    statMisses: 0,
+    tailErrors: 0,
+    restarts: carry ? carry.restarts : 0,
+    timer: null
+  }
+  agentWatch = state
+  state.timer = setTimeout(() => watchTick(state), state.lastSize < 0 ? 500 : 1500)
+}
+
+function watchTick(state: AgentWatchState): void {
+  if (agentWatch !== state) return
+  const schedule = (ms: number): void => {
+    if (agentWatch === state) state.timer = setTimeout(() => watchTick(state), ms)
+  }
+
+  let st: fs.Stats
   try {
-    lastSize = baselineSize ?? fs.statSync(file).size
-  } catch {
+    st = fs.statSync(state.file)
+    state.statMisses = 0
+  } catch (e) {
+    const delay = STAT_RETRY_DELAYS[state.statMisses] ?? 5000
+    state.statMisses++
+    if (state.statMisses > STAT_RETRY_DELAYS.length) {
+      emitWatchError(
+        state.toolId,
+        `无法读取会话文件（${(e as Error)?.message ?? String(e)}）：${state.file}`
+      )
+      stopAgentWatch()
+      return
+    }
+    schedule(delay)
     return
   }
-  let missCount = 0
-  const timer = setInterval(() => {
-    try {
-      const st = fs.statSync(file)
-      missCount = 0
-      if (st.size < lastSize) {
-        // file was truncated or rotated — restart from the beginning
-        lastSize = 0
-      }
-      if (st.size <= lastSize) return
-      const fd = fs.openSync(file, 'r')
+
+  // the first successful stat defines the baseline when no size was captured
+  if (state.lastSize < 0) state.lastSize = st.size
+
+  try {
+    if (st.size < state.lastSize) {
+      // file was truncated or rotated — restart from the beginning; the
+      // emitted-key set below keeps already streamed messages from repeating
+      state.lastSize = 0
+    }
+    if (st.size > state.lastSize) {
+      const fd = fs.openSync(state.file, 'r')
       let text = ''
       try {
-        const len = st.size - lastSize
+        const len = st.size - state.lastSize
         const buf = Buffer.alloc(len)
-        const n = fs.readSync(fd, buf, 0, len, lastSize)
+        const n = fs.readSync(fd, buf, 0, len, state.lastSize)
         text = buf.subarray(0, n).toString('utf8')
       } finally {
         fs.closeSync(fd)
       }
       const cut = text.lastIndexOf('\n')
-      if (cut < 0) return // wait for a complete line
-      const complete = text.slice(0, cut + 1)
-      lastSize += Buffer.byteLength(complete, 'utf8')
-      for (const m of parseTranscriptChunk(kind, complete)) {
-        if (
-          m.role === 'user' &&
-          pendingUserEcho &&
-          m.text === pendingUserEcho.text &&
-          m.ts >= pendingUserEcho.since - 15_000
-        ) {
-          // the CLI transcript echoed a message we already showed optimistically
-          pendingUserEcho = null
-          continue
+      if (cut >= 0) {
+        const complete = text.slice(0, cut + 1)
+        state.lastSize += Buffer.byteLength(complete, 'utf8')
+        for (const m of parseTranscriptChunk(state.kind, complete)) {
+          const key = `${m.role}\u0000${m.ts}\u0000${m.text}`
+          if (state.emitted.has(key)) continue
+          state.emitted.add(key)
+          if (
+            m.role === 'user' &&
+            pendingUserEcho &&
+            m.text === pendingUserEcho.text &&
+            m.ts >= pendingUserEcho.since - 15_000
+          ) {
+            // the CLI transcript echoed a message we already showed optimistically
+            pendingUserEcho = null
+            continue
+          }
+          win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, state.sessionID))
         }
-        win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, sessionID))
+        if (state.emitted.size > 5000) {
+          state.emitted = new Set(Array.from(state.emitted).slice(-2500))
+        }
       }
-    } catch {
-      missCount++
-      if (missCount >= 20) stopAgentWatch()
     }
-  }, 1500)
-  agentWatch = { timer }
+    state.tailErrors = 0
+  } catch (e) {
+    state.tailErrors++
+    if (state.tailErrors >= TAIL_ERROR_LIMIT) {
+      if (state.restarts < MAX_WATCH_RESTARTS) {
+        // restart the watch from the last known offset (bounded retries)
+        startAgentWatch(state.kind, state.file, state.sessionID, state.toolId, state.lastSize, {
+          lastSize: state.lastSize,
+          emitted: state.emitted,
+          restarts: state.restarts + 1
+        })
+        return
+      }
+      emitWatchError(
+        state.toolId,
+        `会话文件跟踪连续出错，已停止监听（${(e as Error)?.message ?? String(e)}）：${state.file}`
+      )
+      stopAgentWatch()
+      return
+    }
+  }
+  schedule(1500)
 }
 
 /** Open a transcript file: reset the panel, stream history, then tail live. */
@@ -282,7 +424,12 @@ function openExternalSession(
   file: string
 ): { ok: boolean; count?: number; title?: string; error?: string } {
   const root = path.resolve(tool.sessionsDir ?? '')
-  if (!path.resolve(file).startsWith(root)) return { ok: false, error: '非法路径' }
+  const resolvedFile = path.resolve(file)
+  const resolvedRoot = path.resolve(root)
+  const rootWithSep = resolvedRoot.endsWith(path.sep) ? resolvedRoot : resolvedRoot + path.sep
+  if (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(rootWithSep)) {
+    return { ok: false, error: '非法路径' }
+  }
   stopAgentWatch()
   mirrorSource = 'external'
   currentExternalSession = { toolId: tool.id, kind: tool.kind, sessionId, file }
@@ -317,16 +464,81 @@ function openExternalSession(
   for (const m of msgs) {
     win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, sid))
   }
-  startAgentWatch(tool.kind, file, sid, baseline)
+  startAgentWatch(tool.kind, file, sid, tool.id, baseline)
   return { ok: true, count: msgs.length, title: path.basename(file) }
 }
 
+/** A spawned external-agent child plus the state needed to explain failures. */
+interface LiveChild {
+  child: ReturnType<typeof spawn>
+  toolId: string
+  /** Last ~2KB of stderr (ring buffer). */
+  stderrTail: string
+  exited: boolean
+  exitCode: number | null
+  spawnError?: string
+  /** Set when we terminated the process ourselves. */
+  killed: boolean
+  /** Resolves when the process exits or fails to spawn. */
+  settled: Promise<void>
+  markSettled: () => void
+}
+
 /** Live child processes spawned for external sessions (killed on quit). */
-const liveChildren = new Set<ReturnType<typeof spawn>>()
+const liveChildren = new Set<LiveChild>()
 let startSessionCancelled = false
 
 function broadcastChildren(): void {
   win?.webContents.send('agents:children', liveChildren.size)
+}
+
+/** Track a spawned child: stderr ring buffer, exit/error state, set bookkeeping. */
+function trackChild(child: ReturnType<typeof spawn>, toolId: string): LiveChild {
+  let markSettled = (): void => {}
+  const settled = new Promise<void>((resolve) => {
+    markSettled = resolve
+  })
+  const entry: LiveChild = {
+    child,
+    toolId,
+    stderrTail: '',
+    exited: false,
+    exitCode: null,
+    killed: false,
+    settled,
+    markSettled
+  }
+  const finish = (): void => {
+    entry.markSettled()
+    liveChildren.delete(entry)
+    broadcastChildren()
+  }
+  child.stderr?.on('data', (d: Buffer) => {
+    entry.stderrTail = (entry.stderrTail + d.toString('utf8')).slice(-2048)
+  })
+  child.on('error', (e: Error) => {
+    entry.spawnError = e?.message ?? String(e)
+    entry.exited = true
+    finish()
+  })
+  child.on('exit', (code) => {
+    entry.exited = true
+    entry.exitCode = code
+    finish()
+  })
+  liveChildren.add(entry)
+  broadcastChildren()
+  return entry
+}
+
+/** Last non-empty stderr line, appended to failure messages when present. */
+function stderrSummary(entry: LiveChild): string {
+  const lines = entry.stderrTail
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const last = lines[lines.length - 1]
+  return last ? `；最近输出：${last.slice(0, 300)}` : ''
 }
 
 /** Kill a child and its whole process tree (Windows grandchildren included). */
@@ -346,15 +558,21 @@ function killChildTree(child: ReturnType<typeof spawn>): void {
   }
 }
 
-/** Emergency stop: cancel pending starts and kill every external-session child. */
-function stopExternalChildren(): number {
-  startSessionCancelled = true
+/**
+ * Kill external-session children. With a toolId only that tool's processes are
+ * terminated (panel "stop" for one tool); without one every child is killed
+ * (emergency stop).
+ */
+function stopExternalChildren(toolId?: string): number {
+  if (!toolId) startSessionCancelled = true
   let killed = 0
-  for (const child of liveChildren) {
-    killChildTree(child)
+  for (const entry of [...liveChildren]) {
+    if (toolId && entry.toolId !== toolId) continue
+    entry.killed = true
+    killChildTree(entry.child)
+    liveChildren.delete(entry)
     killed++
   }
-  liveChildren.clear()
   broadcastChildren()
   return killed
 }
@@ -362,6 +580,7 @@ function stopExternalChildren(): number {
 /** A user message (panel / built-in agent / external session) resumes after an emergency stop. */
 function maybeResumeAi(): void {
   if (resumeAi()) {
+    saveAiPaused(false)
     try {
       win?.webContents.send('emergency:state', { paused: false })
     } catch {
@@ -384,93 +603,97 @@ function denyAllPendingConfirms(): number {
 
 /** Spawn a headless CLI run that starts a brand-new session (generalized). */
 function startExternalSessionSpawn(
-  tool: { kind: string; command?: string },
+  tool: { id?: string; kind: string; command?: string },
   message: string,
   model?: string
-): { ok: boolean; error?: string } {
+): { ok: true; live: LiveChild } | { ok: false; error: string } {
   const plan = buildStartPlan(tool as never, message, model)
   if ('error' in plan) return { ok: false, error: plan.error }
+  let child: ReturnType<typeof spawn>
   try {
-    const child = spawn(plan.file, plan.args, {
-      cwd: plan.cwd,
-      windowsHide: true,
-      stdio: ['pipe', 'ignore', 'ignore']
-    })
-    liveChildren.add(child)
-    broadcastChildren()
-    child.on('exit', () => {
-      liveChildren.delete(child)
-      broadcastChildren()
-    })
-    // a broken pipe / missing binary must never crash the main process
-    child.stdin?.on('error', () => undefined)
-    child.on('error', () => undefined)
-    if (plan.useStdin) {
-      try {
-        child.stdin?.write(message)
-      } catch {
-        /* child may already be gone */
-      }
-    }
-    child.stdin?.end()
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, error: (e as Error)?.message ?? '启动失败' }
-  }
-}
-
-/** Spawn a headless CLI run that CONTINUES an existing session ("reply from the panel"). */
-function resumeExternalSessionSpawn(
-  tool: { kind: string },
-  cliSessionId: string,
-  cwdHint: string,
-  message: string,
-  sessionID: string,
-  model?: string
-): { ok: boolean; error?: string } {
-  const plan = buildResumePlan(tool as never, cliSessionId, cwdHint, model)
-  if ('error' in plan) return { ok: false, error: plan.error }
-  try {
-    const child = spawn(plan.file, plan.args, {
+    child = spawn(plan.file, plan.args, {
       cwd: plan.cwd,
       windowsHide: true,
       stdio: ['pipe', 'ignore', 'pipe']
     })
-    liveChildren.add(child)
-    broadcastChildren()
-    let errBuf = ''
-    child.stderr?.on('data', (d: Buffer) => {
-      errBuf = (errBuf + d.toString('utf8')).slice(-2000)
-    })
-    child.on('exit', (code) => {
-      liveChildren.delete(child)
-      broadcastChildren()
-      const detail = errBuf.trim()
-      if (code !== 0 && detail) {
-        win?.webContents.send(
-          'mirror:event',
-          externalEvent({
-            kind: 'session',
-            status: 'error',
-            sessionID,
-            error: detail.split('\n').slice(-3).join('\n'),
-            ts: Date.now()
-          })
-        )
-      }
-    })
-    child.stdin?.on('error', () => undefined)
-    child.on('error', () => undefined)
+  } catch (e) {
+    return { ok: false, error: `启动失败：${(e as Error)?.message ?? String(e)}` }
+  }
+  const live = trackChild(child, tool.id ?? tool.kind)
+  // a broken pipe / missing binary must never crash the main process
+  child.stdin?.on('error', () => undefined)
+  if (plan.useStdin) {
     try {
       child.stdin?.write(message)
     } catch {
       /* child may already be gone */
     }
-    child.stdin?.end()
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, error: (e as Error)?.message ?? '启动失败' }
   }
+  child.stdin?.end()
+  return { ok: true, live }
+}
+
+/** Spawn a headless CLI run that CONTINUES an existing session ("reply from the panel"). */
+function resumeExternalSessionSpawn(
+  tool: { id?: string; kind: string },
+  cliSessionId: string,
+  cwdHint: string,
+  message: string,
+  sessionID: string,
+  model?: string
+): { ok: true; live: LiveChild } | { ok: false; error: string } {
+  const plan = buildResumePlan(tool as never, cliSessionId, cwdHint, model)
+  if ('error' in plan) return { ok: false, error: plan.error }
+  let child: ReturnType<typeof spawn>
+  try {
+    child = spawn(plan.file, plan.args, {
+      cwd: plan.cwd,
+      windowsHide: true,
+      stdio: ['pipe', 'ignore', 'pipe']
+    })
+  } catch (e) {
+    return { ok: false, error: `启动失败：${(e as Error)?.message ?? String(e)}` }
+  }
+  const live = trackChild(child, tool.id ?? tool.kind)
+  const toolLabel =
+    tool.kind === 'codex' ? 'Codex' : tool.kind === 'claude' ? 'Claude Code' : tool.kind
+  child.on('error', (e: Error) => {
+    // spawn failed asynchronously: drop the pending echo and tell the panel
+    if (pendingUserEcho && pendingUserEcho.text === message) pendingUserEcho = null
+    win?.webContents.send(
+      'mirror:event',
+      externalEvent({
+        kind: 'session',
+        status: 'error',
+        sessionID,
+        error: `发送失败：无法启动 ${toolLabel}（${e?.message ?? String(e)}）`,
+        ts: Date.now()
+      })
+    )
+  })
+  child.on('exit', (code) => {
+    const detail = live.stderrTail.trim()
+    if (code !== 0 && detail) {
+      win?.webContents.send(
+        'mirror:event',
+        externalEvent({
+          kind: 'session',
+          status: 'error',
+          sessionID,
+          error: detail.split('\n').slice(-3).join('\n'),
+          ts: Date.now()
+        })
+      )
+    }
+  })
+  child.stdin?.on('error', () => undefined)
+  try {
+    child.stdin?.write(message)
+  } catch {
+    /* child may already be gone */
+  }
+  child.stdin?.end()
+  return { ok: true, live }
 }
 let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
@@ -507,11 +730,21 @@ if (!gotLock) {
 async function start(): Promise<void> {
   app.setAppUserModelId('Duplex')
   browserData = new BrowserDataStore(cobrowseDir())
-  downloads = new DownloadManager(session.fromPartition('persist:cobrowse'), browserData, (rows) => {
-    if (win && !win.isDestroyed()) win.webContents.send('downloads:update', rows)
-  })
+  downloads = new DownloadManager(
+    session.fromPartition('persist:cobrowse'),
+    browserData,
+    (rows) => {
+      if (win && !win.isDestroyed()) win.webContents.send('downloads:update', rows)
+    },
+    () => loadSettings().confirmBeforeDownload
+  )
   const settings = loadSettings()
   nativeTheme.themeSource = settings.theme
+  if (settings.aiPaused) {
+    // the emergency stop survives restarts until the user explicitly resumes
+    pauseAi()
+    logLine('[takeover] emergency stop restored from settings')
+  }
   logLine(`[duplex] theme source: ${settings.theme}`)
   nativeTheme.on('updated', () => applyWindowBackground())
   setupIpc()
@@ -580,9 +813,16 @@ async function start(): Promise<void> {
   }
 
   // built-in agent mode (optional alternative to the opencode path)
+  const requireAgentConfig = (): AgentConfig => {
+    const cfg = activeAgentConfig()
+    if (!cfg) {
+      throw new Error('当前模型配置不存在，请在 ⚙ 模型配置里选择或新建')
+    }
+    return cfg
+  }
   agentRuntime = new AgentRuntime(
     executeWithSkills,
-    () => activeAgentConfig(),
+    requireAgentConfig,
     (ev) => {
       win?.webContents.send('agent:event', ev)
     }
@@ -596,7 +836,7 @@ async function start(): Promise<void> {
     executeTool: executeWithWake,
     sessionBus,
     sendAgent: async (text) => {
-      await agentRuntime?.send(text)
+      return await agentRuntime?.send(text)
     },
     agentBusy: () => agentRuntime?.isRunning ?? false,
     onUserActivity: () => maybeResumeAi(),
@@ -615,10 +855,75 @@ async function start(): Promise<void> {
     panelEval:
       process.env['COBROWSE_DEBUG_UI'] === '1'
         ? (js: string) => win!.webContents.executeJavaScript(js)
+        : undefined,
+    debugExec:
+      process.env['COBROWSE_DEBUG_UI'] === '1'
+        ? async (target, js) => {
+            const wc =
+              target === 'page' ? tabs?.getActive()?.view.webContents : win?.webContents
+            if (!wc || wc.isDestroyed()) throw new Error(`no webContents for ${target}`)
+            return wc.executeJavaScript(js)
+          }
+        : undefined,
+    debugKey:
+      process.env['COBROWSE_DEBUG_UI'] === '1'
+        ? async (target, key, modifiers = []) => {
+            const wc =
+              target === 'page' ? tabs?.getActive()?.view.webContents : win?.webContents
+            if (!wc || wc.isDestroyed()) throw new Error(`no webContents for ${target}`)
+            wc.sendInputEvent({ type: 'keyDown', keyCode: key, modifiers })
+            wc.sendInputEvent({ type: 'keyUp', keyCode: key, modifiers })
+          }
+        : undefined,
+    debugType:
+      process.env['COBROWSE_DEBUG_UI'] === '1'
+        ? async (target, text, delayMs = 50) => {
+            const wc =
+              target === 'page' ? tabs?.getActive()?.view.webContents : win?.webContents
+            if (!wc || wc.isDestroyed()) throw new Error(`no webContents for ${target}`)
+            for (const ch of text) {
+              wc.sendInputEvent({ type: 'char', keyCode: ch })
+              await new Promise((resolve) => setTimeout(resolve, delayMs))
+            }
+          }
         : undefined
   })
 
-  const annotationSubmit = createAnnotationSubmitHandler(tabs!, mirror)
+  // Annotation routing: in built-in-agent mode the annotation goes straight
+  // into the agent conversation; opencode / external panels get the default
+  // queue + side-panel mirror delivery.
+  const deliverAnnotation = (d: AnnotationDelivery): void => {
+    if (annotationElementCounts.size > 100) annotationElementCounts.clear()
+    annotationElementCounts.set(d.annotationId, d.elementCount)
+    if (currentPanelMode === 'agent' && agentRuntime) {
+      try {
+        agentRuntime.injectAnnotation(d.text, {
+          question: d.question,
+          summary: d.summary,
+          url: d.url,
+          annotationId: d.annotationId,
+          tool: d.tool,
+          elementCount: d.elementCount
+        })
+        return
+      } catch (e) {
+        logLine(`[annotation] agent delivery failed, falling back to the queue: ${String(e)}`)
+      }
+    }
+    mirror.addInjection(d.text, 'annotation')
+    mirror.add({
+      kind: 'annotation',
+      annotationId: d.annotationId,
+      text: d.text,
+      question: d.question,
+      tool: d.tool,
+      url: d.url,
+      summary: d.summary,
+      elementCount: d.elementCount,
+      ...(currentPanelMode === 'agent' ? { source: 'agent' as const } : {})
+    })
+  }
+  const annotationSubmit = createAnnotationSubmitHandler(tabs!, mirror, deliverAnnotation)
   annotationSubmitHandler = (payload) => annotationSubmit(payload)
 
   try {
@@ -700,8 +1005,11 @@ function createWindow(): void {
 
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.key === 'F12') {
-      win?.webContents.toggleDevTools()
-      e.preventDefault()
+      // packaged builds keep devtools out; only dev/测试 builds may open them
+      if (!app.isPackaged) {
+        win?.webContents.toggleDevTools()
+        e.preventDefault()
+      }
     }
   })
 
@@ -734,6 +1042,21 @@ function createWindow(): void {
       try {
         if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
         win.webContents.send('tabs:update', tabs!.list(), tabs!.activeId)
+        const list = tabs!.list()
+        // drop annotation state for tabs that are gone
+        if (annotationTabState.size > 0) {
+          const alive = new Set(list.map((t) => t.id))
+          for (const id of [...annotationTabState.keys()]) {
+            if (!alive.has(id)) annotationTabState.delete(id)
+          }
+        }
+        // keep the renderer's annotation toggle in sync when switching tabs
+        if (tabs!.activeId !== lastActiveTabId) {
+          lastActiveTabId = tabs!.activeId
+          sendAnnotationState(
+            lastActiveTabId != null ? (annotationTabState.get(lastActiveTabId) ?? false) : false
+          )
+        }
       } catch {
         /* window is going away */
       }
@@ -753,7 +1076,14 @@ function createWindow(): void {
         else tabs?.reopenClosed()
       } else win?.webContents.send('browser:shortcut', action)
     },
-    (url, title, favicon) => { browserData.updateLatestHistory(url, title, favicon); emitBrowserData() }
+    (url, title, favicon) => { browserData.updateLatestHistory(url, title, favicon); emitBrowserData() },
+    (info) => {
+      try {
+        win?.webContents.send('browser:load-error', info)
+      } catch {
+        /* window is going away */
+      }
+    }
   )
   tabs.createTab()
 
@@ -770,11 +1100,27 @@ function createWindow(): void {
 }
 
 function setupIpc(): void {
-  ipcMain.handle('ui:ready', () => ({
-    tabs: tabs?.list() ?? [],
-    activeTabId: tabs?.activeId ?? null,
-    mirror: mirror.snapshot()
-  }))
+  ipcMain.handle('ui:ready', () => {
+    const state = {
+      tabs: tabs?.list() ?? [],
+      activeTabId: tabs?.activeId ?? null,
+      mirror: mirror.snapshot()
+    }
+    // The renderer registers its state listeners right after calling ready();
+    // push the latched main-process state once its effects have run.
+    setTimeout(() => {
+      try {
+        win?.webContents.send('emergency:state', { paused: isAiPaused() })
+        win?.webContents.send(
+          'annotation:state',
+          tabs?.activeId != null ? (annotationTabState.get(tabs.activeId) ?? false) : false
+        )
+      } catch {
+        /* window is going away */
+      }
+    }, 400)
+    return state
+  })
 
   ipcMain.handle('browser:data', () => browserData.snapshot())
   ipcMain.handle('browser:bookmark-toggle', (_e, record: { url: string; title: string; favicon?: string }) => {
@@ -791,8 +1137,8 @@ function setupIpc(): void {
   ipcMain.handle('downloads:list', () => downloads.list())
   ipcMain.handle('downloads:cancel', (_e, id: string) => ({ ok: downloads.cancel(id) }))
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })
-  ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id).then(() => ({ ok: true })))
-  ipcMain.handle('downloads:reveal', (_e, id: string) => { downloads.reveal(id); return { ok: true } })
+  ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id))
+  ipcMain.handle('downloads:reveal', (_e, id: string) => downloads.reveal(id))
 
   ipcMain.on('ui:bounds', (_e, bounds: ContentBounds) => {
     tabs?.updateBounds(bounds)
@@ -806,9 +1152,6 @@ function setupIpc(): void {
     'tabs:action',
     (_e, action: { type: string; url?: string; tabId?: number }) => {
       if (!tabs) return { ok: false }
-      // a user-initiated navigation/search is an explicit signal to resume
-      // after an emergency stop (AI tools never come through this IPC route)
-      if (action?.type === 'navigate') maybeResumeAi()
       try {
         switch (action.type) {
           case 'navigate': {
@@ -889,9 +1232,27 @@ function setupIpc(): void {
     }
   )
 
+  // The renderer tells us which panel is visible — annotations are routed to
+  // the built-in agent only when that panel is the active one.
+  ipcMain.handle('ui:panel-mode', (_e, mode: string) => {
+    currentPanelMode = mode === 'opencode' || mode === 'external' ? mode : 'agent'
+    return { ok: true }
+  })
+
+  // Toggle annotation mode for the active tab (state is mirrored per tab and
+  // echoed back through `annotation:state` when the overlay confirms).
+  ipcMain.handle('annotation:toggle', () => {
+    const tab = tabs?.getActive()
+    if (!tab) return { ok: false, active: false }
+    const next = !(annotationTabState.get(tab.id) ?? false)
+    annotationTabState.set(tab.id, next)
+    overlaySend(tab, { kind: 'annotationMode', active: next })
+    return { ok: true, active: next }
+  })
+
   ipcMain.on(
     'overlay:event',
-    (_e, ev: { kind?: string; via?: string; annotationId?: string }) => {
+    (_e, ev: { kind?: string; via?: string; annotationId?: string; active?: boolean }) => {
       if (ev?.kind === 'ready') {
         try {
           _e.sender.send('overlay:cmd', {
@@ -910,6 +1271,7 @@ function setupIpc(): void {
         const confirms = denyAllPendingConfirms()
         const dropped = mirror.clearInjections()
         const newly = pauseAi()
+        if (newly) saveAiPaused(true)
         hideAllVisuals(tabs?.getActive() ?? null)
         try {
           win?.webContents.send('emergency:stop', { via: ev.via ?? 'unknown', aborted })
@@ -923,13 +1285,53 @@ function setupIpc(): void {
         )
         return
       }
+      if (ev?.kind === 'annotationState') {
+        const active = ev.active === true
+        const senderTabId = findTabIdBySender(_e.sender)
+        const tabId = senderTabId ?? tabs?.activeId ?? null
+        if (tabId != null) annotationTabState.set(tabId, active)
+        // only mirror the active tab's state into the chrome UI
+        if (tabId == null || tabId === tabs?.activeId) sendAnnotationState(active)
+        return
+      }
       if (ev?.kind === 'annotationSubmit') {
         if (!annotationSubmitHandler) return
-        void annotationSubmitHandler(ev as unknown as AnnotationSubmitPayload).then((r) => {
-          logLine(
-            `[annotation] submit ${ev.annotationId ?? '?'} -> ${r.ok ? 'queued' : 'error: ' + (r.error ?? '')}`
+        const annotationId = String(ev.annotationId ?? '')
+        const replyResult = (ok: boolean, error?: string): void => {
+          // reply to the tab that submitted (not whichever tab is active now)
+          const senderTabId = findTabIdBySender(_e.sender)
+          const tab =
+            (senderTabId != null ? tabs?.getTab(senderTabId) : undefined) ?? tabs?.getActive()
+          if (!tab) return
+          const elementCount = annotationElementCounts.get(annotationId)
+          annotationElementCounts.delete(annotationId)
+          overlaySend(tab, {
+            kind: 'annotationResult',
+            annotationId,
+            ok,
+            ...(error ? { error } : {}),
+            ...(elementCount != null ? { elementCount } : {})
+          })
+        }
+        try {
+          void annotationSubmitHandler(ev as unknown as AnnotationSubmitPayload).then(
+            (r) => {
+              logLine(
+                `[annotation] submit ${annotationId || '?'} -> ${r.ok ? 'queued' : 'error: ' + (r.error ?? '')}`
+              )
+              replyResult(r.ok, r.error)
+            },
+            (err) => {
+              const message = (err as Error)?.message ?? String(err)
+              logLine(`[annotation] submit ${annotationId || '?'} -> rejected: ${message}`)
+              replyResult(false, message)
+            }
           )
-        })
+        } catch (err) {
+          const message = (err as Error)?.message ?? String(err)
+          logLine(`[annotation] submit ${annotationId || '?'} -> threw: ${message}`)
+          replyResult(false, message)
+        }
         return
       }
       if (ev?.kind === 'annotationDismiss') {
@@ -938,11 +1340,18 @@ function setupIpc(): void {
     }
   )
 
-  ipcMain.handle('chat:send', (_e, text: string) => {
+  ipcMain.handle('chat:send', (_e, text: string): ChatSendResult => {
     const t = String(text ?? '').trim()
     if (!t) return { ok: false }
     maybeResumeAi()
     const inj = mirror.addInjection(t, 'panel')
+    if (!mirror.hasConsumer()) {
+      return {
+        ok: true,
+        id: inj.id,
+        warning: 'opencode 未连接：消息已排队，连接后自动送达'
+      }
+    }
     return { ok: true, id: inj.id }
   })
 
@@ -965,17 +1374,19 @@ function setupIpc(): void {
           activeTitle: sessionBus.state.activeTitle ?? undefined,
           reason: sessionBus.state.activeSessionID ? 'selected' : 'auto'
         })
+        let saved: { ok: boolean; error?: string }
         if (sessionBus.state.activeSessionID) {
           // ask some plugin instance to push the session's history so the
           // panel shows the context of the session we just switched to
           sessionBus.push({ action: 'history', sessionID: sessionBus.state.activeSessionID })
-          saveSession({
+          saved = saveSession({
             id: sessionBus.state.activeSessionID,
             title: sessionBus.state.activeTitle ?? ''
           })
         } else {
-          saveSession(null)
+          saved = saveSession(null)
         }
+        if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
         return { ok: true }
       }
       sessionBus.push({
@@ -991,7 +1402,8 @@ function setupIpc(): void {
 
   ipcMain.handle('theme:set', (_e, theme: string) => {
     const t: ThemeSetting = theme === 'light' || theme === 'dark' ? theme : 'system'
-    saveTheme(t)
+    const saved = saveTheme(t)
+    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
     nativeTheme.themeSource = t
     applyWindowBackground()
     logLine(`[theme] set to ${t}`)
@@ -1000,10 +1412,12 @@ function setupIpc(): void {
 
   ipcMain.handle('agent:send', async (_e, text: string) => {
     if (!agentRuntime) return { ok: false, error: 'agent not ready' }
+    if (!activeAgentConfig()) {
+      return { ok: false, error: '当前模型配置不存在，请在 ⚙ 模型配置里选择或新建' }
+    }
     maybeResumeAi()
     try {
-      await agentRuntime.send(String(text ?? ''))
-      return { ok: true }
+      return await agentRuntime.send(String(text ?? ''))
     } catch (e) {
       return { ok: false, error: (e as Error)?.message ?? String(e) }
     }
@@ -1011,6 +1425,7 @@ function setupIpc(): void {
 
   ipcMain.on('emergency:resume', () => {
     if (resumeAi()) {
+      saveAiPaused(false)
       try {
         win?.webContents.send('emergency:state', { paused: false })
       } catch {
@@ -1065,14 +1480,38 @@ function setupIpc(): void {
         protocol?: string
         authType?: string
         authSource?: string
+        allowCustomHost?: boolean
+        idleTimeoutMs?: number
+        clearApiKey?: boolean
       }
     ) => {
       const s = loadSettings()
+      // Explicit key clearing (the renderer sends only {id, clearApiKey}):
+      // an empty apiKey alone means "keep the stored key", so this dedicated
+      // path is what makes clearing possible at all.
+      if (input?.clearApiKey === true) {
+        const idx = input?.id ? s.agentProviders.findIndex((p) => p.id === input.id) : -1
+        if (idx < 0) return { ok: false, error: '未找到该模型配置' }
+        const list = s.agentProviders.slice()
+        list[idx] = { ...list[idx], apiKey: '' }
+        const saved = saveProviders(list, s.activeProviderId)
+        if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+        logLine(`[agent] provider key cleared: ${list[idx].name}`)
+        return { ok: true }
+      }
       const baseUrl = String(input?.baseUrl ?? '').trim()
       if (!baseUrl) return { ok: false, error: 'Base URL 不能为空' }
       const list = s.agentProviders.slice()
       const idx = input?.id ? list.findIndex((p) => p.id === input.id) : -1
       const apiKeyInput = typeof input?.apiKey === 'string' ? input.apiKey.trim() : ''
+      const allowCustomHost =
+        typeof input?.allowCustomHost === 'boolean' ? input.allowCustomHost : undefined
+      const idleTimeoutMs =
+        typeof input?.idleTimeoutMs === 'number' &&
+        Number.isFinite(input.idleTimeoutMs) &&
+        input.idleTimeoutMs >= 0
+          ? Math.floor(input.idleTimeoutMs)
+          : undefined
       if (idx >= 0) {
         const prev = list[idx]
         list[idx] = {
@@ -1089,9 +1528,20 @@ function setupIpc(): void {
               ? input.authSource
               : input?.authType === 'key'
                 ? undefined
-                : prev.authSource
+                : prev.authSource,
+          allowCustomHost:
+            typeof input?.allowCustomHost === 'boolean'
+              ? input.allowCustomHost
+              : prev.allowCustomHost,
+          idleTimeoutMs:
+            typeof input?.idleTimeoutMs === 'number' &&
+            Number.isFinite(input.idleTimeoutMs) &&
+            input.idleTimeoutMs >= 0
+              ? Math.floor(input.idleTimeoutMs)
+              : prev.idleTimeoutMs
         }
-        saveProviders(list, s.activeProviderId)
+        const saved = saveProviders(list, s.activeProviderId)
+        if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
         logLine(`[agent] provider updated: ${deriveName(baseUrl)}`)
         return { ok: true }
       }
@@ -1107,10 +1557,13 @@ function setupIpc(): void {
         authSource:
           input?.authSource === 'codex' || input?.authSource === 'opencode'
             ? input.authSource
-            : undefined
+            : undefined,
+        allowCustomHost,
+        idleTimeoutMs
       })
       const active = s.activeProviderId ?? id
-      saveProviders(list, active)
+      const saved = saveProviders(list, active)
+      if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
       logLine(`[agent] provider added: ${deriveName(baseUrl)} (active=${active === id})`)
       return { ok: true, id }
     }
@@ -1120,7 +1573,8 @@ function setupIpc(): void {
     const s = loadSettings()
     const list = s.agentProviders.filter((p) => p.id !== id)
     const active = s.activeProviderId === id ? (list[0]?.id ?? null) : s.activeProviderId
-    saveProviders(list, active)
+    const saved = saveProviders(list, active)
+    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
     logLine(`[agent] provider removed: ${String(id)}`)
     return { ok: true }
   })
@@ -1129,7 +1583,8 @@ function setupIpc(): void {
     const s = loadSettings()
     const target = s.agentProviders.find((p) => p.id === id)
     if (!target) return { ok: false, error: 'provider not found' }
-    saveProviders(s.agentProviders, id)
+    const saved = saveProviders(s.agentProviders, id)
+    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
     logLine(`[agent] provider activated: ${target.name}`)
     return { ok: true }
   })
@@ -1147,7 +1602,8 @@ function setupIpc(): void {
       }
       const s = loadSettings()
       const { providers, added } = mergeProviders(s.agentProviders, imported)
-      saveProviders(providers, s.activeProviderId ?? providers[0]?.id ?? null)
+      const saved = saveProviders(providers, s.activeProviderId ?? providers[0]?.id ?? null)
+      if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
       logLine(`[agent] imported ${added} provider(s) from opencode (total ${providers.length})`)
       return { ok: true, added }
     } catch (e) {
@@ -1237,14 +1693,7 @@ function setupIpc(): void {
     maybeResumeAi()
     const meta = readSessionMeta(tool.kind, cur.file)
     const cliSessionId = meta.cliSessionId ?? path.basename(cur.file, '.jsonl')
-    // optimistic echo so the panel shows the outgoing message immediately;
-    // the tail skips the CLI's own transcript echo of it
-    pendingUserEcho = { text: msg, since: Date.now() }
-    win?.webContents.send(
-      'mirror:event',
-      transcriptToMirrorEvent({ role: 'user', text: msg, ts: Date.now() }, cur.sessionId)
-    )
-    return resumeExternalSessionSpawn(
+    const spawnResult = resumeExternalSessionSpawn(
       tool,
       cliSessionId,
       meta.cwd ?? '',
@@ -1252,6 +1701,16 @@ function setupIpc(): void {
       cur.sessionId,
       getToolModel(tool.id)
     )
+    if (!spawnResult.ok) return { ok: false, error: spawnResult.error }
+    // optimistic echo — only after the spawn succeeded, so a failed start can
+    // never leave a dangling user message in the panel; the tail skips the
+    // CLI's own transcript echo of it
+    pendingUserEcho = { text: msg, since: Date.now() }
+    win?.webContents.send(
+      'mirror:event',
+      transcriptToMirrorEvent({ role: 'user', text: msg, ts: Date.now() }, cur.sessionId)
+    )
+    return { ok: true }
   })
 
   ipcMain.handle('agents:models', (_e, toolId: string) => {
@@ -1303,6 +1762,7 @@ function setupIpc(): void {
       const before = Date.now()
       const spawnResult = startExternalSessionSpawn(tool, msg, getToolModel(tool.id))
       if (!spawnResult.ok) return spawnResult
+      const live = spawnResult.live
       const listFn =
         tool.kind === 'codex'
           ? listCodexSessions
@@ -1311,24 +1771,58 @@ function setupIpc(): void {
             : tool.kind === 'gemini' || tool.kind === 'qwen'
               ? listGeminiSessions
               : listCustomSessions
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 1000))
+      // Async polling (never blocks the main process between iterations; the
+      // list readers themselves are cached by the transcripts module): starts
+      // at 500ms and backs off up to 2s within the 20s window.
+      const deadline = Date.now() + 20_000
+      let delay = 500
+      while (Date.now() < deadline) {
+        // exit / spawn error wakes the loop immediately instead of waiting
+        // for the next poll tick
+        await Promise.race([
+          new Promise((r) => setTimeout(r, delay)),
+          live.settled
+        ])
+        delay = Math.min(2000, Math.round(delay * 1.5))
         if (startSessionCancelled) {
           startSessionCancelled = false
-          return { ok: false, error: '已取消' }
+          killChildTree(live.child)
+          live.killed = true
+          return { ok: false, error: '已取消（用户急停）' }
+        }
+        if (live.killed) {
+          return { ok: false, error: '已停止该进程（用户取消）' }
         }
         const newest = listFn(tool.sessionsDir)[0]
         if (newest && newest.updatedAt > before) {
           return openExternalSession(tool, newest.id, newest.file)
         }
+        if (live.spawnError) {
+          return { ok: false, error: `启动失败：${live.spawnError}${stderrSummary(live)}` }
+        }
+        if (live.exited) {
+          return {
+            ok: false,
+            error: `进程提前退出（exit ${live.exitCode ?? '?'}），未检测到新的会话文件${stderrSummary(live)}`
+          }
+        }
       }
-      return { ok: false, error: '已启动，但未在 20 秒内检测到新会话文件；可点 ⟳ 刷新会话列表' }
+      // timed out: terminate the child before reporting, it cannot be followed
+      killChildTree(live.child)
+      live.killed = true
+      return {
+        ok: false,
+        error: `启动超时（20 秒），未检测到会话文件；已终止该进程${stderrSummary(live)}`
+      }
     } finally {
       startSessionBusy = false
     }
   })
 
-  ipcMain.handle('agents:stop', () => ({ ok: true, killed: stopExternalChildren() }))
+  ipcMain.handle('agents:stop', (_e, toolId?: string) => ({
+    ok: true,
+    killed: stopExternalChildren(typeof toolId === 'string' && toolId ? toolId : undefined)
+  }))
 
   ipcMain.handle('agents:session-close', () => {
     stopAgentWatch()
@@ -1344,9 +1838,11 @@ function setupIpc(): void {
   }))
 
   ipcMain.handle('search:engine-set', (_e, engine: string) => {
-    if (typeof engine === 'string' && engine in SEARCH_ENGINES) {
-      saveSearchEngine(engine as keyof typeof SEARCH_ENGINES)
+    if (typeof engine !== 'string' || !(engine in SEARCH_ENGINES)) {
+      return { ok: false, error: '未知搜索引擎' }
     }
+    const saved = saveSearchEngine(engine as keyof typeof SEARCH_ENGINES)
+    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
     return { ok: true }
   })
 
@@ -1367,7 +1863,8 @@ function setupIpc(): void {
         error: '请设置至少一个有效按键（F1–F12、Esc 或带 Ctrl/Alt/Shift 的组合）'
       }
     }
-    saveEmergencyStopKeys(unique)
+    const saved = saveEmergencyStopKeys(unique)
+    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
     tabs?.broadcastOverlay({ kind: 'hotkeys', keys: unique })
     return { ok: true, keys: unique }
   })
@@ -1403,12 +1900,13 @@ function setupIpc(): void {
 }
 
 app.on('window-all-closed', () => {
-  app.quit()
+  // standard app behavior: stay resident on macOS until Cmd+Q
+  if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('will-quit', () => {
-  for (const child of liveChildren) {
-    killChildTree(child)
+  for (const entry of liveChildren) {
+    killChildTree(entry.child)
   }
   liveChildren.clear()
   removeEndpoint(process.pid)

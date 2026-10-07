@@ -4,6 +4,7 @@
  * wire format and converts streaming events back.
  */
 import type { LlmProtocol } from '../../../shared/llm'
+import type { AuthSource, AuthType } from '../providers'
 
 export interface ToolCall {
   id: string
@@ -35,6 +36,14 @@ export interface ChatStreamOptions {
   onTextDelta?: (delta: string) => void
   /** Abort when no data arrives for this long (default 120s). */
   idleTimeoutMs?: number
+  /** Provider auth mode; 'import' triggers the official-endpoint safety check. */
+  authType?: AuthType
+  /** Where the imported credential came from (codex / opencode). */
+  authSource?: AuthSource
+  /** User explicitly trusts a custom gateway for imported OAuth credentials. */
+  allowCustomHost?: boolean
+  /** Optional response token cap; adapters apply it where the protocol supports it. */
+  maxTokens?: number
 }
 
 export interface ChatStreamResult {

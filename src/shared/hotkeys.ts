@@ -61,6 +61,8 @@ export const BUILTIN_SHORTCUTS = [
   'Ctrl+R',
   'Ctrl+D',
   'Ctrl+F',
+  'Ctrl+B',
+  'Ctrl+Shift+A',
   'Ctrl+Tab',
   'Ctrl+Shift+Tab',
   'F12'

@@ -1,10 +1,12 @@
-import type { BrowserDataSnapshot, ContentBounds, DownloadRecord, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
+import type { BrowserDataSnapshot, ChatSendResult, ContentBounds, DownloadRecord, LoadErrorInfo, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
 import type { LlmProtocol } from '../../shared/llm'
 
 interface CobrowseApi {
   ready(): Promise<{ tabs: TabInfo[]; activeTabId: number | null; mirror: MirrorEvent[] }>
   onTabs(cb: (tabs: TabInfo[], activeTabId: number | null) => void): () => void
   onBrowserShortcut(cb: (action: string) => void): () => void
+  onLoadError(cb: (info: LoadErrorInfo) => void): () => void
+  setPanelMode(mode: 'opencode' | 'agent' | 'external'): Promise<{ ok: boolean }>
   onMirror(cb: (ev: MirrorEvent) => void): () => void
   setContentBounds(b: ContentBounds): void
   setChromeOverlay(id: string, open: boolean): void
@@ -17,12 +19,14 @@ interface CobrowseApi {
   downloadsList(): Promise<DownloadRecord[]>
   downloadsCancel(id: string): Promise<{ ok: boolean }>
   downloadsClear(): Promise<{ ok: boolean }>
-  downloadsOpen(id: string): Promise<{ ok: boolean }>
-  downloadsReveal(id: string): Promise<{ ok: boolean }>
+  downloadsOpen(id: string): Promise<{ ok: boolean; error?: string }>
+  downloadsReveal(id: string): Promise<{ ok: boolean; error?: string }>
   onDownloads(cb: (rows: DownloadRecord[]) => void): () => void
-  sendChat(text: string): Promise<unknown>
+  sendChat(text: string): Promise<ChatSendResult>
+  annotationToggle(): Promise<{ ok: boolean; active: boolean }>
+  onAnnotationState(cb: (active: boolean) => void): () => void
   getTheme(): Promise<{ theme: 'system' | 'light' | 'dark' }>
-  setTheme(theme: 'system' | 'light' | 'dark'): Promise<{ ok: boolean; theme: string }>
+  setTheme(theme: 'system' | 'light' | 'dark'): Promise<{ ok: boolean; theme?: string; error?: string }>
   sessionCommand(cmd: { action: string; sessionID?: string | null; title?: string }): Promise<unknown>
   sessionState(): Promise<{
     activeSessionID: string | null
@@ -48,6 +52,8 @@ interface CobrowseApi {
       protocol: LlmProtocol
       authType: 'key' | 'import'
       authSource?: 'codex' | 'opencode'
+      allowCustomHost?: boolean
+      idleTimeoutMs?: number
     }>
     activeId: string | null
   }>
@@ -60,9 +66,12 @@ interface CobrowseApi {
     protocol?: string
     authType?: string
     authSource?: string
+    allowCustomHost?: boolean
+    idleTimeoutMs?: number
+    clearApiKey?: boolean
   }): Promise<{ ok: boolean; error?: string; id?: string }>
-  agentProviderRemove(id: string): Promise<{ ok: boolean }>
-  agentProviderActivate(id: string): Promise<{ ok: boolean }>
+  agentProviderRemove(id: string): Promise<{ ok: boolean; error?: string }>
+  agentProviderActivate(id: string): Promise<{ ok: boolean; error?: string }>
   agentImportOpencode(): Promise<{ ok: boolean; error?: string; added?: number }>
   agentImportStatus(source: string): Promise<{
     found: boolean
@@ -72,7 +81,16 @@ interface CobrowseApi {
     error?: string
   }>
   onAgentConfirm(
-    cb: (req: { id: number; command: string; cwd: string; skill: string; tool?: string }) => void
+    cb: (req: {
+      id: number
+      command: string
+      cwd: string
+      skill: string
+      tool?: string
+      kind?: 'write' | 'command' | 'script'
+      preview?: string
+      expiresAt?: number
+    }) => void
   ): () => void
   agentConfirmRespond(id: number, ok: boolean): Promise<{ ok: boolean }>
   skillsList(): Promise<
@@ -136,8 +154,9 @@ interface CobrowseApi {
   }>
   agentsSessionClose(): Promise<{ ok: boolean }>
   agentsSetMirrorSource(source: 'opencode' | 'external'): Promise<{ ok: boolean }>
-  agentsStop(): Promise<{ ok: boolean; killed: number }>
+  agentsStop(toolId?: string): Promise<{ ok: boolean; killed: number }>
   onAgentsChildren(cb: (count: number) => void): () => void
+  onAgentsWatchError(cb: (s: { toolId: string; error: string }) => void): () => void
   emergencyKeysGet(): Promise<{ keys: string[] }>
   emergencyKeysSet(keys: string[]): Promise<{ ok: boolean; keys?: string[]; error?: string }>
   emergencyTakeover(): void
@@ -146,7 +165,7 @@ interface CobrowseApi {
   onEmergencyStop(cb: (s: { via?: string; aborted?: boolean }) => void): () => void
   onAgentConfirmCancel(cb: (s: { id?: number }) => void): () => void
   searchEngineGet(): Promise<{ engine: string; engines: Array<{ key: string; name: string }> }>
-  searchEngineSet(engine: string): Promise<{ ok: boolean }>
+  searchEngineSet(engine: string): Promise<{ ok: boolean; error?: string }>
   agentsStartSession(
     toolId: string,
     message: string

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { BrowserDataSnapshot, ContentBounds, DownloadRecord } from '../shared/protocol'
+import type { BrowserDataSnapshot, ChatSendResult, ContentBounds, DownloadRecord, LoadErrorInfo } from '../shared/protocol'
 
 type TabAction = { type: string; url?: string; tabId?: number }
 
@@ -37,8 +37,10 @@ const api = {
   downloadsList: () => ipcRenderer.invoke('downloads:list') as Promise<DownloadRecord[]>,
   downloadsCancel: (id: string) => ipcRenderer.invoke('downloads:cancel', id) as Promise<{ ok: boolean }>,
   downloadsClear: () => ipcRenderer.invoke('downloads:clear') as Promise<{ ok: boolean }>,
-  downloadsOpen: (id: string) => ipcRenderer.invoke('downloads:open', id) as Promise<{ ok: boolean }>,
-  downloadsReveal: (id: string) => ipcRenderer.invoke('downloads:reveal', id) as Promise<{ ok: boolean }>,
+  downloadsOpen: (id: string) =>
+    ipcRenderer.invoke('downloads:open', id) as Promise<{ ok: boolean; error?: string }>,
+  downloadsReveal: (id: string) =>
+    ipcRenderer.invoke('downloads:reveal', id) as Promise<{ ok: boolean; error?: string }>,
   onDownloads: (cb: (rows: DownloadRecord[]) => void): (() => void) => {
     const listener = (_e: unknown, rows: DownloadRecord[]): void => cb(rows)
     ipcRenderer.on('downloads:update', listener)
@@ -49,10 +51,24 @@ const api = {
     ipcRenderer.on('browser:shortcut', listener)
     return () => ipcRenderer.removeListener('browser:shortcut', listener)
   },
-  sendChat: (text: string) => ipcRenderer.invoke('chat:send', text) as Promise<unknown>,
+  onLoadError: (cb: (info: LoadErrorInfo) => void): (() => void) => {
+    const listener = (_e: unknown, info: LoadErrorInfo): void => cb(info)
+    ipcRenderer.on('browser:load-error', listener)
+    return () => ipcRenderer.removeListener('browser:load-error', listener)
+  },
+  setPanelMode: (mode: 'opencode' | 'agent' | 'external') =>
+    ipcRenderer.invoke('ui:panel-mode', mode) as Promise<{ ok: boolean }>,
+  sendChat: (text: string) => ipcRenderer.invoke('chat:send', text) as Promise<ChatSendResult>,
+  annotationToggle: () =>
+    ipcRenderer.invoke('annotation:toggle') as Promise<{ ok: boolean; active: boolean }>,
+  onAnnotationState: (cb: (active: boolean) => void): (() => void) => {
+    const listener = (_e: unknown, active: boolean): void => cb(!!active)
+    ipcRenderer.on('annotation:state', listener)
+    return () => ipcRenderer.removeListener('annotation:state', listener)
+  },
   getTheme: () => ipcRenderer.invoke('theme:get') as Promise<{ theme: 'system' | 'light' | 'dark' }>,
   setTheme: (theme: 'system' | 'light' | 'dark') =>
-    ipcRenderer.invoke('theme:set', theme) as Promise<{ ok: boolean; theme: string }>,
+    ipcRenderer.invoke('theme:set', theme) as Promise<{ ok: boolean; theme?: string; error?: string }>,
   sessionCommand: (cmd: { action: string; sessionID?: string | null; title?: string }) =>
     ipcRenderer.invoke('session:command', cmd) as Promise<unknown>,
   sessionState: () => ipcRenderer.invoke('session:state') as Promise<unknown>,
@@ -81,6 +97,9 @@ const api = {
     protocol?: string
     authType?: string
     authSource?: string
+    allowCustomHost?: boolean
+    idleTimeoutMs?: number
+    clearApiKey?: boolean
   }) =>
     ipcRenderer.invoke('agent:provider-save', cfg) as Promise<{
       ok: boolean
@@ -88,9 +107,9 @@ const api = {
       id?: string
     }>,
   agentProviderRemove: (id: string) =>
-    ipcRenderer.invoke('agent:provider-remove', id) as Promise<{ ok: boolean }>,
+    ipcRenderer.invoke('agent:provider-remove', id) as Promise<{ ok: boolean; error?: string }>,
   agentProviderActivate: (id: string) =>
-    ipcRenderer.invoke('agent:provider-activate', id) as Promise<{ ok: boolean }>,
+    ipcRenderer.invoke('agent:provider-activate', id) as Promise<{ ok: boolean; error?: string }>,
   agentImportOpencode: () => ipcRenderer.invoke('agent:import-opencode') as Promise<unknown>,
   agentImportStatus: (source: string) =>
     ipcRenderer.invoke('agent:import-status', source) as Promise<{
@@ -101,7 +120,16 @@ const api = {
       error?: string
     }>,
   onAgentConfirm: (
-    cb: (req: { id: number; command: string; cwd: string; skill: string; tool?: string }) => void
+    cb: (req: {
+      id: number
+      command: string
+      cwd: string
+      skill: string
+      tool?: string
+      kind?: 'write' | 'command' | 'script'
+      preview?: string
+      expiresAt?: number
+    }) => void
   ): (() => void) => {
     const listener = (
       _e: unknown,
@@ -172,8 +200,8 @@ const api = {
   agentsSessionClose: () => ipcRenderer.invoke('agents:session-close') as Promise<{ ok: boolean }>,
   agentsSetMirrorSource: (source: 'opencode' | 'external') =>
     ipcRenderer.invoke('agents:mirror-source', source) as Promise<{ ok: boolean }>,
-  agentsStop: () =>
-    ipcRenderer.invoke('agents:stop') as Promise<{ ok: boolean; killed: number }>,
+  agentsStop: (toolId?: string) =>
+    ipcRenderer.invoke('agents:stop', toolId) as Promise<{ ok: boolean; killed: number }>,
   emergencyKeysGet: () =>
     ipcRenderer.invoke('emergency:keys-get') as Promise<{ keys: string[] }>,
   emergencyKeysSet: (keys: string[]) =>
@@ -208,13 +236,18 @@ const api = {
     ipcRenderer.on('agents:children', listener)
     return () => ipcRenderer.removeListener('agents:children', listener)
   },
+  onAgentsWatchError: (cb: (s: { toolId: string; error: string }) => void): (() => void) => {
+    const listener = (_e: unknown, s: { toolId: string; error: string }): void => cb(s)
+    ipcRenderer.on('agents:watch-error', listener)
+    return () => ipcRenderer.removeListener('agents:watch-error', listener)
+  },
   searchEngineGet: () =>
     ipcRenderer.invoke('search:engine-get') as Promise<{
       engine: string
       engines: Array<{ key: string; name: string }>
     }>,
   searchEngineSet: (engine: string) =>
-    ipcRenderer.invoke('search:engine-set', engine) as Promise<{ ok: boolean }>,
+    ipcRenderer.invoke('search:engine-set', engine) as Promise<{ ok: boolean; error?: string }>,
   agentsStartSession: (toolId: string, message: string) =>
     ipcRenderer.invoke('agents:start-session', toolId, message) as Promise<{
       ok: boolean

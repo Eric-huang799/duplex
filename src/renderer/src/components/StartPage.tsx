@@ -25,8 +25,15 @@ export function StartPage({ onNavigate, bookmarks = [], history = [] }: Props): 
   useEffect(() => {
     if (!engineMenu) return
     const close = (): void => setEngineMenu(false)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setEngineMenu(false)
+    }
     window.addEventListener('click', close)
-    return () => window.removeEventListener('click', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [engineMenu])
 
   const applyEngine = (k: string): void => {
@@ -132,10 +139,16 @@ export function StartPage({ onNavigate, bookmarks = [], history = [] }: Props): 
             )}
           </div>
         </div>
-        <div className="start-shortcuts">
-          {bookmarks.slice(0, 6).map((item) => <button key={item.url} onClick={() => onNavigate(item.url)} title={item.url}><span className="shortcut-icon">{item.favicon ? <img src={item.favicon} /> : '✦'}</span><span>{item.title || item.url}</span></button>)}
-          {!bookmarks.length && history.slice().reverse().slice(0, 4).map((item) => <button key={`${item.url}-${item.visitedAt}`} onClick={() => onNavigate(item.url)} title={item.url}><span className="shortcut-icon">{item.favicon ? <img src={item.favicon} /> : '↗'}</span><span>{item.title || item.url}</span></button>)}
-        </div>
+        {bookmarks.length > 0 && (
+          <div className="start-shortcuts">
+            {bookmarks.slice(0, 6).map((item) => <button key={item.url} onClick={() => onNavigate(item.url)} title={item.url}><span className="shortcut-icon">{item.favicon ? <img src={item.favicon} onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} /> : '✦'}</span><span>{item.title || item.url}</span></button>)}
+          </div>
+        )}
+        {history.length > 0 && (
+          <div className="start-shortcuts">
+            {history.slice().reverse().slice(0, 4).map((item) => <button key={`${item.url}-${item.visitedAt}`} onClick={() => onNavigate(item.url)} title={item.url}><span className="shortcut-icon">{item.favicon ? <img src={item.favicon} onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} /> : '↗'}</span><span>{item.title || item.url}</span></button>)}
+          </div>
+        )}
       </div>
     </div>
   )

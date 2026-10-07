@@ -103,15 +103,21 @@ export async function pressKey(tab: Tab, combo: string): Promise<void> {
     const bit = MODIFIER_BITS[p.toLowerCase()]
     if (bit) modifiers |= bit
   }
-  const info = KEY_CODES[main] ?? {
-    code: main.length === 1 ? `Key${main.toUpperCase()}` : main,
-    vk: main.length === 1 ? main.toUpperCase().charCodeAt(0) : 0
+  const info = KEY_CODES[main]
+  if (!info && main.length !== 1) {
+    throw new Error(
+      `不支持的按键：${main}。支持 Enter、Escape、Tab、Backspace、Delete、Space、PageDown、PageUp、End、Home、ArrowLeft、ArrowUp、ArrowRight、ArrowDown，或任意单字符键（可带 Ctrl/Alt/Shift 修饰，如 Ctrl+A）`
+    )
+  }
+  const resolved = info ?? {
+    code: `Key${main.toUpperCase()}`,
+    vk: main.toUpperCase().charCodeAt(0)
   }
   const base: Record<string, unknown> = {
     key: main,
-    code: info.code,
-    windowsVirtualKeyCode: info.vk,
-    nativeVirtualKeyCode: info.vk,
+    code: resolved.code,
+    windowsVirtualKeyCode: resolved.vk,
+    nativeVirtualKeyCode: resolved.vk,
     modifiers
   }
   if (modifiers === 0) {
@@ -278,7 +284,7 @@ export async function captureScreenshot(tab: Tab, fullPage: boolean): Promise<st
   return res.data as string
 }
 
-export type LoadWaitResult = 'loaded' | 'timeout' | 'interrupted'/** Wait for a page load; ends early when the user takes over (Esc). */
+export type LoadWaitResult = 'loaded' | 'timeout' | 'interrupted'/** Wait for a page load; ends early when the user triggers the emergency stop. */
 export async function waitForLoad(tab: Tab, timeoutMs = 15000): Promise<LoadWaitResult> {
   const wc = tab.view.webContents
   const signal = operationSignal()

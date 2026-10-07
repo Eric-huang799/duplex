@@ -2,7 +2,7 @@
  * Unit tests for external agent transcript parsers (Codex / Claude Code /
  * generic JSONL) using fixtures shaped like the real files.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -10,6 +10,7 @@ import {
   claudeLineMessages,
   codexLineMessages,
   customLineMessages,
+  decodeUtf8Complete,
   listClaudeSessions,
   listCodexSessions,
   readClaudeSession,
@@ -223,5 +224,61 @@ describe('list/read against temp fixtures', () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
+  })
+
+  it('parses only the tail of files larger than 20MB', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-tr-big-'))
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const f = path.join(dir, 'rollout-big.jsonl')
+      const filler = JSON.stringify({
+        timestamp: '2026-01-01T00:00:00Z',
+        type: 'event_msg',
+        payload: { type: 'token_count', padding: 'x'.repeat(1024) }
+      })
+      const fd = fs.openSync(f, 'w')
+      try {
+        const chunk = filler + '\n'
+        for (let written = 0; written < 21 * 1024 * 1024; written += chunk.length) {
+          fs.writeSync(fd, chunk)
+        }
+        fs.writeSync(
+          fd,
+          JSON.stringify({
+            timestamp: '2026-01-01T00:10:00Z',
+            type: 'response_item',
+            payload: {
+              type: 'message',
+              role: 'user',
+              content: [{ type: 'input_text', text: 'tail question' }]
+            }
+          }) + '\n'
+        )
+      } finally {
+        fs.closeSync(fd)
+      }
+      const msgs = readCodexSession(f)
+      expect(msgs.map((m) => m.text)).toContain('tail question')
+      expect(errSpy).toHaveBeenCalled()
+    } finally {
+      errSpy.mockRestore()
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('decodeUtf8Complete', () => {
+  it('keeps complete characters at the buffer end', () => {
+    expect(decodeUtf8Complete(Buffer.from('hello你', 'utf8'))).toBe('hello你')
+    const full = Buffer.from('a你', 'utf8')
+    expect(decodeUtf8Complete(full)).toBe('a你')
+  })
+
+  it('drops a multi-byte character split by the truncation point', () => {
+    const buf = Buffer.from('abc你', 'utf8') // 你 = 3 bytes
+    expect(decodeUtf8Complete(buf.subarray(0, buf.length - 1))).toBe('abc')
+    expect(decodeUtf8Complete(buf.subarray(0, buf.length - 2))).toBe('abc')
+    const emoji = Buffer.from('x😀', 'utf8') // 😀 = 4 bytes
+    expect(decodeUtf8Complete(emoji.subarray(0, emoji.length - 3))).toBe('x')
   })
 })

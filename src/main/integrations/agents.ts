@@ -29,6 +29,8 @@ export interface AgentTool {
   sessionsDir?: string
   /** For custom tools: headless start command (stdin = prompt, or {prompt} placeholder). */
   command?: string
+  /** Working directory new headless runs are spawned in (defaults to the home directory). */
+  cwd?: string
   note?: string
 }
 
@@ -46,6 +48,7 @@ interface CustomAgent {
   name: string
   sessionsDir: string
   command?: string
+  cwd?: string
 }
 
 export function commandExists(cmd: string): boolean {
@@ -90,17 +93,71 @@ function viaShell(cmd: string, args: string[]): { file: string; args: string[] }
   return WIN ? { file: 'cmd.exe', args: ['/c', cmd, ...args] } : { file: cmd, args }
 }
 
+/** Resolve a spawn working directory: the tool's cwd when it exists, else the home directory. */
+function resolveCwd(cwd?: string): string {
+  if (cwd) {
+    try {
+      if (fs.statSync(cwd).isDirectory()) return cwd
+    } catch {
+      /* fall through to the home directory */
+    }
+  }
+  return os.homedir()
+}
+
+/** True when a cmd metacharacter sits inside the text's own double-quoted region. */
+function hasMetacharInsideQuotes(text: string): boolean {
+  let inQuote = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '"') inQuote = !inQuote
+    else if (inQuote && /[&|<>^()%!]/.test(ch)) return true
+  }
+  return false
+}
+
+/**
+ * Escape user text that gets inserted into a Windows command line which goes
+ * through `cmd.exe /c` (Node's default spawn quoting cannot protect it alone).
+ *
+ * - Text with whitespace or quotes is wrapped by Node in `"..."`; cmd.exe then
+ *   treats & | < > ( ) ^ literally, so no caret is added (it would surface in
+ *   the message). Quotes are doubled when cmd's quote toggling would otherwise
+ *   let a metacharacter escape (unbalanced quotes, or a metacharacter located
+ *   inside the text's own quoted region) — that could start a second command.
+ * - Bare text (no whitespace/quote) is exposed to cmd.exe metacharacters and
+ *   gets each of `& | < > ^ ( ) % !` caret-escaped.
+ * - Line breaks cannot travel through a cmd.exe argument; they are flattened
+ *   to spaces.
+ *
+ * Known limitation: `%NAME%` still expands when the text ends up inside
+ * double quotes — cmd.exe offers no quote-safe escape for that on a command
+ * line (outside a batch file).
+ */
+export function escapeWindowsCmdArg(text: string): string {
+  if (!WIN) return text
+  const flat = text.replace(/[\r\n]+/g, ' ')
+  if (/\s|"/.test(flat)) {
+    const quoteCount = (flat.match(/"/g) ?? []).length
+    if (quoteCount % 2 === 1 || hasMetacharInsideQuotes(flat)) {
+      return flat.replace(/"/g, '""')
+    }
+    return flat
+  }
+  return flat.replace(/([&|<>^()%!])/g, '^$1')
+}
+
 /**
  * Build the headless start plan for a tool. Built-ins know their own CLI
  * conventions; custom tools use the user-provided command template
  * (stdin by default, `{prompt}` placeholder for argument passing).
  */
 export function buildStartPlan(
-  tool: Pick<AgentTool, 'kind' | 'command'>,
+  tool: Pick<AgentTool, 'kind' | 'command' | 'cwd'>,
   message: string,
   model?: string
 ): StartPlan | { error: string } {
-  const cwd = os.homedir()
+  const cwd = resolveCwd(tool.cwd)
   const m = (model ?? '').trim()
   switch (tool.kind) {
     case 'codex':
@@ -126,8 +183,10 @@ export function buildStartPlan(
       const parts = splitCommandLine(line)
       if (parts.length === 0) return { error: '启动命令无效' }
       if (parts.some((p) => p.includes('{prompt}'))) {
-        // function form avoids `$&`-style replacement pattern expansion
-        const filled = parts.map((p) => p.replace(/\{prompt\}/g, () => message))
+        // function form avoids `$&`-style replacement pattern expansion;
+        // the message is escaped for the cmd.exe hop on Windows
+        const escaped = escapeWindowsCmdArg(message)
+        const filled = parts.map((p) => p.replace(/\{prompt\}/g, () => escaped))
         const [cmd, ...rest] = filled
         return { ...viaShell(cmd, rest), useStdin: false, cwd }
       }
@@ -291,7 +350,11 @@ export function listCandidateModels(
   return []
 }
 
-/** Pure TOML edit: replace (or insert) the top-level `model = "..."` line, leaving [tables] alone. */
+/**
+ * Pure TOML edit: replace (or insert) the top-level `model = "..."` line,
+ * leaving [tables] alone. Duplicate top-level model keys are collapsed into
+ * a single line so the result never contains duplicate keys.
+ */
 export function setTomlModel(content: string, model: string): string {
   const eol = content.includes('\r\n') ? '\r\n' : '\n'
   const lines = content.split(/\r?\n/)
@@ -302,9 +365,13 @@ export function setTomlModel(content: string, model: string): string {
     const t = lines[i].trim()
     if (t.startsWith('[')) inTable = true
     if (!inTable && /^model\s*=/.test(t)) {
-      lines[i] = line
-      replaced = true
-      break
+      if (!replaced) {
+        lines[i] = line
+        replaced = true
+      } else {
+        lines.splice(i, 1)
+        i--
+      }
     }
   }
   if (!replaced) {
@@ -315,6 +382,25 @@ export function setTomlModel(content: string, model: string): string {
   return lines.join(eol)
 }
 
+/** Read the top-level `model` value from TOML text (null when absent/unreadable). */
+function readTopLevelTomlModel(content: string): string | null {
+  let inTable = false
+  for (const raw of content.split(/\r?\n/)) {
+    const t = raw.trim()
+    if (t.startsWith('[')) inTable = true
+    if (!inTable && /^model\s*=/.test(t)) {
+      const rhs = t.slice(t.indexOf('=') + 1).trim()
+      try {
+        const value = JSON.parse(rhs) as unknown
+        return typeof value === 'string' ? value : null
+      } catch {
+        return null
+      }
+    }
+  }
+  return null
+}
+
 /** Pure settings.json edit: set the top-level "model" field, preserving every other key. */
 export function setJsonModel(content: string, model: string): string {
   const obj = JSON.parse(content) as Record<string, unknown>
@@ -322,7 +408,11 @@ export function setJsonModel(content: string, model: string): string {
   return JSON.stringify(obj, null, 2) + '\n'
 }
 
-/** Write the panel-selected model into the tool's global CLI config (timestamped backup first). */
+/**
+ * Write the panel-selected model into the tool's global CLI config.
+ * Backs up first (never overwriting an existing backup), verifies the write,
+ * and rolls back from that backup when verification fails.
+ */
 export function syncModelToGlobal(
   tool: Pick<AgentTool, 'kind'>,
   model: string
@@ -331,29 +421,74 @@ export function syncModelToGlobal(
   if (!m) return { ok: false, error: '请先在面板中选择一个模型，再同步到全局' }
   const home = os.homedir()
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+
+  /** First free backup path for this second: existing backups are preserved. */
+  const freeBackupPath = (file: string): string => {
+    const base = `${file}.bak-${stamp}`
+    let candidate = base
+    for (let n = 1; fs.existsSync(candidate); n++) candidate = `${base}-${n}`
+    return candidate
+  }
+
   const apply = (
     file: string,
-    edit: (content: string) => string
+    edit: (content: string) => string,
+    verify: (content: string) => boolean
   ): { ok: boolean; path?: string; backupPath?: string; error?: string } => {
     if (!fs.existsSync(file)) return { ok: false, error: '未找到配置文件：' + file }
+    let backupPath: string | undefined
     try {
       const content = fs.readFileSync(file, 'utf8')
       const next = edit(content)
-      const backupPath = `${file}.bak-${stamp}`
+      backupPath = freeBackupPath(file)
       fs.copyFileSync(file, backupPath)
       fs.writeFileSync(file, next, 'utf8')
+      if (!verify(fs.readFileSync(file, 'utf8'))) {
+        fs.copyFileSync(backupPath, file)
+        return { ok: false, path: file, backupPath, error: '写入后校验失败，已从备份回滚：' + file }
+      }
       return { ok: true, path: file, backupPath }
     } catch (e) {
-      return { ok: false, error: (e as Error)?.message ?? '写入失败' }
+      return { ok: false, path: file, backupPath, error: (e as Error)?.message ?? '写入失败' }
     }
   }
   if (tool.kind === 'codex') {
-    return apply(path.join(home, '.codex', 'config.toml'), (c) => setTomlModel(c, m))
+    return apply(
+      path.join(home, '.codex', 'config.toml'),
+      (c) => setTomlModel(c, m),
+      (c) => readTopLevelTomlModel(c) === m
+    )
   }
   if (tool.kind === 'claude') {
-    return apply(path.join(home, '.claude', 'settings.json'), (c) => setJsonModel(c, m))
+    return apply(
+      path.join(home, '.claude', 'settings.json'),
+      (c) => setJsonModel(c, m),
+      (c) => {
+        try {
+          return (JSON.parse(c) as { model?: unknown }).model === m
+        } catch {
+          return false
+        }
+      }
+    )
   }
   return { ok: false, error: '该工具不支持写回全局配置' }
+}
+
+/** Note shown when only leftover session data exists but the CLI itself is missing. */
+const HISTORY_ONLY_NOTE = '未检测到命令，仅可浏览历史会话'
+
+/**
+ * Availability of a built-in CLI: the command decides whether it can actually
+ * run. Existing session/config directories alone only allow browsing history.
+ */
+function builtinAvailability(
+  command: string,
+  dirs: string[]
+): { available: boolean; note?: string } {
+  if (commandExists(command)) return { available: true }
+  if (dirs.some((d) => fs.existsSync(d))) return { available: false, note: HISTORY_ONLY_NOTE }
+  return { available: false }
 }
 
 export function listAgentTools(): AgentTool[] {
@@ -362,62 +497,76 @@ export function listAgentTools(): AgentTool[] {
   const claudeDir = path.join(home, '.claude', 'projects')
   const geminiDir = path.join(home, '.gemini', 'tmp')
   const qwenDir = path.join(home, '.qwen', 'tmp')
+  const opencodeDirs = [path.join(home, '.config', 'opencode')]
+  if (WIN && process.env.APPDATA) opencodeDirs.push(path.join(process.env.APPDATA, 'opencode'))
+  const opencode = builtinAvailability('opencode', opencodeDirs)
+  const codex = builtinAvailability('codex', [codexDir])
+  const claude = builtinAvailability('claude', [claudeDir])
+  const gemini = builtinAvailability('gemini', [geminiDir])
+  const qwen = builtinAvailability('qwen', [qwenDir])
   const tools: AgentTool[] = [
     {
       id: 'opencode',
       name: 'opencode',
       kind: 'opencode',
       builtin: true,
-      available: commandExists('opencode') || fs.existsSync(path.join(home, '.config', 'opencode')),
-      note: '双向镜像（对话 + 注入）'
+      available: opencode.available,
+      note: opencode.note ?? '双向镜像（对话 + 注入）'
     },
     {
       id: 'codex',
       name: 'Codex',
       kind: 'codex',
       builtin: true,
-      available: commandExists('codex') || fs.existsSync(codexDir),
+      available: codex.available,
       sessionsDir: fs.existsSync(codexDir) ? codexDir : undefined,
-      note: '镜像 + 可从面板续聊'
+      note: codex.note ?? '镜像 + 可从面板续聊'
     },
     {
       id: 'claude',
       name: 'Claude Code',
       kind: 'claude',
       builtin: true,
-      available: commandExists('claude') || fs.existsSync(claudeDir),
+      available: claude.available,
       sessionsDir: fs.existsSync(claudeDir) ? claudeDir : undefined,
-      note: '镜像 + 可从面板续聊'
+      note: claude.note ?? '镜像 + 可从面板续聊'
     },
     {
       id: 'gemini',
       name: 'Gemini CLI',
       kind: 'gemini',
       builtin: true,
-      available: commandExists('gemini') || fs.existsSync(geminiDir),
+      available: gemini.available,
       sessionsDir: fs.existsSync(geminiDir) ? geminiDir : undefined,
-      note: '镜像 + 可从面板发起新会话'
+      note: gemini.note ?? '镜像 + 可从面板发起新会话'
     },
     {
       id: 'qwen',
       name: 'Qwen Code',
       kind: 'qwen',
       builtin: true,
-      available: commandExists('qwen') || fs.existsSync(qwenDir),
+      available: qwen.available,
       sessionsDir: fs.existsSync(qwenDir) ? qwenDir : undefined,
-      note: '镜像 + 可从面板发起新会话'
+      note: qwen.note ?? '镜像 + 可从面板发起新会话'
     }
   ]
   for (const c of readCustom()) {
+    const dirExists = fs.existsSync(c.sessionsDir)
+    const cmdName = c.command ? (splitCommandLine(c.command)[0] ?? '') : ''
+    const cmdFound = c.command ? !!cmdName && commandExists(cmdName) : true
+    const available = dirExists && cmdFound
+    let note = c.command ? '自定义（镜像 + 可发起）' : '自定义（只读映射）'
+    if (dirExists && c.command && !cmdFound) note = HISTORY_ONLY_NOTE
     tools.push({
       id: c.id,
       name: c.name,
       kind: 'custom',
       builtin: false,
-      available: fs.existsSync(c.sessionsDir),
+      available,
       sessionsDir: c.sessionsDir,
       command: c.command,
-      note: c.command ? '自定义（镜像 + 可发起）' : '自定义（只读映射）'
+      cwd: c.cwd,
+      note
     })
   }
   return tools
@@ -426,11 +575,13 @@ export function listAgentTools(): AgentTool[] {
 export function addCustomAgent(
   name: string,
   sessionsDir: string,
-  command?: string
+  command?: string,
+  cwd?: string
 ): { ok: boolean; id?: string; error?: string } {
   const n = name.trim()
   const d = sessionsDir.trim()
   const cmd = (command ?? '').trim()
+  const workdir = (cwd ?? '').trim()
   if (!n) return { ok: false, error: '名称不能为空' }
   if (!d) return { ok: false, error: '会话记录目录不能为空' }
   try {
@@ -438,9 +589,24 @@ export function addCustomAgent(
   } catch {
     return { ok: false, error: '目录不存在：' + d }
   }
+  if (workdir) {
+    try {
+      if (!fs.statSync(workdir).isDirectory()) {
+        return { ok: false, error: '工作目录不是文件夹：' + workdir }
+      }
+    } catch {
+      return { ok: false, error: '工作目录不存在：' + workdir }
+    }
+  }
   const list = readCustom()
   const id = `custom-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
-  list.push({ id, name: n, sessionsDir: d, ...(cmd ? { command: cmd } : {}) })
+  list.push({
+    id,
+    name: n,
+    sessionsDir: d,
+    ...(cmd ? { command: cmd } : {}),
+    ...(workdir ? { cwd: workdir } : {})
+  })
   try {
     writeCustom(list)
     return { ok: true, id }

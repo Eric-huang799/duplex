@@ -5,7 +5,17 @@
  */
 import { sseRequest } from './sse'
 import { safeToolArgs } from './parse'
+import { assertTrustedImportedEndpoint } from '../auth-import'
 import type { ChatMessage, ChatStreamOptions, ChatStreamResult, ToolCall } from './types'
+
+const DEFAULT_MAX_TOKENS = 8192
+const MAX_TOKENS_SUFFIX = '…（输出已达 max_tokens 上限，可能被截断）'
+
+function resolveMaxTokens(opts: ChatStreamOptions): number {
+  const v = opts.maxTokens
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return Math.floor(v)
+  return DEFAULT_MAX_TOKENS
+}
 
 function messagesUrl(baseUrl: string): string {
   const base = (baseUrl || '').trim().replace(/\/+$/, '')
@@ -67,9 +77,24 @@ export function toAnthropicMessages(messages: ChatMessage[]): {
 }
 
 export async function anthropicChatStream(opts: ChatStreamOptions): Promise<ChatStreamResult> {
+  assertTrustedImportedEndpoint({
+    authType: opts.authType,
+    authSource: opts.authSource,
+    baseUrl: opts.baseUrl,
+    allowCustomHost: opts.allowCustomHost
+  })
   const { system, messages } = toAnthropicMessages(opts.messages)
   let text = ''
+  let stopReason = ''
+  let usageLogged = false
   const toolBlocks = new Map<number, { id: string; name: string; json: string }>()
+
+  const logUsage = (usage: unknown): void => {
+    if (usage && !usageLogged) {
+      usageLogged = true
+      console.error(`[llm] usage: ${JSON.stringify(usage)}`)
+    }
+  }
 
   await sseRequest(
     messagesUrl(opts.baseUrl),
@@ -82,7 +107,7 @@ export async function anthropicChatStream(opts: ChatStreamOptions): Promise<Chat
       },
       body: JSON.stringify({
         model: opts.model,
-        max_tokens: 8192,
+        max_tokens: resolveMaxTokens(opts),
         stream: true,
         ...(system ? { system } : {}),
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
@@ -100,8 +125,21 @@ export async function anthropicChatStream(opts: ChatStreamOptions): Promise<Chat
     {
       signal: opts.signal,
       idleTimeoutMs: opts.idleTimeoutMs,
+      isCompletionEvent: (ev) => ev.type === 'message_stop',
       onJson: (ev) => {
         const type = ev.type as string | undefined
+        if (type === 'message_start') {
+          logUsage((ev.message as { usage?: unknown } | undefined)?.usage)
+          return
+        }
+        if (type === 'message_delta') {
+          const delta = ev.delta as { stop_reason?: unknown } | undefined
+          if (typeof delta?.stop_reason === 'string' && delta.stop_reason) {
+            stopReason = delta.stop_reason
+          }
+          logUsage(ev.usage)
+          return
+        }
         if (type === 'content_block_start') {
           const cb = ev.content_block as { type?: string; id?: string; name?: string } | undefined
           if (cb?.type === 'tool_use') {
@@ -132,6 +170,10 @@ export async function anthropicChatStream(opts: ChatStreamOptions): Promise<Chat
       }
     }
   )
+
+  if (stopReason === 'max_tokens') {
+    text += MAX_TOKENS_SUFFIX
+  }
 
   const toolCalls: ToolCall[] = [...toolBlocks.entries()]
     .sort((a, b) => a[0] - b[0])

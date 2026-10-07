@@ -40,7 +40,12 @@ export class SessionBus {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: Date.now()
     })
-    if (this.queue.length > 20) this.queue.shift()
+    if (this.queue.length > 20) {
+      const dropped = this.queue.shift()
+      console.error(
+        `[session-bus] command queue overflow: dropped oldest command ${dropped?.id ?? ''} (${dropped?.action ?? ''})`
+      )
+    }
     for (const wake of [...this.waiters]) wake()
   }
 

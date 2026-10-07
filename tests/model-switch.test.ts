@@ -2,12 +2,16 @@
  * Unit tests for the external-tool model switcher: CLI flag injection and the
  * pure config editors used by "sync to global".
  */
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import {
   buildResumePlan,
   buildStartPlan,
   setJsonModel,
-  setTomlModel
+  setTomlModel,
+  syncModelToGlobal
 } from '../src/main/integrations/agents'
 
 describe('model injection into spawn plans', () => {
@@ -89,6 +93,92 @@ describe('setTomlModel', () => {
     const out = setTomlModel('model = "old"\r\n[a]\r\n', 'new-model')
     expect(out).toContain('model = "new-model"')
     expect(out).toContain('\r\n')
+  })
+
+  it('collapses duplicate top-level model keys into a single line', () => {
+    const out = setTomlModel('model = "one"\nmodel = "two"\n[a]\nmodel = "inner"\n', 'new-model')
+    expect(out).toBe('model = "new-model"\n[a]\nmodel = "inner"\n')
+  })
+})
+
+describe('syncModelToGlobal', () => {
+  let home = ''
+  let restore: (() => void) | null = null
+
+  afterEach(() => {
+    restore?.()
+    restore = null
+    if (home) fs.rmSync(home, { recursive: true, force: true })
+    home = ''
+  })
+
+  function useTempHome(): string {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-sync-'))
+    const spy = vi.spyOn(os, 'homedir').mockReturnValue(home)
+    restore = () => spy.mockRestore()
+    return home
+  }
+
+  it('backs up, writes, and reports the backup path (codex)', () => {
+    const h = useTempHome()
+    const dir = path.join(h, '.codex')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'config.toml')
+    const original = 'model = "old"\n'
+    fs.writeFileSync(file, original, 'utf8')
+
+    const r = syncModelToGlobal({ kind: 'codex' }, 'gpt-6-luna')
+    expect(r.ok).toBe(true)
+    expect(r.path).toBe(file)
+    expect(r.backupPath).toBeTruthy()
+    expect(fs.readFileSync(r.backupPath!, 'utf8')).toBe(original)
+    expect(fs.readFileSync(file, 'utf8')).toContain('model = "gpt-6-luna"')
+  })
+
+  it('never overwrites an existing backup within the same second', () => {
+    const h = useTempHome()
+    const dir = path.join(h, '.codex')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'config.toml')
+    fs.writeFileSync(file, 'model = "old"\n', 'utf8')
+
+    const first = syncModelToGlobal({ kind: 'codex' }, 'model-a')
+    const second = syncModelToGlobal({ kind: 'codex' }, 'model-b')
+    expect(first.ok && second.ok).toBe(true)
+    expect(second.backupPath).not.toBe(first.backupPath)
+    expect(fs.readFileSync(first.backupPath!, 'utf8')).toBe('model = "old"\n')
+    expect(fs.readFileSync(second.backupPath!, 'utf8')).toContain('model = "model-a"')
+  })
+
+  it('rolls back from the backup when post-write verification fails', () => {
+    const h = useTempHome()
+    const dir = path.join(h, '.claude')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'settings.json')
+    const original = '{"env":{"A":"1"},"model":"opus"}'
+    fs.writeFileSync(file, original, 'utf8')
+
+    const realWrite = fs.writeFileSync.bind(fs)
+    const writeSpy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((
+      target: fs.PathOrFileDescriptor,
+      _data: string | NodeJS.ArrayBufferView,
+      options?: fs.WriteFileOptions
+    ) => {
+      // simulate a concurrent editor clobbering the file after our write
+      realWrite(target, '{"broken":true}', options)
+    }) as typeof fs.writeFileSync)
+
+    try {
+      const r = syncModelToGlobal({ kind: 'claude' }, 'deepseek-v4-pro')
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain('回滚')
+      expect(r.backupPath).toBeTruthy()
+      writeSpy.mockRestore()
+      expect(fs.readFileSync(file, 'utf8')).toBe(original)
+      expect(fs.readFileSync(r.backupPath!, 'utf8')).toBe(original)
+    } finally {
+      writeSpy.mockRestore()
+    }
   })
 })
 
