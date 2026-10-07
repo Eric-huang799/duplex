@@ -5,12 +5,25 @@ interface CobrowseApi {
   ready(): Promise<{ tabs: TabInfo[]; activeTabId: number | null; mirror: MirrorEvent[] }>
   onTabs(cb: (tabs: TabInfo[], activeTabId: number | null) => void): () => void
   onBrowserShortcut(cb: (action: string) => void): () => void
+  getPlatform(): string
+  onFindResult(cb: (r: { matches: number; activeMatch: number }) => void): () => void
+  showTabContextMenu(tabId: number, x: number, y: number): void
+  showEngineMenu(x: number, y: number): void
+  showToolsMenu(
+    x: number,
+    y: number,
+    state: { annotationActive: boolean; theme: string }
+  ): void
+  onSearchEngineChanged(cb: (engine: string) => void): () => void
+  onThemeChanged(cb: (theme: 'system' | 'light' | 'dark') => void): () => void
+  downloadConfirmGet(): Promise<{ enabled: boolean }>
+  downloadConfirmSet(enabled: boolean): Promise<{ ok: boolean; error?: string }>
   onLoadError(cb: (info: LoadErrorInfo) => void): () => void
   setPanelMode(mode: 'opencode' | 'agent' | 'external'): Promise<{ ok: boolean }>
   onMirror(cb: (ev: MirrorEvent) => void): () => void
   setContentBounds(b: ContentBounds): void
   setChromeOverlay(id: string, open: boolean): void
-  tabAction(a: { type: string; url?: string; tabId?: number }): Promise<unknown>
+  tabAction(a: { type: string; url?: string; tabId?: number; value?: number }): Promise<unknown>
   browserData(): Promise<BrowserDataSnapshot>
   onBrowserData(cb: (data: BrowserDataSnapshot) => void): () => void
   bookmarkToggle(record: { url: string; title: string; favicon?: string }): Promise<{ bookmarked: boolean }>
@@ -129,7 +142,8 @@ interface CobrowseApi {
   agentsAdd(
     name: string,
     dir: string,
-    command?: string
+    command?: string,
+    cwd?: string
   ): Promise<{ ok: boolean; id?: string; error?: string }>
   agentsRemove(id: string): Promise<{ ok: boolean; error?: string }>
   agentsSessions(toolId: string): Promise<
@@ -162,7 +176,9 @@ interface CobrowseApi {
   emergencyTakeover(): void
   resumeAi(): void
   onEmergencyState(cb: (s: { paused: boolean }) => void): () => void
-  onEmergencyStop(cb: (s: { via?: string; aborted?: boolean }) => void): () => void
+  onEmergencyStop(
+    cb: (s: { via?: string; aborted?: boolean; killed?: number; dropped?: number }) => void
+  ): () => void
   onAgentConfirmCancel(cb: (s: { id?: number }) => void): () => void
   searchEngineGet(): Promise<{ engine: string; engines: Array<{ key: string; name: string }> }>
   searchEngineSet(engine: string): Promise<{ ok: boolean; error?: string }>

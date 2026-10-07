@@ -47,17 +47,9 @@ export interface ImportedEndpointProvider {
 const EXPIRING_SOON_MS = 24 * 60 * 60 * 1000
 
 /** Official hosts an imported OAuth credential may be sent to. */
-const OFFICIAL_IMPORT_HOSTS: Record<ImportSource, string[]> = {
-  codex: ['api.openai.com', 'chatgpt.com', 'auth.openai.com'],
-  opencode: [
-    'openrouter.ai',
-    'api.anthropic.com',
-    'api.openai.com',
-    'generativelanguage.googleapis.com'
-  ]
-}
+import { isTrustedImportedHost } from '../../shared/trusted-hosts'
 
-const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+export { isTrustedImportedHost }
 
 const CODEX_EXPIRED = 'Codex 凭据已过期，请先运行一次 codex CLI 刷新'
 const OPENCODE_EXPIRED = 'opencode 凭据已过期，请先运行一次 opencode CLI 刷新'
@@ -77,30 +69,6 @@ function authFilePath(source: ImportSource): string {
     default:
       return ''
   }
-}
-
-function isOfficialHost(hostname: string, domains: string[]): boolean {
-  return domains.some((d) => hostname === d || hostname.endsWith(`.${d}`))
-}
-
-/**
- * True when the base URL is safe for an imported (likely OAuth) credential:
- * localhost is always fine, official provider domains are fine, everything
- * else needs an explicit opt-in (`allowCustomHost`) checked by the caller.
- */
-export function isTrustedImportedHost(baseUrl: string, source?: string): boolean {
-  let hostname = ''
-  try {
-    hostname = new URL((baseUrl ?? '').trim()).hostname.toLowerCase()
-  } catch {
-    return false
-  }
-  if (!hostname) return false
-  if (LOCAL_HOSTNAMES.has(hostname)) return true
-  if (source === 'codex' || source === 'opencode') {
-    return isOfficialHost(hostname, OFFICIAL_IMPORT_HOSTS[source])
-  }
-  return false
 }
 
 /**

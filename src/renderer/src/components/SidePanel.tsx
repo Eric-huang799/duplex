@@ -14,6 +14,29 @@ import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 
 export type PanelMode = 'opencode' | 'agent' | 'external'
 
+const DRAFT_KEYS: Record<PanelMode, string> = {
+  agent: 'duplex-draft-agent',
+  opencode: 'duplex-draft-opencode',
+  external: 'duplex-draft-external'
+}
+
+function loadDraft(mode: PanelMode): string {
+  try {
+    return localStorage.getItem(DRAFT_KEYS[mode]) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function saveDraft(mode: PanelMode, value: string): void {
+  try {
+    if (value) localStorage.setItem(DRAFT_KEYS[mode], value)
+    else localStorage.removeItem(DRAFT_KEYS[mode])
+  } catch {
+    /* storage may be unavailable */
+  }
+}
+
 interface Props {
   width: number
   events: MirrorEvent[]
@@ -114,7 +137,9 @@ export function SidePanel({
   onAgentSessionDeleted,
   initialShowProviders
 }: Props): React.JSX.Element {
-  const [draft, setDraft] = useState('')
+  const [draft, setDraft] = useState(() => loadDraft(mode))
+  const draftRef = useRef(draft)
+  const draftModeRef = useRef(mode)
   const [autoScroll, setAutoScroll] = useState(true)
   const [sessionMenu, setSessionMenu] = useState(false)
   const [showProviders, setShowProviders] = useState(initialShowProviders ?? false)
@@ -129,9 +154,39 @@ export function SidePanel({
   const [addName, setAddName] = useState('')
   const [addDir, setAddDir] = useState('')
   const [addCmd, setAddCmd] = useState('')
+  const [addCwd, setAddCwd] = useState('')
   const [addErr, setAddErr] = useState('')
   const [addBusy, setAddBusy] = useState(false)
+  const [dismissedAgentSessionErrTs, setDismissedAgentSessionErrTs] = useState<number | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const agentDelTimerRef = useRef<number | null>(null)
+
+  const updateDraft = (value: string): void => {
+    draftRef.current = value
+    setDraft(value)
+    saveDraft(mode, value)
+  }
+
+  const clearDraftIfUnchanged = (sent: string): void => {
+    if (draftRef.current.trim() !== sent) return
+    updateDraft('')
+  }
+
+  // Drafts are per-mode and persist across panel collapse; switching the mode
+  // saves the current draft and restores the target mode's own draft.
+  useEffect(() => {
+    if (draftModeRef.current === mode) return
+    saveDraft(draftModeRef.current, draftRef.current)
+    draftModeRef.current = mode
+    draftRef.current = loadDraft(mode)
+    setDraft(draftRef.current)
+  }, [mode])
+
+  useEffect(() => {
+    return () => {
+      if (agentDelTimerRef.current != null) window.clearTimeout(agentDelTimerRef.current)
+    }
+  }, [])
 
   const refreshTools = async (): Promise<void> => {
     try {
@@ -155,17 +210,24 @@ export function SidePanel({
     setAddName('')
     setAddDir('')
     setAddCmd('')
+    setAddCwd('')
     setAddErr('')
     setAddOpen(true)
   }
 
   const submitAddTool = async (): Promise<void> => {
+    if (addBusy) return
     const name = addName.trim()
     const dir = addDir.trim()
     if (!name || !dir) return
     setAddBusy(true)
     setAddErr('')
-    const r = await window.cobrowse.agentsAdd(name, dir, addCmd.trim() || undefined)
+    const r = await window.cobrowse.agentsAdd(
+      name,
+      dir,
+      addCmd.trim() || undefined,
+      addCwd.trim() || undefined
+    )
     setAddBusy(false)
     if (!r.ok) {
       setAddErr(r.error ?? '添加失败')
@@ -174,6 +236,13 @@ export function SidePanel({
     setAddOpen(false)
     await refreshTools()
     if (r.id) onExternalToolChange(r.id)
+  }
+
+  const onAddInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key !== 'Enter') return
+    if ((e.nativeEvent as KeyboardEvent).isComposing || e.keyCode === 229) return
+    e.preventDefault()
+    void submitAddTool()
   }
 
   useEffect(() => {
@@ -235,19 +304,39 @@ export function SidePanel({
     if (next) void window.cobrowse.agentSessions().then(setAgentSessions)
   }
 
+  const armAgentDelReset = (id: string): void => {
+    if (agentDelTimerRef.current != null) window.clearTimeout(agentDelTimerRef.current)
+    agentDelTimerRef.current = window.setTimeout(
+      () => setConfirmAgentDel((c) => (c && c.id === id ? null : c)),
+      4000
+    )
+  }
+
   const switchAgentSession = (id: string): void => {
-    void window.cobrowse.agentSwitchSession(id).then(() => setAgentSessionMenu(false))
+    setAgentError('')
+    void window.cobrowse.agentSwitchSession(id).then((r) => {
+      if (!r.ok) {
+        if (r.error) setAgentError(r.error)
+        return
+      }
+      setAgentSessionMenu(false)
+    })
   }
 
   const deleteAgentSession = (id: string): void => {
     if (!confirmAgentDel || confirmAgentDel.id !== id) {
       setConfirmAgentDel({ id, stage: 1 })
-      setTimeout(() => setConfirmAgentDel((c) => (c && c.id === id ? null : c)), 4000)
+      armAgentDelReset(id)
       return
     }
     if (confirmAgentDel.stage === 1) {
       setConfirmAgentDel({ id, stage: 2 })
+      armAgentDelReset(id)
       return
+    }
+    if (agentDelTimerRef.current != null) {
+      window.clearTimeout(agentDelTimerRef.current)
+      agentDelTimerRef.current = null
     }
     setConfirmAgentDel(null)
     const wasCurrent = agentSessions.find((s) => s.id === id)?.current === true
@@ -263,8 +352,14 @@ export function SidePanel({
   }
 
   const newAgentSession = (): void => {
-    void window.cobrowse.agentNewSession()
-    setAgentSessionMenu(false)
+    setAgentError('')
+    void window.cobrowse.agentNewSession().then((r) => {
+      if (!r.ok) {
+        if (r.error) setAgentError(r.error)
+        return
+      }
+      setAgentSessionMenu(false)
+    })
   }
 
   useEffect(() => {
@@ -313,7 +408,7 @@ export function SidePanel({
             setExternalErr(r.error ?? '发送失败')
             return
           }
-          setDraft((d) => (d.trim() === t ? '' : d))
+          clearDraftIfUnchanged(t)
         })
         return
       }
@@ -326,7 +421,7 @@ export function SidePanel({
           setExternalErr(r.error ?? '启动失败')
           return
         }
-        setDraft((d) => (d.trim() === t ? '' : d))
+        clearDraftIfUnchanged(t)
       })
       return
     }
@@ -334,14 +429,14 @@ export function SidePanel({
       setAgentError('')
       void window.cobrowse.agentSend(t).then((res) => {
         if (res.ok) {
-          setDraft((d) => (d.trim() === t ? '' : d))
+          clearDraftIfUnchanged(t)
           return
         }
         if (res.error) setAgentError(res.error)
       })
       return
     }
-    setDraft('')
+    updateDraft('')
     onSend(t)
   }
 
@@ -366,7 +461,7 @@ export function SidePanel({
   const connected = Date.now() - lastTs < 120_000
 
   const annotationTexts = new Set(
-    events
+    displayEvents
       .filter((e): e is MirrorAnnotationEvent => e.kind === 'annotation')
       .map((e) => e.text)
   )
@@ -414,16 +509,27 @@ export function SidePanel({
   // ------- agent-mode derived state -------
   let agentSessionState: 'idle' | 'busy' = 'idle'
   let agentSessionError = ''
+  let agentSessionErrorTs = 0
   for (let i = agentEvents.length - 1; i >= 0; i--) {
     const e = agentEvents[i]
     if (e.kind === 'session') {
       agentSessionState = e.status === 'busy' ? 'busy' : 'idle'
-      if (e.status === 'error') agentSessionError = e.error ?? ''
+      if (e.status === 'error') {
+        agentSessionError = e.error ?? ''
+        agentSessionErrorTs = e.ts
+      }
       break
     }
   }
+  const sessionErrVisible =
+    !!agentSessionError && agentSessionErrorTs !== dismissedAgentSessionErrTs
+  const agentErrText = agentError || (sessionErrVisible ? agentSessionError : '')
   const agentConfigured = agentReady
-  const agentVisible = agentEvents.filter((e) => e.kind !== 'session')
+  const agentVisible = agentEvents.filter(
+    (e) =>
+      e.kind !== 'session' &&
+      !(e.kind === 'text' && e.role === 'user' && annotationTexts.has(e.text))
+  )
   // While a permission request is pending, only the most recent running tool
   // card with the same tool name shows "waiting for your permission"; when the
   // same tool runs concurrently the older cards keep their own state.
@@ -448,6 +554,12 @@ export function SidePanel({
           title="浏览器内置模型直接工作（API 直连，可选功能）"
         >
           内置模型
+          {agentSessionState === 'busy' && mode !== 'agent' && (
+            <span
+              className="dot busy"
+              style={{ display: 'inline-block', marginLeft: 5, verticalAlign: 'middle' }}
+            />
+          )}
         </button>
         <select
           className="tool-select"
@@ -469,7 +581,7 @@ export function SidePanel({
           }}
         >
           <option value="__placeholder__" disabled>
-            外部工具…
+            {mode === 'agent' ? '切换工具…' : '外部工具…'}
           </option>
           <option value="opencode">opencode（双向镜像）</option>
           {tools
@@ -647,7 +759,11 @@ export function SidePanel({
         ) : (
           <>
             {visibleEvents.length === 0 && localMsgs.length === 0 && (
-              <div className="empty">向 AI 发送消息开始协作</div>
+              <div className="empty">
+                {mode === 'external'
+                  ? '从 ☰ 选择历史会话，或输入第一条消息启动新会话'
+                  : '向 AI 发送消息开始协作'}
+              </div>
             )}
             {visibleEvents.map((ev) => (
               <MirrorItem key={ev.id} ev={ev} pendingToolId={pendingToolId} />
@@ -664,8 +780,23 @@ export function SidePanel({
         ))}
       </div>
 
-      {(agentError || agentSessionError || externalErr) && (
-        <div className="agent-error">{agentError || agentSessionError || externalErr}</div>
+      {(agentErrText || externalErr) && (
+        <div className="agent-error skill-err">
+          <span>
+            {agentErrText ? `内置模型：${agentErrText}` : `外部工具：${externalErr}`}
+          </span>
+          <button
+            type="button"
+            title="清除错误提示"
+            onClick={() => {
+              setAgentError('')
+              setExternalErr('')
+              if (agentSessionError) setDismissedAgentSessionErrTs(agentSessionErrorTs)
+            }}
+          >
+            ×
+          </button>
+        </div>
       )}
 
       {addOpen && (
@@ -685,6 +816,7 @@ export function SidePanel({
                 spellCheck={false}
                 placeholder="例如：Gemini CLI"
                 onChange={(e) => setAddName(e.target.value)}
+                onKeyDown={onAddInputKeyDown}
               />
             </label>
             <label className="add-tool-field">
@@ -694,6 +826,7 @@ export function SidePanel({
                 spellCheck={false}
                 placeholder="例如：C:\Users\me\.gemini\tmp"
                 onChange={(e) => setAddDir(e.target.value)}
+                onKeyDown={onAddInputKeyDown}
               />
             </label>
             <label className="add-tool-field">
@@ -706,6 +839,17 @@ export function SidePanel({
                 spellCheck={false}
                 placeholder="例如：gemini   或   my-agent --prompt {prompt}"
                 onChange={(e) => setAddCmd(e.target.value)}
+                onKeyDown={onAddInputKeyDown}
+              />
+            </label>
+            <label className="add-tool-field">
+              <span>工作目录（可选）</span>
+              <input
+                value={addCwd}
+                spellCheck={false}
+                placeholder="留空则用用户主目录（例如 C:\work\project）"
+                onChange={(e) => setAddCwd(e.target.value)}
+                onKeyDown={onAddInputKeyDown}
               />
             </label>
             {addErr && <div className="agent-form-err">{addErr}</div>}
@@ -746,12 +890,12 @@ export function SidePanel({
                     : '只读镜像：请在对应的 CLI 中继续对话'
                 : '给 AI 发消息（Enter 发送，Shift+Enter 换行）'
           }
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => updateDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              send()
-            }
+            if (e.key !== 'Enter' || e.shiftKey) return
+            if ((e.nativeEvent as KeyboardEvent).isComposing || e.keyCode === 229) return
+            e.preventDefault()
+            send()
           }}
         />
         {isAgent && agentSessionState === 'busy' ? (

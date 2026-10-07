@@ -39,24 +39,40 @@ function isValidSession(s: unknown): boolean {
   )
 }
 
-/** Pure: normalize raw JSON into sessions. */
-export function normalizeRawSessions(raw: unknown): AgentSession[] {
-  if (!Array.isArray(raw)) return []
+export interface NormalizedSessions {
+  sessions: AgentSession[]
+  /** IDs of sessions whose messages/uiEvents were cut by the storage caps. */
+  truncatedIds: Set<string>
+}
+
+/** Pure: normalize raw JSON into sessions, plus which ones hit the caps. */
+export function normalizeRawSessionsWithMeta(raw: unknown): NormalizedSessions {
+  if (!Array.isArray(raw)) return { sessions: [], truncatedIds: new Set() }
   const out: AgentSession[] = []
+  const truncatedIds = new Set<string>()
   for (const item of raw) {
     if (!isValidSession(item)) continue
     const o = item as Record<string, unknown>
+    const id = String(o.id)
+    const messages = o.messages as ChatMessage[]
+    const uiEvents = o.uiEvents as Record<string, unknown>[]
+    if (messages.length > MAX_MESSAGES || uiEvents.length > MAX_UI_EVENTS) truncatedIds.add(id)
     out.push({
-      id: String(o.id),
+      id,
       title: typeof o.title === 'string' && o.title ? o.title : '新对话',
       createdAt: typeof o.createdAt === 'number' ? o.createdAt : Date.now(),
       updatedAt: typeof o.updatedAt === 'number' ? o.updatedAt : Date.now(),
-      messages: (o.messages as ChatMessage[]).slice(-MAX_MESSAGES),
-      uiEvents: (o.uiEvents as Record<string, unknown>[]).slice(-MAX_UI_EVENTS)
+      messages: messages.slice(-MAX_MESSAGES),
+      uiEvents: uiEvents.slice(-MAX_UI_EVENTS)
     })
   }
   out.sort((a, b) => b.updatedAt - a.updatedAt)
-  return out.slice(0, MAX_SESSIONS)
+  return { sessions: out.slice(0, MAX_SESSIONS), truncatedIds }
+}
+
+/** Pure: normalize raw JSON into sessions. */
+export function normalizeRawSessions(raw: unknown): AgentSession[] {
+  return normalizeRawSessionsWithMeta(raw).sessions
 }
 
 /** Pure: trim a session list for saving (keeps system prompt + tail). */
@@ -130,8 +146,14 @@ function atomicWrite(file: string, data: string): void {
   }
 }
 
-export function loadAgentSessions(): AgentSession[] {
-  if (IN_TEST) return []
+export interface LoadedAgentSessions {
+  sessions: AgentSession[]
+  /** IDs of sessions whose history was cut by the storage caps during this load. */
+  truncatedIds: Set<string>
+}
+
+export function loadAgentSessionsWithMeta(): LoadedAgentSessions {
+  if (IN_TEST) return { sessions: [], truncatedIds: new Set() }
   const file = sessionsFile()
   let raw: unknown
   try {
@@ -141,14 +163,18 @@ export function loadAgentSessions(): AgentSession[] {
       raw = readJson(`${file}.bak`)
       console.error('[agent-store] 会话主文件读取失败，已回退读取 agent-sessions.json.bak')
     } catch {
-      return []
+      return { sessions: [], truncatedIds: new Set() }
     }
   }
   const notes = capViolations(raw)
   if (notes.length > 0) {
     console.error(`[agent-store] 加载时按上限截断：${notes.join('；')}`)
   }
-  return normalizeRawSessions(raw)
+  return normalizeRawSessionsWithMeta(raw)
+}
+
+export function loadAgentSessions(): AgentSession[] {
+  return loadAgentSessionsWithMeta().sessions
 }
 
 export function saveAgentSessions(sessions: AgentSession[]): void {

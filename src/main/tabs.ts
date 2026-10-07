@@ -30,7 +30,8 @@ export class TabManager {
     private onNavigate: (url: string, title: string, favicon?: string) => void,
     private onShortcut: (action: string) => void,
     private onMetadata: (url: string, title: string, favicon?: string) => void,
-    private onLoadError?: (info: LoadErrorInfo) => void
+    private onLoadError?: (info: LoadErrorInfo) => void,
+    private onFindResult?: (result: { matches: number; activeMatch: number }) => void
   ) {
     // Chromium can leave a WebContentsView "hidden" (suspended rendering,
     // rAF stopped) after the window was minimized/occluded. Nudge the active
@@ -182,6 +183,16 @@ export class TabManager {
       changed()
     })
     wc.on('page-title-updated', (_event, title) => this.onMetadata(wc.getURL(), title, tab.favicon))
+    wc.on('found-in-page', (_event, result) => {
+      try {
+        this.onFindResult?.({
+          matches: result.matches,
+          activeMatch: result.activeMatchOrdinal
+        })
+      } catch {
+        /* find-result reporting must never break the page */
+      }
+    })
     wc.on('did-navigate-in-page', changed)
     wc.on('page-title-updated', changed)
     wc.on('did-fail-load', (_event, code, desc, url, isMainFrame) => {
@@ -312,6 +323,23 @@ export class TabManager {
     if (!url) return false
     this.createTab(url)
     return true
+  }
+
+  /** True when there is at least one closed tab URL that can be reopened. */
+  canReopenClosed(): boolean {
+    return this.closedUrls.length > 0
+  }
+
+  /** Open a new tab with the same URL as the given tab (duplicate). */
+  duplicateTab(id: number): boolean {
+    const tab = this.tabs.get(id)
+    if (!tab) return false
+    try {
+      this.createTab(tab.view.webContents.getURL())
+      return true
+    } catch {
+      return false
+    }
   }
 
   closeOthers(keepId: number): void {

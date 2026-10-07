@@ -46,18 +46,66 @@ export class BrowserDataStore {
 
   constructor(directory: string) {
     this.file = path.join(directory, 'browser-data.json')
+    this.data = this.load()
+  }
+
+  /** Normalize a parsed payload into the in-memory shape. */
+  private normalize(parsed: Partial<BrowserData>): BrowserData {
+    const data: BrowserData = {
+      bookmarks: Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [],
+      history: Array.isArray(parsed.history) ? parsed.history.slice(-5000) : [],
+      downloads: Array.isArray(parsed.downloads) ? parsed.downloads.slice(-500) : []
+    }
+    for (const item of data.downloads) {
+      if (item.state === 'progressing') item.state = 'interrupted'
+    }
+    return data
+  }
+
+  /**
+   * Read the store from disk. A corrupt main file falls back to the .bak
+   * (logged loudly). When both are unusable, the corrupt file is renamed to
+   * `browser-data.json.corrupt-<stamp>` so it is kept for inspection and the
+   * next write cannot silently reuse it.
+   */
+  private load(): BrowserData {
+    const file = this.file
+    let raw: string
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<BrowserData>
-      this.data = {
-        bookmarks: Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [],
-        history: Array.isArray(parsed.history) ? parsed.history.slice(-5000) : [],
-        downloads: Array.isArray(parsed.downloads) ? parsed.downloads.slice(-500) : []
-      }
-      for (const item of this.data.downloads) {
-        if (item.state === 'progressing') item.state = 'interrupted'
-      }
+      raw = fs.readFileSync(file, 'utf8')
     } catch {
-      this.data = empty()
+      return empty()
+    }
+    try {
+      return this.normalize(JSON.parse(raw) as Partial<BrowserData>)
+    } catch {
+      /* the main file is corrupt: try the backup */
+    }
+    try {
+      const data = this.normalize(
+        JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8')) as Partial<BrowserData>
+      )
+      console.error('[browser-data] browser-data.json 解析失败，已回退读取 browser-data.json.bak')
+      return data
+    } catch {
+      this.quarantineCorrupt(file)
+      return empty()
+    }
+  }
+
+  /** Rename an unusable browser-data.json aside (unique name per second). */
+  private quarantineCorrupt(file: string): void {
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+    const base = `${file}.corrupt-${stamp}`
+    let target = base
+    for (let n = 1; fs.existsSync(target); n++) target = `${base}-${n}`
+    try {
+      fs.renameSync(file, target)
+      console.error(
+        `[browser-data] browser-data.json 损坏且备份不可用，已留档为 ${path.basename(target)} 并重建空数据`
+      )
+    } catch (e) {
+      console.error('[browser-data] 损坏文件留档失败：', (e as Error)?.message ?? e)
     }
   }
 
@@ -89,6 +137,9 @@ export class BrowserDataStore {
         await fs.promises.unlink(tmp)
         return
       }
+      // keep the previous on-disk version as .bak before replacing it; runs
+      // after the supersede check so a raced clear() keeps its own .bak
+      this.refreshBackup()
       await fs.promises.rename(tmp, file)
     } catch (e) {
       try {
@@ -107,6 +158,9 @@ export class BrowserDataStore {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
+    // keep the previous on-disk version as .bak before replacing it (this is
+    // what clearHistory/clearDownloads rely on)
+    this.refreshBackup()
     const tmp = `${this.file}.${process.pid}-${Date.now().toString(36)}.tmp`
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true })
@@ -155,7 +209,6 @@ export class BrowserDataStore {
   }
 
   clearHistory(): void {
-    this.refreshBackup()
     this.data.history = []
     this.flushNow()
   }
@@ -178,7 +231,6 @@ export class BrowserDataStore {
   }
 
   clearDownloads(): void {
-    this.refreshBackup()
     this.data.downloads = []
     this.flushNow()
   }

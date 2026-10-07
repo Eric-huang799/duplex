@@ -65,6 +65,20 @@ export const BUILTIN_SHORTCUTS = [
   'Ctrl+Shift+A',
   'Ctrl+Tab',
   'Ctrl+Shift+Tab',
+  'Ctrl+1',
+  'Ctrl+2',
+  'Ctrl+3',
+  'Ctrl+4',
+  'Ctrl+5',
+  'Ctrl+6',
+  'Ctrl+7',
+  'Ctrl+8',
+  'Ctrl+9',
+  'Ctrl+=',
+  'Ctrl+-',
+  'Ctrl+0',
+  'Alt+ArrowLeft',
+  'Alt+ArrowRight',
   'F12'
 ]
 
@@ -135,6 +149,27 @@ export function sameBinding(a: string, b: string): boolean {
   return !!na && !!nb && na === nb
 }
 
+/** Platform detection for shortcut semantics (Cmd on macOS vs Win key elsewhere). */
+export function currentPlatformHint(platform?: string): string {
+  if (platform) return platform
+  // avoid a hard dependency on Node types: renderer bundles don't have `process`
+  const g = globalThis as { process?: { platform?: string } }
+  return g.process?.platform ?? ''
+}
+
+export function isMacPlatform(platform?: string): boolean {
+  return currentPlatformHint(platform) === 'darwin'
+}
+
+/** On macOS a Cmd (Meta) binding plays the role Ctrl plays elsewhere. */
+function platformEquivalents(combo: string, platform?: string): string[] {
+  if (!isMacPlatform(platform)) return [combo]
+  const p = parseBinding(combo)
+  if (!p || !p.meta) return [combo]
+  const alt = buildCombo({ ...p, meta: false, ctrl: true }, p.key)
+  return [combo, alt]
+}
+
 export function matchesBinding(binding: string, e: KeyEventLike): boolean {
   const p = parseBinding(binding)
   if (!p) return false
@@ -149,18 +184,20 @@ export function matchesBinding(binding: string, e: KeyEventLike): boolean {
 }
 
 export function validateBinding(
-  binding: string
+  binding: string,
+  platform?: string
 ): { ok: true; combo: string } | { ok: false; reason: string } {
   const p = parseBinding(binding)
   if (!p) return { ok: false, reason: '无法识别的按键' }
   const combo = buildCombo(p, p.key)
-  if (p.meta) {
+  if (p.meta && !isMacPlatform(platform)) {
     return { ok: false, reason: 'Win 键组合会被系统占用，无法用作急停键' }
   }
   if (combo === 'Alt+F4') {
     return { ok: false, reason: 'Alt+F4 是系统保留按键（会直接关闭窗口）' }
   }
-  if (BUILTIN_SHORTCUTS.some((b) => sameBinding(b, combo))) {
+  const equivalents = platformEquivalents(combo, platform)
+  if (BUILTIN_SHORTCUTS.some((b) => equivalents.some((c) => sameBinding(b, c)))) {
     return { ok: false, reason: `与浏览器快捷键 ${combo} 冲突` }
   }
   const hasMod = p.ctrl || p.alt || p.shift || p.meta
@@ -187,14 +224,15 @@ const DISPLAY_KEY: Record<string, string> = {
   Meta: 'Win'
 }
 
-export function displayParts(binding: string): string[] {
+export function displayParts(binding: string, platform?: string): string[] {
   const p = parseBinding(binding)
   if (!p) return [binding]
+  const mac = isMacPlatform(platform)
   const parts: string[] = []
-  if (p.ctrl) parts.push('Ctrl')
-  if (p.alt) parts.push('Alt')
-  if (p.shift) parts.push('Shift')
-  if (p.meta) parts.push('Win')
+  if (p.ctrl) parts.push(mac ? '⌃' : 'Ctrl')
+  if (p.alt) parts.push(mac ? '⌥' : 'Alt')
+  if (p.shift) parts.push(mac ? '⇧' : 'Shift')
+  if (p.meta) parts.push(mac ? '⌘' : 'Win')
   parts.push(DISPLAY_KEY[p.key] ?? p.key)
   return parts
 }

@@ -12,7 +12,7 @@
  * Blueprint: docs/blueprints/2026-09-27-p1-interaction-layer.md
  */
 import { ipcRenderer } from 'electron'
-import { matchesBinding } from '../shared/hotkeys'
+import { matchesBinding, parseBinding } from '../shared/hotkeys'
 
 const HOST_ID = '__cobrowse_overlay_host'
 const FONT =
@@ -41,6 +41,7 @@ type OverlayCommand =
       annotationId: string
       ok: boolean
       error?: string
+      warning?: string
       elementCount?: number
     }
   | { kind: 'hideAll' }
@@ -337,7 +338,7 @@ const TEMPLATE = `
 <div class="cb-annot-card">
   <textarea class="cb-card-input" rows="2" placeholder="对这块提问…（可留空，Enter 发送）"></textarea>
   <div class="cb-card-row">
-    <span class="cb-card-hint">Enter 发送 · Esc 取消此标注</span>
+    <span class="cb-card-hint">Enter 发送 · Esc 收起卡片（标注保留）</span>
     <button class="cb-send">发送</button>
   </div>
 </div>
@@ -384,6 +385,19 @@ function armTimer(
 ): void {
   clearTimer(key)
   if (ttl && ttl > 0) timers[key] = setTimeout(fn, ttl)
+}
+
+/** True when the key event originates from a text editor (input/textarea/contenteditable). */
+function isEditableEventTarget(e: Event): boolean {
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  const t = (path[0] ?? e.target) as HTMLElement | null
+  return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+}
+
+/** True when the binding carries Ctrl/Alt/Shift/Meta (a combo, as opposed to a bare key). */
+function bindingHasModifier(binding: string): boolean {
+  const parsed = parseBinding(binding)
+  return !!parsed && (parsed.ctrl || parsed.alt || parsed.shift || parsed.meta)
 }
 
 function setup(): void {
@@ -510,6 +524,8 @@ function setup(): void {
 
   card.querySelector('.cb-send')?.addEventListener('click', () => submitCard())
   cardInput.addEventListener('keydown', (e) => {
+    // Chinese IME: Enter confirms the candidate list — never submit on that
+    if ((e as KeyboardEvent).isComposing || e.keyCode === 229) return
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       submitCard()
@@ -545,12 +561,17 @@ function setup(): void {
           return
         }
       }
-      // configurable emergency-stop hotkeys (single keys and combos)
-      if (hotkeys.length > 0 && hotkeys.some((b) => matchesBinding(b, e))) {
-        e.preventDefault()
-        e.stopPropagation()
-        ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'hotkey' })
-        return
+      // configurable emergency-stop hotkeys (single keys and combos): a bare
+      // key is ignored while the page editor has focus so keys like F2 keep
+      // working there; modifier combos always fire.
+      if (hotkeys.length > 0) {
+        const binding = hotkeys.find((b) => matchesBinding(b, e))
+        if (binding && (!isEditableEventTarget(e) || bindingHasModifier(binding))) {
+          e.preventDefault()
+          e.stopPropagation()
+          ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'hotkey' })
+          return
+        }
       }
       // tool hotkeys 1-4 while annotating (not while typing, no ctrl/alt/meta)
       if (
@@ -562,10 +583,8 @@ function setup(): void {
         e.key >= '1' &&
         e.key <= '4'
       ) {
-        const t = e.target as HTMLElement | null
-        const typing =
-          !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
-        if (!typing) {
+        if (!isEditableEventTarget(e)) {
+          e.preventDefault()
           const map: ToolKind[] = ['rect', 'circle', 'arrow', 'point']
           setAnnotTool(map[Number(e.key) - 1])
         }
@@ -654,7 +673,9 @@ function apply(cmd: OverlayCommand): void {
       statusText.textContent = cmd.text
       statusHint.textContent = cmd.hint ?? ''
       statusSep.style.display = cmd.hint ? '' : 'none'
-      status.classList.remove('busy', 'error', 'success')
+      status.classList.remove('busy', 'error', 'success', 'warn')
+      status.style.borderColor = ''
+      statusText.style.color = ''
       if (cmd.tone === 'busy') status.classList.add('busy')
       if (cmd.tone === 'error') status.classList.add('error')
       status.classList.add('visible')
@@ -671,15 +692,24 @@ function apply(cmd: OverlayCommand): void {
       break
     }
     case 'annotationResult': {
+      const warning = (cmd.warning ?? '').trim()
       if (cmd.ok) {
         const count = typeof cmd.elementCount === 'number' ? cmd.elementCount : null
-        flashStatus(count == null ? '已发送给 AI' : `已发送给 AI（${count} 个元素）`, {
-          tone: 'success',
-          ttl: 2500
-        })
+        if (warning) {
+          flashStatus(warning, {
+            tone: 'warn',
+            ttl: 4500,
+            hint: count == null ? undefined : `${count} 个元素`
+          })
+        } else {
+          flashStatus(count == null ? '已发送给 AI' : `已发送给 AI（${count} 个元素）`, {
+            tone: 'success',
+            ttl: 2500
+          })
+        }
       } else {
-        const reason = (cmd.error ?? '').trim()
-        flashStatus(reason || '发送失败', { tone: 'error', ttl: 4000 })
+        const reason = (cmd.error ?? '').trim() || '发送失败'
+        flashStatus(warning ? `${reason}（${warning}）` : reason, { tone: 'error', ttl: 4000 })
       }
       break
     }
@@ -717,22 +747,33 @@ function setAnnotationActive(active: boolean): void {
     }
     nodes.pointHint.style.display = 'none'
     pointStart = null
+    let unsubmitted = 0
+    for (const m of markers.values()) if (!m.submitted) unsubmitted++
     clearMarkers()
+    if (unsubmitted > 0) {
+      flashStatus(`已退出标注，${unsubmitted} 个未提交标注已清除`, { ttl: 3200 })
+    }
   }
 }
 
 /** Local status message (not routed through the main-process command channel). */
 function flashStatus(
   text: string,
-  opts: { tone?: 'error' | 'success'; hint?: string; ttl: number }
+  opts: { tone?: 'error' | 'success' | 'warn'; hint?: string; ttl: number }
 ): void {
   if (!nodes) return
   const { status, statusText, statusHint, statusSep } = nodes
   statusText.textContent = text
   statusHint.textContent = opts.hint ?? ''
   statusSep.style.display = opts.hint ? '' : 'none'
-  status.classList.remove('busy', 'error', 'success')
+  status.classList.remove('busy', 'error', 'success', 'warn')
+  status.style.borderColor = ''
+  statusText.style.color = ''
   if (opts.tone) status.classList.add(opts.tone)
+  if (opts.tone === 'warn') {
+    status.style.borderColor = 'rgba(232, 184, 75, 0.55)'
+    statusText.style.color = '#e8c97f'
+  }
   status.classList.add('visible')
   armTimer('status', opts.ttl, () => status.classList.remove('visible'))
 }

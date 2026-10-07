@@ -51,15 +51,36 @@ interface CustomAgent {
   cwd?: string
 }
 
+/** How long a command lookup is trusted before probing the filesystem again. */
+const COMMAND_CACHE_TTL_MS = 30_000
+
+const commandCache = new Map<string, { exists: boolean; at: number }>()
+
+/** Drop all remembered command lookups (custom tool add/remove can change what exists). */
+export function clearCommandExistsCache(): void {
+  commandCache.clear()
+}
+
+/**
+ * TTL-cached `where`/`which`: opening the tool dropdown or handling IPC calls
+ * must not spawn a synchronous child process per lookup on every request.
+ */
 export function commandExists(cmd: string): boolean {
+  const key = process.platform === 'win32' ? cmd.toLowerCase() : cmd
+  const now = Date.now()
+  const hit = commandCache.get(key)
+  if (hit && now - hit.at < COMMAND_CACHE_TTL_MS) return hit.exists
+  let exists = false
   try {
     const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], {
       stdio: 'ignore'
     })
-    return r.status === 0
+    exists = r.status === 0
   } catch {
-    return false
+    exists = false
   }
+  commandCache.set(key, { exists, at: now })
+  return exists
 }
 
 /** Split a command line into argv segments (single/double quotes supported). */
@@ -609,6 +630,7 @@ export function addCustomAgent(
   })
   try {
     writeCustom(list)
+    clearCommandExistsCache()
     return { ok: true, id }
   } catch (e) {
     return { ok: false, error: (e as Error)?.message ?? '写入失败' }
@@ -621,6 +643,7 @@ export function removeCustomAgent(id: string): { ok: boolean; error?: string } {
   if (next.length === list.length) return { ok: false, error: '未找到该工具' }
   try {
     writeCustom(next)
+    clearCommandExistsCache()
     return { ok: true }
   } catch (e) {
     return { ok: false, error: (e as Error)?.message ?? '写入失败' }

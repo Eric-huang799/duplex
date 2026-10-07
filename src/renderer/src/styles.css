@@ -293,10 +293,6 @@ body {
 .annotation-toggle { width: auto; padding: 0 9px; font-size: 12px; white-space: nowrap; }
 .selected { background: var(--accent-soft) !important; color: var(--text-strong) !important; }
 .tools-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
-.browser-tools-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 110; min-width: 174px; padding: 6px; display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: 11px; background: var(--menu-bg); box-shadow: var(--shadow-pop); }
-.browser-tools-menu button { border: 0; border-radius: 7px; padding: 8px 10px; background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
-.browser-tools-menu button:hover, .browser-tools-menu button.on { background: var(--bg-btn-hover); }
-.tools-menu-divider { height: 1px; margin: 3px 4px; background: var(--line); }
 
 /* loading dot: absolutely positioned over the gap left of the AI button so it
    never squeezes the toolbar layout */
@@ -319,15 +315,8 @@ body {
   }
 }
 
-/* ---------- theme / engine menus ---------- */
+/* ---------- start page engine menu ---------- */
 
-.theme-wrap {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.theme-menu,
-.engine-menu,
 .start-engine-menu {
   position: absolute;
   top: 36px;
@@ -344,8 +333,6 @@ body {
   box-shadow: var(--shadow-pop);
 }
 
-.theme-menu button,
-.engine-menu button,
 .start-engine-menu button {
   display: flex;
   align-items: center;
@@ -361,22 +348,13 @@ body {
   text-align: left;
 }
 
-.theme-menu button:hover,
-.engine-menu button:hover,
 .start-engine-menu button:hover {
   background: var(--bg-btn-hover);
 }
 
-.theme-menu button.on,
-.engine-menu button.on,
 .start-engine-menu button.on {
   background: var(--accent-soft);
   color: var(--text-strong);
-}
-
-.theme-menu-icon {
-  width: 14px;
-  text-align: center;
 }
 
 /* ---------- content area (WebContentsView overlays this) ---------- */
@@ -431,9 +409,67 @@ body {
 .findbar { position: absolute; z-index: 90; right: 16px; top: 92px; display: flex; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--menu-bg); box-shadow: var(--shadow-pop); }
 .findbar input { width: 220px; border: 0; outline: 0; background: transparent; color: var(--text-strong); user-select: text; }
 .findbar button { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; }
-.tab-context-menu { position: fixed; z-index: 120; min-width: 190px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: var(--menu-bg); box-shadow: var(--shadow-pop); }
-.tab-context-menu button { width: 100%; display: block; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
-.tab-context-menu button:hover { background: var(--bg-btn-hover); }
+
+/* in-flow find bar: sits between the toolbar and the page without covering it */
+.findbar-flow {
+  position: static;
+  right: auto;
+  top: auto;
+  z-index: auto;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-radius: 0;
+  background: var(--bg-chrome);
+  box-shadow: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  flex-shrink: 0;
+}
+
+.findbar-flow input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg-input);
+  color: var(--text-strong);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+  user-select: text;
+}
+
+.findbar-flow input:focus {
+  border-color: var(--accent-border);
+}
+
+.findbar-flow button {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.findbar-flow button:hover {
+  background: var(--bg-btn-hover);
+  color: var(--text-strong);
+}
+
+.find-count {
+  min-width: 48px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+}
 
 /* ---------- start page ---------- */
 
@@ -2106,11 +2142,6 @@ body {
 .engine-wrap {
   position: relative;
 }
-.engine-menu {
-  right: auto;
-  left: 0;
-  min-width: 96px;
-}
 
 /* ---- v2: start-page engine switcher ---- */
 .start-engine-wrap {
@@ -2172,10 +2203,30 @@ button.start-engine:hover {
   pointer-events: none;
 }
 
+/* several toasts share one fixed column; the inner .stop-toast becomes static */
+.toast-stack {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 940;
+  pointer-events: none;
+}
+
+.toast-stack .stop-toast {
+  position: static;
+  transform: none;
+}
+
 /* ---- emergency-stop latched banner ("neutral gear") ---- */
 .ai-paused-banner {
   position: fixed;
-  top: 16px;
+  bottom: 20px;
+  top: auto;
   left: 50%;
   transform: translateX(-50%);
   display: flex;

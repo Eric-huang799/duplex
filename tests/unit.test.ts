@@ -1,4 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import * as childProcess from 'node:child_process'
 import { normalizeUrl, resolveAddress } from '../src/shared/url'
 import { searchUrl } from '../src/shared/search'
 import { buildAnnotationText, type AnnotateInfo } from '../src/main/annotations'
@@ -14,9 +18,24 @@ import {
 } from '../src/main/agent/providers'
 import {
   normalizeRawSessions,
+  normalizeRawSessionsWithMeta,
   trimSessionsForSave,
   type AgentSession
 } from '../src/main/agent/store'
+import { BrowserDataStore } from '../src/main/browser-data'
+import {
+  addCustomAgent,
+  clearCommandExistsCache,
+  commandExists,
+  removeCustomAgent
+} from '../src/main/integrations/agents'
+
+// The command-exists cache must be observable by call count; keep the real
+// implementation behind the spy so probing still behaves like `where`/`which`.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return { ...actual, spawnSync: vi.fn(actual.spawnSync) }
+})
 
 describe('normalizeUrl', () => {
   it('keeps absolute URLs untouched', () => {
@@ -787,6 +806,45 @@ describe('local-model hardening (tolerant parsing + watchdogs)', () => {
     expect(calls).toBe(2)
   })
 
+  it('shows a queued message once: queued bubble only, no duplicate on auto-send', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const histories: Array<Array<{ role: string; content: unknown }>> = []
+    let calls = 0
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const mockChat = (async (opts: { messages: Array<{ role: string; content: unknown }> }) => {
+      calls++
+      histories.push(opts.messages.map((m) => ({ role: m.role, content: m.content })))
+      if (calls === 1) await gate
+      return { text: 'ok', toolCalls: [] }
+    }) as never
+    const rt = new AgentRuntime(
+      (async () => ({ content: [] })) as never,
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      (ev) => events.push(ev),
+      mockChat,
+      { load: () => [], save: () => undefined } as never
+    )
+    const first = rt.send('第一轮')
+    await new Promise((r) => setTimeout(r, 20))
+    await rt.send('排队消息')
+    release()
+    await first
+    await new Promise((r) => setTimeout(r, 200))
+    expect(calls).toBe(2)
+    const bubbles = events.filter(
+      (e) => e.kind === 'text' && e.role === 'user' && String(e.text).includes('排队消息')
+    )
+    expect(bubbles.length).toBe(1)
+    expect(String(bubbles[0].text)).toContain('已排队')
+    const autoTurn = histories[histories.length - 1]
+    expect(
+      autoTurn.filter((m) => m.role === 'user' && String(m.content).includes('排队消息')).length
+    ).toBe(1)
+  })
+
   it('marks truncated tool results in the UI and in the history', async () => {
     const longText = 'x'.repeat(31_000)
     const exec = async () => ({ content: [{ type: 'text' as const, text: longText }] })
@@ -935,5 +993,175 @@ describe('buildAnnotationText (code-layer structured description)', () => {
     expect(t).toContain('指向关系')
     expect(t).toContain('按钮A')
     expect(t).toContain('（空白处）')
+  })
+})
+
+describe('session history truncation notice', () => {
+  it('reports sessions cut by the caps and shows the notice once per restore', () => {
+    const raw = [
+      {
+        id: 's1',
+        title: '长会话',
+        createdAt: 1,
+        updatedAt: 2,
+        messages: [
+          { role: 'system', content: 'sys' },
+          ...Array.from({ length: 250 }, (_, i) => ({ role: 'user', content: `m${i}` }))
+        ],
+        uiEvents: []
+      }
+    ]
+    const meta = normalizeRawSessionsWithMeta(raw)
+    expect(meta.truncatedIds.has('s1')).toBe(true)
+    expect(meta.sessions[0].messages.length).toBe(200)
+
+    const rt = new AgentRuntime(
+      (async () => ({ content: [] })) as never,
+      () => ({ baseUrl: 'http://x/v1', apiKey: '', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      () => undefined,
+      (async () => ({ text: '', toolCalls: [] })) as never,
+      { loadWithMeta: () => meta, save: () => undefined } as never
+    )
+    const noticeCount = (): number =>
+      rt
+        .events()
+        .filter(
+          (e) => e.kind === 'text' && String(e.text).includes('更早的消息已因存储上限不再保留')
+        ).length
+    expect(noticeCount()).toBe(1)
+    // switching away and back must not duplicate the notice
+    rt.newSession()
+    rt.switchSession('s1')
+    expect(noticeCount()).toBe(1)
+  })
+})
+
+describe('BrowserDataStore (corruption recovery + .bak)', () => {
+  let dir = ''
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-bd-r2-'))
+  })
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+  const dataFile = (): string => path.join(dir, 'browser-data.json')
+
+  it('falls back to .bak when the main file is corrupt', () => {
+    fs.writeFileSync(dataFile(), '{broken json', 'utf8')
+    fs.writeFileSync(
+      `${dataFile()}.bak`,
+      JSON.stringify({
+        bookmarks: [],
+        history: [{ url: 'https://bak.example/', title: 'b', visitedAt: 1 }],
+        downloads: []
+      }),
+      'utf8'
+    )
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const store = new BrowserDataStore(dir)
+      expect(store.snapshot().history.map((h) => h.url)).toEqual(['https://bak.example/'])
+    } finally {
+      spy.mockRestore()
+    }
+    expect(fs.existsSync(dataFile())).toBe(true)
+  })
+
+  it('quarantines a corrupt file when the backup is unusable too', () => {
+    fs.writeFileSync(dataFile(), '{broken json', 'utf8')
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    try {
+      const store = new BrowserDataStore(dir)
+      expect(store.snapshot()).toEqual({ bookmarks: [], history: [], downloads: [] })
+    } finally {
+      spy.mockRestore()
+    }
+    expect(fs.existsSync(dataFile())).toBe(false)
+    const quarantined = fs
+      .readdirSync(dir)
+      .filter((name) => name.startsWith('browser-data.json.corrupt-'))
+    expect(quarantined).toHaveLength(1)
+    expect(fs.readFileSync(path.join(dir, quarantined[0]), 'utf8')).toBe('{broken json')
+  })
+
+  it('refreshes .bak on debounced writes', async () => {
+    fs.writeFileSync(
+      dataFile(),
+      JSON.stringify({
+        bookmarks: [],
+        history: [{ url: 'https://v1.example/', title: 'v1', visitedAt: 1 }],
+        downloads: []
+      }),
+      'utf8'
+    )
+    const store = new BrowserDataStore(dir)
+    store.addHistory({ url: 'https://v2.example/', title: 'v2', visitedAt: 2 })
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    const main = JSON.parse(fs.readFileSync(dataFile(), 'utf8')) as {
+      history: Array<{ url: string }>
+    }
+    const bak = JSON.parse(fs.readFileSync(`${dataFile()}.bak`, 'utf8')) as {
+      history: Array<{ url: string }>
+    }
+    expect(main.history.map((h) => h.url)).toEqual(['https://v1.example/', 'https://v2.example/'])
+    expect(bak.history.map((h) => h.url)).toEqual(['https://v1.example/'])
+  })
+})
+
+describe('commandExists TTL cache', () => {
+  afterEach(() => {
+    clearCommandExistsCache()
+    vi.useRealTimers()
+    vi.mocked(childProcess.spawnSync).mockClear()
+  })
+
+  it('probes once per command within the TTL and re-probes after it expires', () => {
+    const spy = vi.mocked(childProcess.spawnSync)
+    spy.mockClear()
+    vi.useFakeTimers()
+    commandExists('node')
+    commandExists('node')
+    expect(spy).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(30_001)
+    commandExists('node')
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-probes after the cache is explicitly cleared', () => {
+    const spy = vi.mocked(childProcess.spawnSync)
+    spy.mockClear()
+    commandExists('node')
+    commandExists('node')
+    expect(spy).toHaveBeenCalledTimes(1)
+    clearCommandExistsCache()
+    commandExists('node')
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
+  it('is invalidated when a custom tool is added or removed', () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-cache-data-'))
+    const sessionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-cache-sessions-'))
+    const originalDataDir = process.env.DUPLEX_DATA_DIR
+    process.env.DUPLEX_DATA_DIR = dataDir
+    const spy = vi.mocked(childProcess.spawnSync)
+    spy.mockClear()
+    try {
+      commandExists('node')
+      commandExists('node')
+      expect(spy).toHaveBeenCalledTimes(1)
+      const added = addCustomAgent('T', sessionsDir, 'node')
+      expect(added.ok).toBe(true)
+      commandExists('node')
+      expect(spy).toHaveBeenCalledTimes(2)
+      const removed = removeCustomAgent(String(added.id))
+      expect(removed.ok).toBe(true)
+      commandExists('node')
+      expect(spy).toHaveBeenCalledTimes(3)
+    } finally {
+      if (originalDataDir === undefined) delete process.env.DUPLEX_DATA_DIR
+      else process.env.DUPLEX_DATA_DIR = originalDataDir
+      fs.rmSync(dataDir, { recursive: true, force: true })
+      fs.rmSync(sessionsDir, { recursive: true, force: true })
+    }
   })
 })

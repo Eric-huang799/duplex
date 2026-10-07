@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LLM_PROTOCOLS, PROTOCOL_LABELS, type LlmProtocol } from '../../../shared/llm'
+import { hostOfUrl, isTrustedImportedHost } from '../../../shared/trusted-hosts'
 
 type AuthType = 'key' | 'import'
 type AuthSource = 'codex' | 'opencode'
@@ -38,29 +39,36 @@ const PROTOCOL_SHORT: Record<LlmProtocol, string> = {
   gemini: 'Gemini'
 }
 
-/** Official API hosts for each import source; anything else needs explicit trust. */
-const OFFICIAL_HOSTS: Record<AuthSource, string[]> = {
-  codex: ['chatgpt.com', 'openai.com'],
-  opencode: ['opencode.ai']
+interface Preset {
+  label: string
+  name: string
+  baseUrl: string
+  model: string
+  clearKey?: boolean
 }
 
-function hostOf(baseUrl: string): string {
-  try {
-    return new URL(baseUrl).host
-  } catch {
-    return baseUrl
+/** One-click fill for common OpenAI-compatible endpoints (does not save). */
+const PRESETS: Preset[] = [
+  {
+    label: 'DeepSeek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat'
+  },
+  {
+    label: 'OpenAI',
+    name: 'OpenAI',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o'
+  },
+  {
+    label: '本地 Ollama',
+    name: 'Ollama（本地）',
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'llama3.1',
+    clearKey: true
   }
-}
-
-function isOfficialHost(source: AuthSource | undefined, baseUrl: string): boolean {
-  try {
-    const host = new URL(baseUrl).hostname.toLowerCase()
-    const list = OFFICIAL_HOSTS[source === 'opencode' ? 'opencode' : 'codex']
-    return list.some((d) => host === d || host.endsWith(`.${d}`))
-  } catch {
-    return false
-  }
-}
+]
 
 function newEditing(): EditingState {
   return {
@@ -100,6 +108,30 @@ export function ProvidersPanel({
     expiresAt?: number
     error?: string
   } | null>(null)
+  const delTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
+    }
+  }, [])
+
+  const applyPreset = (preset: Preset): void => {
+    setImportInfo(null)
+    setEditing((cur) => {
+      const base = cur ?? newEditing()
+      return {
+        ...base,
+        name: preset.name,
+        baseUrl: preset.baseUrl,
+        model: preset.model,
+        protocol: 'openai-chat',
+        authType: 'key',
+        authSource: undefined,
+        apiKey: preset.clearKey ? '' : base.apiKey
+      }
+    })
+  }
 
   const checkImport = async (source: AuthSource): Promise<void> => {
     setImportInfo(null)
@@ -147,15 +179,28 @@ export function ProvidersPanel({
     void activate(id)
   }
 
+  const armDelReset = (id: string): void => {
+    if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
+    delTimerRef.current = window.setTimeout(
+      () => setConfirmDel((c) => (c && c.id === id ? null : c)),
+      4000
+    )
+  }
+
   const remove = async (id: string): Promise<void> => {
     if (!confirmDel || confirmDel.id !== id) {
       setConfirmDel({ id, stage: 1 })
-      setTimeout(() => setConfirmDel((c) => (c && c.id === id ? null : c)), 4000)
+      armDelReset(id)
       return
     }
     if (confirmDel.stage === 1) {
       setConfirmDel({ id, stage: 2 })
+      armDelReset(id)
       return
+    }
+    if (delTimerRef.current != null) {
+      window.clearTimeout(delTimerRef.current)
+      delTimerRef.current = null
     }
     setConfirmDel(null)
     await window.cobrowse.agentProviderRemove(id)
@@ -173,7 +218,8 @@ export function ProvidersPanel({
           ? Math.round(sec) * 1000
           : undefined
       const customHost =
-        editing.authType === 'import' && !isOfficialHost(editing.authSource, editing.baseUrl)
+        editing.authType === 'import' &&
+        !isTrustedImportedHost(editing.baseUrl, editing.authSource)
       const res = await window.cobrowse.agentProviderSave({
         id: editing.id,
         name: editing.name,
@@ -241,7 +287,8 @@ export function ProvidersPanel({
   const showTrust =
     !!editing &&
     editing.authType === 'import' &&
-    !isOfficialHost(editing.authSource, editing.baseUrl)
+    !isTrustedImportedHost(editing.baseUrl, editing.authSource)
+  const isNewForm = !!editing && !editing.id
 
   return (
     <div className="providers-panel">
@@ -255,7 +302,23 @@ export function ProvidersPanel({
 
       <div className="providers-list">
         {providers.length === 0 && (
-          <div className="providers-empty">还没有配置 — 可以「从 opencode 导入」或「新建」</div>
+          <>
+            <div className="providers-empty">还没有配置 — 可以「从 opencode 导入」或「新建」</div>
+            {!editing && (
+              <div className="provider-actions">
+                {PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    title={`填入 ${preset.baseUrl} · ${preset.model}`}
+                    onClick={() => applyPreset(preset)}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
         )}
         {providers.map((p) => (
           <div
@@ -281,7 +344,7 @@ export function ProvidersPanel({
                 {confirmSwitch?.id === p.id
                   ? '再次点击确认切换'
                   : <>
-                      {p.model || '未填模型'} · {hostOf(p.baseUrl)}
+                      {p.model || '未填模型'} · {hostOfUrl(p.baseUrl) || p.baseUrl}
                       {p.protocol !== 'openai-chat' && ` · ${PROTOCOL_SHORT[p.protocol]}`}
                       {p.authType === 'import' && ` · 导入:${p.authSource ?? '?'}`}
                     </>}
@@ -325,6 +388,20 @@ export function ProvidersPanel({
 
       {editing && (
         <div className="agent-form">
+          {isNewForm && (
+            <div className="provider-actions">
+              {PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  title={`填入 ${preset.baseUrl} · ${preset.model}`}
+                  onClick={() => applyPreset(preset)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
           <label>
             <span>名称</span>
             <input
@@ -426,7 +503,8 @@ export function ProvidersPanel({
                 onChange={(e) => setEditing({ ...editing, allowCustomHost: e.target.checked })}
               />
               <span>
-                我信任此网关：允许把导入的凭据发送到当前主机 {hostOf(editing.baseUrl) || '（Base URL 未填写）'}
+                我信任此网关：允许把导入的凭据发送到当前主机{' '}
+                {hostOfUrl(editing.baseUrl) || editing.baseUrl.trim() || '（Base URL 未填写）'}
               </span>
             </label>
           )}
@@ -461,6 +539,12 @@ export function ProvidersPanel({
               {busy ? '保存中…' : '保存'}
             </button>
           </div>
+        </div>
+      )}
+
+      {editing && (
+        <div className="providers-empty">
+          本地 Ollama 无需 API Key：先运行 ollama serve，Base URL 填 http://localhost:11434/v1
         </div>
       )}
 

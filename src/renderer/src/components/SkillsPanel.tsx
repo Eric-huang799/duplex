@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 interface SkillInfo {
   id: string
@@ -28,6 +28,27 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [delStage, setDelStage] = useState<{ id: string; stage: number } | null>(null)
+  const [codexAsk, setCodexAsk] = useState(false)
+  const [codexMsg, setCodexMsg] = useState('')
+  const [copyMsg, setCopyMsg] = useState('')
+  const delTimerRef = useRef<number | null>(null)
+  const copyTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
+      if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!codexAsk) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setCodexAsk(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [codexAsk])
 
   const refresh = async (): Promise<void> => {
     try {
@@ -58,16 +79,29 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     }
   }
 
+  const armDelReset = (id: string): void => {
+    if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
+    delTimerRef.current = window.setTimeout(
+      () => setDelStage((c) => (c && c.id === id ? null : c)),
+      4000
+    )
+  }
+
   const remove = async (id: string): Promise<void> => {
     if (!delStage || delStage.id !== id) {
       setError('')
       setDelStage({ id, stage: 1 })
-      setTimeout(() => setDelStage((c) => (c && c.id === id ? null : c)), 4000)
+      armDelReset(id)
       return
     }
     if (delStage.stage === 1) {
       setDelStage({ id, stage: 2 })
+      armDelReset(id)
       return
+    }
+    if (delTimerRef.current != null) {
+      window.clearTimeout(delTimerRef.current)
+      delTimerRef.current = null
     }
     setDelStage(null)
     setError('')
@@ -85,25 +119,29 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     await refresh()
   }
 
-  const installCodex = async (): Promise<void> => {
+  const askInstallCodex = (): void => {
     if (!codex) return
     setError('')
-    const ok = window.confirm(
-      `将把 Duplex 的 MCP 配置写入：\n${codex.path}\n\n（会自动备份原文件）确定继续？`
-    )
-    if (!ok) return
+    setCodexMsg('')
+    setCodexAsk(true)
+  }
+
+  const confirmInstallCodex = async (): Promise<void> => {
+    setCodexAsk(false)
+    setError('')
     const r = await window.cobrowse.setupCodexInstall()
     if (!r.ok) {
       setError(r.error ?? '写入失败')
     } else if (r.backupPath) {
-      window.alert(`已写入配置。原文件备份：\n${r.backupPath}`)
+      setCodexMsg(`已写入配置。原文件备份：${r.backupPath}`)
     } else {
-      window.alert('已写入配置（原文件不存在，已新建）。')
+      setCodexMsg('已写入配置（原文件不存在，已新建）。')
     }
     await refresh()
   }
 
   const toggleClaude = async (): Promise<void> => {
+    setCopyMsg('')
     if (claudeCmd) {
       setClaudeCmd(null)
       return
@@ -111,6 +149,18 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     setError('')
     const r = await window.cobrowse.setupClaudeCommand()
     setClaudeCmd(r)
+  }
+
+  const copyClaudeCommand = async (): Promise<void> => {
+    if (!claudeCmd) return
+    try {
+      await navigator.clipboard.writeText(claudeCmd.command)
+      setCopyMsg('已复制到剪贴板')
+    } catch {
+      setCopyMsg('复制失败：请手动选中命令复制')
+    }
+    if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = window.setTimeout(() => setCopyMsg(''), 3000)
   }
 
   const duplexCount = skills.filter((s) => s.source === 'duplex').length
@@ -185,18 +235,27 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
             <div className="provider-sub">
               Codex：{codex.found ? (codex.configured ? '已接入 ✓' : '未接入') : '未找到 config.toml'}
             </div>
-            <button className="import-btn" onClick={() => void installCodex()}>
+            <button className="import-btn" onClick={askInstallCodex}>
               接入 Codex
             </button>
           </div>
         )}
+        {codexMsg && <div className="import-status">{codexMsg}</div>}
         <div className="integration-row">
           <div className="provider-sub">Claude Code：复制命令后到终端执行</div>
-          <button className="import-btn" onClick={() => void toggleClaude()}>
-            {claudeCmd ? '隐藏命令' : '显示命令'}
-          </button>
+          <span style={{ display: 'inline-flex', gap: 6, flexShrink: 0 }}>
+            {claudeCmd && (
+              <button className="import-btn" onClick={() => void copyClaudeCommand()}>
+                复制
+              </button>
+            )}
+            <button className="import-btn" onClick={() => void toggleClaude()}>
+              {claudeCmd ? '隐藏命令' : '显示命令'}
+            </button>
+          </span>
         </div>
         {claudeCmd && <pre className="integration-cmd">{claudeCmd.command}</pre>}
+        {copyMsg && <div className="import-status">{copyMsg}</div>}
         {claudeCmd && claudeCmd.hint && <div className="import-status">{claudeCmd.hint}</div>}
         {claudeCmd && !claudeCmd.bridgeFound && (
           <div className="import-status">
@@ -204,6 +263,32 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
           </div>
         )}
       </div>
+
+      {codexAsk && codex && (
+        <div
+          className="confirm-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setCodexAsk(false)
+          }}
+        >
+          <div className="confirm-box">
+            <div className="confirm-title">接入 Codex</div>
+            <div className="provider-sub" style={{ whiteSpace: 'normal' }}>
+              将把 Duplex 的 MCP 配置写入：{codex.path}
+              <br />
+              （会自动备份原文件）确定继续？
+            </div>
+            <div className="confirm-row">
+              <button className="import-btn" onClick={() => setCodexAsk(false)}>
+                取消
+              </button>
+              <button className="send-btn" onClick={() => void confirmInstallCodex()}>
+                确定写入
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="agent-form-err providers-err skill-err">

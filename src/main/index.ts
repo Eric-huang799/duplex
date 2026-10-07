@@ -1,4 +1,14 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, type WebContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  session,
+  type MenuItemConstructorOptions,
+  type WebContents
+} from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -30,6 +40,7 @@ import {
   activeAgentConfig,
   loadSettings,
   saveAiPaused,
+  saveConfirmBeforeDownload,
   saveEmergencyStopKeys,
   saveProviders,
   saveSearchEngine,
@@ -85,7 +96,8 @@ import {
   type TranscriptMessage
 } from './integrations/transcripts'
 import { resolveAddress } from '../shared/url'
-import { SEARCH_ENGINES, searchUrl } from '../shared/search'
+import { SEARCH_ENGINES, searchUrl, type SearchEngine } from '../shared/search'
+import { isTrustedImportedHost } from '../shared/trusted-hosts'
 import type { ChatSendResult, ContentBounds } from '../shared/protocol'
 import { isLlmProtocol } from '../shared/llm'
 
@@ -142,10 +154,16 @@ function sendAnnotationState(active: boolean): void {
   }
 }
 
+/** Debounced push of the browser-data snapshot (rapid history updates coalesce). */
+let emitBrowserDataTimer: ReturnType<typeof setTimeout> | null = null
 function emitBrowserData(): void {
-  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-    win.webContents.send('browser:data-update', browserData.snapshot())
-  }
+  if (emitBrowserDataTimer) return
+  emitBrowserDataTimer = setTimeout(() => {
+    emitBrowserDataTimer = null
+    if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+      win.webContents.send('browser:data-update', browserData.snapshot())
+    }
+  }, 250)
 }
 
 // script-execution confirmation round trip (run_skill_script → renderer dialog);
@@ -417,6 +435,34 @@ function watchTick(state: AgentWatchState): void {
   schedule(1500)
 }
 
+/**
+ * Resolve a session's real title from its transcript metadata (the first user
+ * message, computed by the list readers); '' when it cannot be resolved.
+ */
+function externalSessionTitle(
+  tool: { kind: string; sessionsDir?: string },
+  sessionId: string,
+  resolvedFile: string
+): string {
+  if (!tool.sessionsDir) return ''
+  try {
+    const list =
+      tool.kind === 'codex'
+        ? listCodexSessions(tool.sessionsDir)
+        : tool.kind === 'claude'
+          ? listClaudeSessions(tool.sessionsDir)
+          : tool.kind === 'gemini' || tool.kind === 'qwen'
+            ? listGeminiSessions(tool.sessionsDir)
+            : listCustomSessions(tool.sessionsDir)
+    const hit =
+      list.find((s) => path.resolve(s.file) === resolvedFile) ??
+      list.find((s) => s.id === sessionId)
+    return hit?.title ?? ''
+  } catch {
+    return ''
+  }
+}
+
 /** Open a transcript file: reset the panel, stream history, then tail live. */
 function openExternalSession(
   tool: { id: string; kind: string; sessionsDir?: string },
@@ -451,12 +497,14 @@ function openExternalSession(
         : tool.kind === 'gemini' || tool.kind === 'qwen'
           ? readGeminiSession(file)
           : readCustomSession(file)
+  // real session title from transcript metadata; file basename only as fallback
+  const title = externalSessionTitle(tool, String(sessionId), resolvedFile) || path.basename(file)
   win?.webContents.send(
     'mirror:event',
     externalEvent({
       kind: 'session-info',
       activeSessionID: sid,
-      activeTitle: path.basename(file),
+      activeTitle: title,
       reason: 'selected',
       ts: Date.now()
     })
@@ -465,7 +513,7 @@ function openExternalSession(
     win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, sid))
   }
   startAgentWatch(tool.kind, file, sid, tool.id, baseline)
-  return { ok: true, count: msgs.length, title: path.basename(file) }
+  return { ok: true, count: msgs.length, title }
 }
 
 /** A spawned external-agent child plus the state needed to explain failures. */
@@ -773,7 +821,7 @@ async function start(): Promise<void> {
         content: [
           {
             type: 'text',
-            text: '已急停挂起：暂时不接受任何 AI 操作。请停止动作，等待用户恢复（发送新消息 / 搜索新内容 / 点「恢复」）。不要重试。'
+            text: '已急停挂起：暂时不接受任何 AI 操作。请停止动作，等待用户恢复（发送消息或点击「恢复」继续）。不要重试。'
           }
         ]
       }
@@ -799,7 +847,7 @@ async function start(): Promise<void> {
         content: [
           {
             type: 'text',
-            text: '已急停挂起：暂时不接受任何 AI 操作。请停止动作，等待用户恢复（发送新消息 / 搜索新内容 / 点「恢复」）。不要重试。'
+            text: '已急停挂起：暂时不接受任何 AI 操作。请停止动作，等待用户恢复（发送消息或点击「恢复」继续）。不要重试。'
           }
         ]
       }
@@ -924,7 +972,15 @@ async function start(): Promise<void> {
     })
   }
   const annotationSubmit = createAnnotationSubmitHandler(tabs!, mirror, deliverAnnotation)
-  annotationSubmitHandler = (payload) => annotationSubmit(payload)
+  annotationSubmitHandler = async (payload) => {
+    if (isAiPaused()) {
+      return { ok: false, error: 'AI 已急停挂起：请先点「恢复」再提交标注' }
+    }
+    if (currentPanelMode === 'external') {
+      return { ok: false, error: '外部工具模式下标注不会送达：请切换到内置模型或 opencode 模式' }
+    }
+    return annotationSubmit(payload)
+  }
 
   try {
     writeEndpoint({
@@ -1001,6 +1057,15 @@ function createWindow(): void {
   win.on('ready-to-show', () => {
     win?.show()
     win?.focus()
+  })
+
+  win.on('closed', () => {
+    // macOS keeps the app resident after the window closes; drop the window and
+    // its tab manager so a later `activate` can rebuild both cleanly.
+    const oldTabs = tabs
+    win = null
+    tabs = null
+    oldTabs?.destroy()
   })
 
   win.webContents.on('before-input-event', (e, input) => {
@@ -1083,6 +1148,13 @@ function createWindow(): void {
       } catch {
         /* window is going away */
       }
+    },
+    (result) => {
+      try {
+        win?.webContents.send('browser:find-result', result)
+      } catch {
+        /* window is going away */
+      }
     }
   )
   tabs.createTab()
@@ -1097,6 +1169,78 @@ function createWindow(): void {
   }
 
   applyWindowBackground()
+}
+
+/** Toggle annotation mode for the active tab (shared by IPC and the tools menu). */
+function toggleAnnotationMode(): { ok: boolean; active: boolean } {
+  const tab = tabs?.getActive()
+  if (!tab) return { ok: false, active: false }
+  const next = !(annotationTabState.get(tab.id) ?? false)
+  annotationTabState.set(tab.id, next)
+  overlaySend(tab, { kind: 'annotationMode', active: next })
+  return { ok: true, active: next }
+}
+
+/** Persist + apply a theme setting (shared by IPC and the tools menu). */
+function applyThemeSetting(theme: ThemeSetting): { ok: boolean; error?: string } {
+  const saved = saveTheme(theme)
+  if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+  nativeTheme.themeSource = theme
+  applyWindowBackground()
+  logLine(`[theme] set to ${theme}`)
+  return { ok: true }
+}
+
+/** Validate + persist a search engine (shared by IPC and the engine menu). */
+function applySearchEngine(engine: string): { ok: boolean; error?: string } {
+  if (typeof engine !== 'string' || !(engine in SEARCH_ENGINES)) {
+    return { ok: false, error: '未知搜索引擎' }
+  }
+  const saved = saveSearchEngine(engine as SearchEngine)
+  if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+  return { ok: true }
+}
+
+/**
+ * Imported OAuth credentials must not be sent to unlisted hosts unless the
+ * gateway was explicitly trusted (same gate as the runtime auth-import check).
+ */
+function providerTrustError(
+  authType: string,
+  authSource: string | undefined,
+  baseUrl: string,
+  allowCustomHost: boolean | undefined
+): string | null {
+  if (authType !== 'import') return null
+  if (allowCustomHost === true) return null
+  if (isTrustedImportedHost(baseUrl, authSource)) return null
+  return '该地址不在官方白名单；如确认信任此网关请勾选「我信任此网关」，或改用官方地址'
+}
+
+const THEME_LABELS: Record<ThemeSetting, string> = {
+  system: '跟随系统',
+  light: '亮色',
+  dark: '暗色'
+}
+
+/** Push a browser shortcut action to the renderer (native menu entry points). */
+function sendBrowserShortcut(action: string): void {
+  try {
+    win?.webContents.send('browser:shortcut', action)
+  } catch {
+    /* window is going away */
+  }
+}
+
+/** Native popup via Menu.popup — rendered by the OS, never blanks the page view. */
+function popupAppMenu(template: MenuItemConstructorOptions[], x: number, y: number): void {
+  if (!win || win.isDestroyed() || !Number.isFinite(x) || !Number.isFinite(y)) return
+  try {
+    const menu = Menu.buildFromTemplate(template)
+    menu.popup({ window: win, x: Math.round(x), y: Math.round(y) })
+  } catch (e) {
+    logLine(`[menu] popup failed: ${(e as Error)?.message ?? String(e)}`)
+  }
 }
 
 function setupIpc(): void {
@@ -1139,6 +1283,12 @@ function setupIpc(): void {
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })
   ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id))
   ipcMain.handle('downloads:reveal', (_e, id: string) => downloads.reveal(id))
+  ipcMain.handle('downloads:confirm-get', () => ({ enabled: loadSettings().confirmBeforeDownload }))
+  ipcMain.handle('downloads:confirm-set', (_e, enabled: boolean) => {
+    const saved = saveConfirmBeforeDownload(enabled === true)
+    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+    return { ok: true }
+  })
 
   ipcMain.on('ui:bounds', (_e, bounds: ContentBounds) => {
     tabs?.updateBounds(bounds)
@@ -1150,34 +1300,45 @@ function setupIpc(): void {
 
   ipcMain.handle(
     'tabs:action',
-    (_e, action: { type: string; url?: string; tabId?: number }) => {
+    (_e, action: { type: string; url?: string; tabId?: number; value?: number }) => {
       if (!tabs) return { ok: false }
+      const noTab = { ok: false, error: '没有打开的标签页' }
       try {
         switch (action.type) {
-          case 'navigate': {
-            const tab = tabs.requireTab(null)
+          case 'navigate':
+          case 'search': {
+            // 地址栏/搜索在零标签时也应有去路：先建一个标签页再执行
+            const tab = tabs.getActive() ?? tabs.createTab()
             if (action.url) {
-              const addr = resolveAddress(action.url)
-              const url =
-                addr.kind === 'url' ? addr.url : searchUrl(addr.query, loadSettings().searchEngine)
+              let url: string
+              if (action.type === 'search') {
+                url = searchUrl(action.url, loadSettings().searchEngine)
+              } else {
+                const addr = resolveAddress(action.url)
+                url =
+                  addr.kind === 'url' ? addr.url : searchUrl(addr.query, loadSettings().searchEngine)
+              }
               void tab.view.webContents.loadURL(url)
             }
             break
           }
           case 'back': {
-            const tab = tabs.requireTab(null)
+            const tab = tabs.getActive()
+            if (!tab) return noTab
             const nav = tab.view.webContents.navigationHistory
             if (nav.canGoBack()) nav.goBack()
             break
           }
           case 'forward': {
-            const tab = tabs.requireTab(null)
+            const tab = tabs.getActive()
+            if (!tab) return noTab
             const nav = tab.view.webContents.navigationHistory
             if (nav.canGoForward()) nav.goForward()
             break
           }
           case 'reload': {
-            const tab = tabs.requireTab(null)
+            const tab = tabs.getActive()
+            if (!tab) return noTab
             tab.view.webContents.reload()
             break
           }
@@ -1200,11 +1361,9 @@ function setupIpc(): void {
           case 'reopenClosed':
             tabs.reopenClosed()
             break
-          case 'duplicateTab': {
-            const tab = tabs.getTab(action.tabId)
-            if (tab) tabs.createTab(tab.view.webContents.getURL())
+          case 'duplicateTab':
+            if (action.tabId != null) tabs.duplicateTab(action.tabId)
             break
-          }
           case 'closeOthers':
             if (action.tabId != null) tabs.closeOthers(action.tabId)
             break
@@ -1212,13 +1371,43 @@ function setupIpc(): void {
             if (action.tabId != null) tabs.closeToRight(action.tabId)
             break
           case 'find': {
-            const tab = tabs.requireTab(null)
+            const tab = tabs.getActive()
+            if (!tab) return noTab
             if (action.url) tab.view.webContents.findInPage(action.url)
             else tab.view.webContents.stopFindInPage('clearSelection')
             break
           }
+          case 'findNext':
+          case 'findPrev': {
+            const tab = tabs.getActive()
+            if (!tab) return noTab
+            if (action.url) {
+              tab.view.webContents.findInPage(action.url, {
+                forward: action.type === 'findNext',
+                findNext: true
+              })
+            }
+            break
+          }
+          case 'stopLoad': {
+            const tab = tabs.getActive()
+            if (!tab) return noTab
+            tab.view.webContents.stop()
+            break
+          }
+          case 'zoom': {
+            const tab = tabs.getActive()
+            if (!tab) return noTab
+            const wc = tab.view.webContents
+            const delta =
+              typeof action.value === 'number' && Number.isFinite(action.value) ? action.value : 0
+            const next = delta === 0 ? 0 : Math.max(-5, Math.min(5, wc.getZoomLevel() + delta))
+            wc.setZoomLevel(next)
+            break
+          }
           case 'annotationMode': {
-            const tab = tabs.requireTab(null)
+            const tab = tabs.getActive()
+            if (!tab) return noTab
             tab.view.webContents.send('overlay:cmd', { kind: 'annotationMode' })
             break
           }
@@ -1232,6 +1421,120 @@ function setupIpc(): void {
     }
   )
 
+  // ---------- native menus (OS-rendered, so the page view is never covered) ----------
+  ipcMain.on('tabs:context-menu', (_e, tabId: number, x: number, y: number) => {
+    if (!tabs) return
+    const id = Number(tabId)
+    if (!Number.isFinite(id)) return
+    const infos = tabs.list()
+    const index = infos.findIndex((t) => t.id === id)
+    const tab = tabs.getTab(id)
+    popupAppMenu(
+      [
+        { label: '复制标签页', enabled: tab != null, click: () => tabs?.duplicateTab(id) },
+        {
+          label: '关闭其他标签页',
+          enabled: tab != null && infos.length > 1,
+          click: () => tabs?.closeOthers(id)
+        },
+        {
+          label: '关闭右侧标签页',
+          enabled: tab != null && index >= 0 && index < infos.length - 1,
+          click: () => tabs?.closeToRight(id)
+        },
+        { type: 'separator' },
+        {
+          label: '重新打开关闭的标签页',
+          enabled: tabs.canReopenClosed(),
+          click: () => tabs?.reopenClosed()
+        }
+      ],
+      Number(x),
+      Number(y)
+    )
+  })
+
+  ipcMain.on('search:engine-menu', (_e, x: number, y: number) => {
+    const current = loadSettings().searchEngine
+    const template: MenuItemConstructorOptions[] = Object.entries(SEARCH_ENGINES).map(
+      ([key, engine]) => ({
+        label: engine.name,
+        type: 'radio',
+        checked: key === current,
+        click: () => {
+          const r = applySearchEngine(key)
+          if (!r.ok) {
+            logLine(`[search] engine save failed: ${r.error ?? ''}`)
+            return
+          }
+          try {
+            win?.webContents.send('search:engine-changed', key)
+          } catch {
+            /* window is going away */
+          }
+        }
+      })
+    )
+    popupAppMenu(template, Number(x), Number(y))
+  })
+
+  ipcMain.on(
+    'tools:menu',
+    (_e, x: number, y: number, state: { annotationActive?: boolean; theme?: string }) => {
+      const theme: ThemeSetting =
+        state?.theme === 'light' || state?.theme === 'dark' || state?.theme === 'system'
+          ? state.theme
+          : loadSettings().theme
+      const annotationActive =
+        tabs?.activeId != null
+          ? (annotationTabState.get(tabs.activeId) ?? false)
+          : state?.annotationActive === true
+      const template: MenuItemConstructorOptions[] = [
+        { label: '书签', click: () => sendBrowserShortcut('menu:library-bookmarks') },
+        { label: '浏览记录', click: () => sendBrowserShortcut('menu:library-history') },
+        { label: '下载内容', click: () => sendBrowserShortcut('menu:library-downloads') },
+        { type: 'separator' },
+        {
+          label: '页面标注',
+          type: 'checkbox',
+          checked: annotationActive,
+          click: () => sendAnnotationState(toggleAnnotationMode().active)
+        },
+        { label: '设置急停键', click: () => sendBrowserShortcut('menu:stopkeys') },
+        { type: 'separator' },
+        ...(['system', 'light', 'dark'] as const).map(
+          (t): MenuItemConstructorOptions => ({
+            label: THEME_LABELS[t],
+            type: 'radio',
+            checked: theme === t,
+            click: () => {
+              const r = applyThemeSetting(t)
+              if (!r.ok) {
+                logLine(`[theme] save failed: ${r.error ?? ''}`)
+                return
+              }
+              try {
+                win?.webContents.send('theme:changed', t)
+              } catch {
+                /* window is going away */
+              }
+            }
+          })
+        ),
+        {
+          label: '下载前询问保存位置',
+          type: 'checkbox',
+          checked: loadSettings().confirmBeforeDownload,
+          click: (item) => {
+            const r = saveConfirmBeforeDownload(item.checked)
+            if (!r.ok) logLine(`[downloads] confirm-before-download save failed: ${r.error ?? ''}`)
+          }
+        }
+      ]
+      popupAppMenu(template, Number(x), Number(y))
+    }
+  )
+
   // The renderer tells us which panel is visible — annotations are routed to
   // the built-in agent only when that panel is the active one.
   ipcMain.handle('ui:panel-mode', (_e, mode: string) => {
@@ -1241,18 +1544,20 @@ function setupIpc(): void {
 
   // Toggle annotation mode for the active tab (state is mirrored per tab and
   // echoed back through `annotation:state` when the overlay confirms).
-  ipcMain.handle('annotation:toggle', () => {
-    const tab = tabs?.getActive()
-    if (!tab) return { ok: false, active: false }
-    const next = !(annotationTabState.get(tab.id) ?? false)
-    annotationTabState.set(tab.id, next)
-    overlaySend(tab, { kind: 'annotationMode', active: next })
-    return { ok: true, active: next }
-  })
+  ipcMain.handle('annotation:toggle', () => toggleAnnotationMode())
 
   ipcMain.on(
     'overlay:event',
-    (_e, ev: { kind?: string; via?: string; annotationId?: string; active?: boolean }) => {
+    (
+      _e,
+      ev: {
+        kind?: string
+        via?: string
+        annotationId?: string
+        active?: boolean
+        question?: string
+      }
+    ) => {
       if (ev?.kind === 'ready') {
         try {
           _e.sender.send('overlay:cmd', {
@@ -1274,7 +1579,12 @@ function setupIpc(): void {
         if (newly) saveAiPaused(true)
         hideAllVisuals(tabs?.getActive() ?? null)
         try {
-          win?.webContents.send('emergency:stop', { via: ev.via ?? 'unknown', aborted })
+          win?.webContents.send('emergency:stop', {
+            via: ev.via ?? 'unknown',
+            aborted,
+            killed,
+            dropped
+          })
           win?.webContents.send('emergency:state', { paused: true })
           win?.webContents.send('agent:confirm-cancel', {})
         } catch {
@@ -1297,7 +1607,7 @@ function setupIpc(): void {
       if (ev?.kind === 'annotationSubmit') {
         if (!annotationSubmitHandler) return
         const annotationId = String(ev.annotationId ?? '')
-        const replyResult = (ok: boolean, error?: string): void => {
+        const replyResult = (ok: boolean, error?: string, warning?: string): void => {
           // reply to the tab that submitted (not whichever tab is active now)
           const senderTabId = findTabIdBySender(_e.sender)
           const tab =
@@ -1310,6 +1620,7 @@ function setupIpc(): void {
             annotationId,
             ok,
             ...(error ? { error } : {}),
+            ...(warning ? { warning } : {}),
             ...(elementCount != null ? { elementCount } : {})
           })
         }
@@ -1319,7 +1630,15 @@ function setupIpc(): void {
               logLine(
                 `[annotation] submit ${annotationId || '?'} -> ${r.ok ? 'queued' : 'error: ' + (r.error ?? '')}`
               )
-              replyResult(r.ok, r.error)
+              let warning: string | undefined
+              if (r.ok) {
+                if (currentPanelMode === 'opencode' && !mirror.hasConsumer()) {
+                  warning = 'opencode 未连接：标注已排队，连接后自动送达'
+                } else if (currentPanelMode === 'agent' && !(ev.question ?? '').trim()) {
+                  warning = '已记录标注（未提问：AI 不会单独回应）'
+                }
+              }
+              replyResult(r.ok, r.error, warning)
             },
             (err) => {
               const message = (err as Error)?.message ?? String(err)
@@ -1402,11 +1721,8 @@ function setupIpc(): void {
 
   ipcMain.handle('theme:set', (_e, theme: string) => {
     const t: ThemeSetting = theme === 'light' || theme === 'dark' ? theme : 'system'
-    const saved = saveTheme(t)
-    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
-    nativeTheme.themeSource = t
-    applyWindowBackground()
-    logLine(`[theme] set to ${t}`)
+    const r = applyThemeSetting(t)
+    if (!r.ok) return r
     return { ok: true, theme: t }
   })
 
@@ -1514,6 +1830,23 @@ function setupIpc(): void {
           : undefined
       if (idx >= 0) {
         const prev = list[idx]
+        const nextAuthType =
+          input?.authType === 'import' ? 'import' : input?.authType === 'key' ? 'key' : prev.authType
+        const nextAuthSource =
+          input?.authSource === 'codex' || input?.authSource === 'opencode'
+            ? input.authSource
+            : input?.authType === 'key'
+              ? undefined
+              : prev.authSource
+        const nextAllowCustomHost =
+          typeof input?.allowCustomHost === 'boolean' ? input.allowCustomHost : prev.allowCustomHost
+        const trustError = providerTrustError(
+          nextAuthType,
+          nextAuthSource,
+          baseUrl,
+          nextAllowCustomHost
+        )
+        if (trustError) return { ok: false, error: trustError }
         list[idx] = {
           ...prev,
           name: String(input?.name ?? '').trim() || prev.name || deriveName(baseUrl),
@@ -1521,18 +1854,9 @@ function setupIpc(): void {
           model: String(input?.model ?? '').trim(),
           apiKey: apiKeyInput || prev.apiKey,
           protocol: isLlmProtocol(input?.protocol) ? input.protocol : prev.protocol,
-          authType:
-            input?.authType === 'import' ? 'import' : input?.authType === 'key' ? 'key' : prev.authType,
-          authSource:
-            input?.authSource === 'codex' || input?.authSource === 'opencode'
-              ? input.authSource
-              : input?.authType === 'key'
-                ? undefined
-                : prev.authSource,
-          allowCustomHost:
-            typeof input?.allowCustomHost === 'boolean'
-              ? input.allowCustomHost
-              : prev.allowCustomHost,
+          authType: nextAuthType,
+          authSource: nextAuthSource,
+          allowCustomHost: nextAllowCustomHost,
           idleTimeoutMs:
             typeof input?.idleTimeoutMs === 'number' &&
             Number.isFinite(input.idleTimeoutMs) &&
@@ -1545,6 +1869,13 @@ function setupIpc(): void {
         logLine(`[agent] provider updated: ${deriveName(baseUrl)}`)
         return { ok: true }
       }
+      const authType: 'key' | 'import' = input?.authType === 'import' ? 'import' : 'key'
+      const authSource =
+        input?.authSource === 'codex' || input?.authSource === 'opencode'
+          ? input.authSource
+          : undefined
+      const trustError = providerTrustError(authType, authSource, baseUrl, allowCustomHost)
+      if (trustError) return { ok: false, error: trustError }
       const id = newProviderId()
       list.push({
         id,
@@ -1553,11 +1884,8 @@ function setupIpc(): void {
         model: String(input?.model ?? '').trim(),
         apiKey: apiKeyInput,
         protocol: isLlmProtocol(input?.protocol) ? input.protocol : 'openai-chat',
-        authType: input?.authType === 'import' ? 'import' : 'key',
-        authSource:
-          input?.authSource === 'codex' || input?.authSource === 'opencode'
-            ? input.authSource
-            : undefined,
+        authType,
+        authSource,
         allowCustomHost,
         idleTimeoutMs
       })
@@ -1597,7 +1925,7 @@ function setupIpc(): void {
       if (imported.length === 0) {
         return {
           ok: false,
-          error: '未在 opencode 配置中找到可用 provider（需要同时有 apiKey 和 baseURL）'
+          error: '未在 opencode 配置中找到可用 provider：至少需要 Base URL；本地服务（如 Ollama）可不填 API Key'
         }
       }
       const s = loadSettings()
@@ -1653,8 +1981,10 @@ function setupIpc(): void {
 
   ipcMain.handle('agents:list', () => listAgentTools())
 
-  ipcMain.handle('agents:add', (_e, name: string, dir: string, command?: string) =>
-    addCustomAgent(String(name ?? ''), String(dir ?? ''), String(command ?? ''))
+  ipcMain.handle(
+    'agents:add',
+    (_e, name: string, dir: string, command?: string, cwd?: string) =>
+      addCustomAgent(String(name ?? ''), String(dir ?? ''), String(command ?? ''), String(cwd ?? ''))
   )
 
   ipcMain.handle('agents:remove', (_e, id: string) => {
@@ -1838,12 +2168,16 @@ function setupIpc(): void {
   }))
 
   ipcMain.handle('search:engine-set', (_e, engine: string) => {
-    if (typeof engine !== 'string' || !(engine in SEARCH_ENGINES)) {
-      return { ok: false, error: '未知搜索引擎' }
+    const r = applySearchEngine(engine)
+    if (r.ok) {
+      try {
+        win?.webContents.send('search:engine-changed', engine)
+      } catch {
+        /* window is going away */
+      }
+      return { ok: true }
     }
-    const saved = saveSearchEngine(engine as keyof typeof SEARCH_ENGINES)
-    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
-    return { ok: true }
+    return r
   })
 
   ipcMain.handle('emergency:keys-get', () => ({ keys: loadSettings().emergencyStopKeys }))
@@ -1902,6 +2236,18 @@ function setupIpc(): void {
 app.on('window-all-closed', () => {
   // standard app behavior: stay resident on macOS until Cmd+Q
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('activate', () => {
+  // macOS dock click: recreate the window when none is open, else bring it back
+  if (!app.isReady()) return
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    return
+  }
+  createWindow()
 })
 
 app.on('will-quit', () => {

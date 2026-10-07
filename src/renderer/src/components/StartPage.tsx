@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { BookmarkRecord, HistoryRecord } from '../../../shared/protocol'
 
 interface Props {
@@ -20,6 +20,7 @@ export function StartPage({ onNavigate, bookmarks = [], history = [] }: Props): 
       setEngineKey(s.engine)
       setEngines(s.engines)
     })
+    return window.cobrowse.onSearchEngineChanged((k) => setEngineKey(k))
   }, [])
 
   useEffect(() => {
@@ -43,10 +44,8 @@ export function StartPage({ onNavigate, bookmarks = [], history = [] }: Props): 
   }
 
   const engineName = engines.find((e) => e.key === engineKey)?.name ?? '百度'
-  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    inputRef.current?.focus()
     const t = setInterval(() => setNow(new Date()), 30_000)
     return () => clearInterval(t)
   }, [])
@@ -104,7 +103,6 @@ export function StartPage({ onNavigate, bookmarks = [], history = [] }: Props): 
             <line x1="16.5" y1="16.5" x2="21" y2="21" strokeLinecap="round" />
           </svg>
           <input
-            ref={inputRef}
             value={value}
             spellCheck={false}
             placeholder="搜索或输入网址"

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export interface AgentToolInfo {
   id: string
@@ -62,6 +62,13 @@ export function ExternalToolPanel({
   const [syncStage, setSyncStage] = useState(0)
   const [modelMsg, setModelMsg] = useState('')
   const [watchError, setWatchError] = useState(false)
+  const delTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
+    }
+  }, [])
 
   const refresh = async (): Promise<void> => {
     setError('')
@@ -167,16 +174,26 @@ export function ExternalToolPanel({
     setModelMsg(r.ok ? `已写入全局配置（备份：${r.backupPath ?? ''}）` : (r.error ?? '同步失败'))
   }
 
+  const armDelReset = (): void => {
+    if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
+    delTimerRef.current = window.setTimeout(() => setDelStage(0), 4000)
+  }
+
   const removeTool = async (): Promise<void> => {
     if (!tool || tool.builtin) return
     if (delStage === 0) {
       setDelStage(1)
-      setTimeout(() => setDelStage(0), 4000)
+      armDelReset()
       return
     }
     if (delStage === 1) {
       setDelStage(2)
+      armDelReset()
       return
+    }
+    if (delTimerRef.current != null) {
+      window.clearTimeout(delTimerRef.current)
+      delTimerRef.current = null
     }
     setDelStage(0)
     await window.cobrowse.agentsRemove(tool.id)
@@ -227,6 +244,8 @@ export function ExternalToolPanel({
           »
         </button>
       </div>
+
+      {tool?.note && <div className="external-hint">{tool.note}</div>}
 
       {modelCapable && (
         <div className="model-row">
@@ -338,9 +357,13 @@ export function ExternalToolPanel({
       {busy && <div className="external-hint">正在加载会话…</div>}
       {!busy && newHint && !opened && (
         <div className="external-hint">
-          {canStartFromPanel
-            ? '新对话：在下方输入第一条消息，将以无头模式启动（Enter 发送）'
-            : '该工具不支持从面板发送消息，请在 CLI 中继续'}
+          {!tool
+            ? '未选择外部工具：请在顶部下拉中选择或添加自定义工具'
+            : !available
+              ? `${tool.name} 未检测到可用命令，仅可浏览历史会话；继续对话请在对应的 CLI 中进行`
+              : canStartFromPanel
+                ? '新对话：在下方输入第一条消息，将以无头模式启动（Enter 发送）'
+                : '该工具不支持从面板发送消息，请在对应的 CLI 中继续'}
         </div>
       )}
       {!busy && opened && (

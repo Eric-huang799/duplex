@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LoadErrorInfo, MirrorEvent, TabInfo } from '../../shared/protocol'
-import { matchesBinding } from '../../shared/hotkeys'
+import { matchesBinding, parseBinding } from '../../shared/hotkeys'
 import type { PermissionRequest } from './components/PermissionCard'
 import { TabBar } from './components/TabBar'
 import { Toolbar } from './components/Toolbar'
@@ -36,6 +36,22 @@ function savedPanelMode(): PanelMode | null {
   return saved === 'agent' || saved === 'external' || saved === 'opencode' ? saved : null
 }
 
+interface EmergencyStopEvent {
+  via?: string
+  aborted?: boolean | number
+  killed?: number
+  dropped?: number
+}
+
+function emergencyStopText(s: EmergencyStopEvent): string {
+  const ops = typeof s.aborted === 'number' ? s.aborted : null
+  const killed = typeof s.killed === 'number' ? s.killed : null
+  const dropped = typeof s.dropped === 'number' ? s.dropped : null
+  if (ops == null && killed == null && dropped == null) return 'AI 操作已全部切断'
+  const n = ops ?? (s.aborted === true ? 1 : 0)
+  return `中断 ${n} 个操作、终止 ${killed ?? 0} 个外部进程、丢弃 ${dropped ?? 0} 条排队消息`
+}
+
 export default function App(): React.JSX.Element {
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
@@ -57,6 +73,7 @@ export default function App(): React.JSX.Element {
   const [stopKeys, setStopKeys] = useState<string[]>(['F2', 'Ctrl+Shift+K'])
   const [stopToast, setStopToast] = useState('')
   const [toast, setToast] = useState('')
+  const [findResult, setFindResult] = useState<{ matches: number; activeMatch: number } | null>(null)
   const [loadError, setLoadError] = useState<LoadErrorInfo | null>(null)
   const [annotationActive, setAnnotationActive] = useState(false)
   const [aiPaused, setAiPaused] = useState(false)
@@ -64,6 +81,8 @@ export default function App(): React.JSX.Element {
   const [initialShowProviders, setInitialShowProviders] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
   const toggleBookmarkRef = useRef<() => void>(() => {})
+  const downloadsRef = useRef<DownloadRecord[]>([])
+  const downloadsLoadedRef = useRef(false)
   const toastTimerRef = useRef<number | null>(null)
   const stopToastTimerRef = useRef<number | null>(null)
   const loadErrTimerRef = useRef<number | null>(null)
@@ -75,6 +94,7 @@ export default function App(): React.JSX.Element {
   const closeFind = useCallback((): void => {
     setFindOpen(false)
     setFindText('')
+    setFindResult(null)
     void window.cobrowse.tabAction({ type: 'find', url: '' })
   }, [])
 
@@ -95,15 +115,63 @@ export default function App(): React.JSX.Element {
     }, ms)
   }, [])
 
+  const applyDownloads = useCallback(
+    (rows: DownloadRecord[], initial = false): void => {
+      if (!initial && downloadsLoadedRef.current) {
+        const prev = new Map(downloadsRef.current.map((d) => [d.id, d] as const))
+        for (const row of rows) {
+          const before = prev.get(row.id)
+          if (row.state === 'completed' && before?.state !== 'completed') {
+            showToast(`下载完成：${row.filename}`)
+          } else if (row.state === 'interrupted' && before?.state !== 'interrupted') {
+            showToast(`下载中断：${row.filename}`)
+          }
+        }
+      }
+      downloadsLoadedRef.current = true
+      downloadsRef.current = rows
+      setDownloads(rows)
+    },
+    [showToast]
+  )
+
+  const navigate = useCallback(
+    (url: string): void => {
+      void window.cobrowse.tabAction({ type: 'navigate', url }).then((r) => {
+        const res = r as { ok?: boolean; error?: string } | undefined
+        if (res && res.ok === false) showToast(res.error || '导航失败')
+      })
+    },
+    [showToast]
+  )
+
+  const newTab = useCallback((): void => {
+    void window.cobrowse.tabAction({ type: 'newTab' }).then(() => {
+      window.setTimeout(() => window.dispatchEvent(new Event('duplex:focus-address')), 0)
+    })
+  }, [])
+
+  const findNext = useCallback((): void => {
+    if (!findText) return
+    void window.cobrowse.tabAction({ type: 'findNext', url: findText })
+  }, [findText])
+
+  const findPrev = useCallback((): void => {
+    if (!findText) return
+    void window.cobrowse.tabAction({ type: 'findPrev', url: findText })
+  }, [findText])
+
+  const respondConfirm = useCallback((id: number, ok: boolean): void => {
+    void window.cobrowse.agentConfirmRespond(id, ok)
+    setConfirms((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, state: ok ? 'allowed' : 'denied' } : c))
+    )
+  }, [])
+
   useEffect(() => {
     setChromeOverlay('library', library !== null)
     return () => setChromeOverlay('library', false)
   }, [library, setChromeOverlay])
-
-  useEffect(() => {
-    setChromeOverlay('find', findOpen)
-    return () => setChromeOverlay('find', false)
-  }, [findOpen, setChromeOverlay])
 
   useEffect(() => {
     void window.cobrowse.ready().then((s) => {
@@ -113,8 +181,9 @@ export default function App(): React.JSX.Element {
     })
     void window.cobrowse.browserData().then((data) => setBrowserData(data))
     const offBrowserData = window.cobrowse.onBrowserData(setBrowserData)
-    void window.cobrowse.downloadsList().then(setDownloads)
-    const offDownloads = window.cobrowse.onDownloads(setDownloads)
+    void window.cobrowse.downloadsList().then((rows) => applyDownloads(rows, true))
+    const offDownloads = window.cobrowse.onDownloads((rows) => applyDownloads(rows))
+    const offFindResult = window.cobrowse.onFindResult((r) => setFindResult(r))
     const offAnnotation = window.cobrowse.onAnnotationState(setAnnotationActive)
     const offLoadError = window.cobrowse.onLoadError((info) => {
       setLoadError(info)
@@ -130,7 +199,16 @@ export default function App(): React.JSX.Element {
       if (action === 'find') setFindOpen(true)
       if (action === 'togglePanel') toggleAI()
       if (action === 'annotationToggle') void window.cobrowse.annotationToggle()
+      if (action === 'menu:library-bookmarks') setLibrary('bookmarks')
+      if (action === 'menu:library-history') setLibrary('history')
+      if (action === 'menu:library-downloads') setLibrary('downloads')
+      if (action === 'menu:stopkeys') window.dispatchEvent(new Event('duplex:open-stopkeys'))
     })
+    const onToast = (e: Event): void => {
+      const detail = (e as CustomEvent).detail
+      if (typeof detail === 'string' && detail) showToast(detail)
+    }
+    window.addEventListener('duplex:toast', onToast)
     // No explicit mode chosen yet: default to the built-in agent (opencode is
     // opt-in) and open the provider setup when nothing is configured.
     if (savedPanelMode() === null) {
@@ -203,44 +281,57 @@ export default function App(): React.JSX.Element {
       offConfirm()
       offConfirmCancel()
       offDownloads()
+      offFindResult()
       offAnnotation()
       offLoadError()
       offShortcut()
       offBrowserData()
+      window.removeEventListener('duplex:toast', onToast)
     }
   }, [])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey) return
+      const mod = e.ctrlKey || e.metaKey
+      if (e.altKey && !mod) {
+        if (e.key === 'ArrowLeft') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'back' }) }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'forward' }) }
+        return
+      }
+      if (!mod || e.altKey) return
       const key = e.key.toLowerCase()
       const editing = (e.target as HTMLElement | null)?.matches?.('input,textarea,[contenteditable="true"]')
       if (key === 'l') { e.preventDefault(); window.dispatchEvent(new Event('duplex:focus-address')) }
       else if (key === 't' && e.shiftKey) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reopenClosed' }) }
-      else if (key === 't') {
-        e.preventDefault()
-        void window.cobrowse.tabAction({ type: 'newTab' }).then(() => {
-          window.setTimeout(() => window.dispatchEvent(new Event('duplex:focus-address')), 0)
-        })
-      }
+      else if (key === 't') { e.preventDefault(); newTab() }
       else if (key === 'w' && !e.shiftKey && tabs.length) { e.preventDefault(); void window.cobrowse.tabAction({ type: 'closeTab', tabId: activeTabId ?? undefined }) }
       else if (key === 'r') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'reload' }) }
       else if (key === 'd') { e.preventDefault(); void toggleBookmark() }
       else if (key === 'f' && !editing) { e.preventDefault(); setFindOpen(true) }
-      else if (key === 'b' && !e.shiftKey) { e.preventDefault(); toggleAI() }
+      else if (key === 'b' && !e.shiftKey && !editing) { e.preventDefault(); toggleAI() }
       else if (key === 'a' && e.shiftKey) { e.preventDefault(); void window.cobrowse.annotationToggle() }
       else if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); cycleTab(-1) }
       else if (e.key === 'Tab') { e.preventDefault(); cycleTab(1) }
+      else if (/^[1-9]$/.test(key)) {
+        e.preventDefault()
+        const target = tabs[key === '9' ? tabs.length - 1 : Number(key) - 1]
+        if (target) void window.cobrowse.tabAction({ type: 'switchTab', tabId: target.id })
+      }
+      else if (key === '=' || key === '+') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'zoom', value: 0.5 }) }
+      else if (key === '-' || key === '_') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'zoom', value: -0.5 }) }
+      else if (key === '0') { e.preventDefault(); void window.cobrowse.tabAction({ type: 'zoom', value: 0 }) }
     }
     const onEscape = (e: KeyboardEvent): void => {
       if (e.key !== 'Escape') return
       if (library) { setLibrary(null); return }
-      if (findOpen) closeFind()
+      if (findOpen) { closeFind(); return }
+      const pending = [...confirms].reverse().find((c) => c.state === 'pending')
+      if (pending) respondConfirm(pending.id, false)
     }
     window.addEventListener('keydown', onKey)
     window.addEventListener('keydown', onEscape)
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('keydown', onEscape) }
-  }, [tabs, activeTabId, browserData, findOpen, library, closeFind, toggleAI])
+  }, [tabs, activeTabId, browserData, findOpen, library, closeFind, toggleAI, newTab, confirms, respondConfirm])
 
   const cycleTab = (step: number): void => {
     if (!tabs.length) return
@@ -262,13 +353,6 @@ export default function App(): React.JSX.Element {
     }
   })
 
-  const respondConfirm = (id: number, ok: boolean): void => {
-    void window.cobrowse.agentConfirmRespond(id, ok)
-    setConfirms((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, state: ok ? 'allowed' : 'denied' } : c))
-    )
-  }
-
   useEffect(() => {
     void window.cobrowse
       .emergencyKeysGet()
@@ -280,11 +364,17 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!stopKeys.some((b) => matchesBinding(b, e))) return
+      const binding = stopKeys.find((b) => matchesBinding(b, e))
+      if (!binding) return
       // let the capture input in the hotkey settings dialog record keys instead
       const t = e.target as HTMLElement | null
       if (t?.closest?.('.stopkey-capture')) return
-      if (t?.matches?.('input,textarea,[contenteditable="true"]')) return
+      // in an editable field a bare single key (F2) stays with the editor;
+      // any combination with Ctrl/Alt/Shift/Meta still fires the emergency stop
+      if (t?.matches?.('input,textarea,[contenteditable="true"]')) {
+        const parsed = parseBinding(binding)
+        if (!parsed || !(parsed.ctrl || parsed.alt || parsed.shift || parsed.meta)) return
+      }
       e.preventDefault()
       e.stopPropagation()
       // emergency stop: the main process aborts in-flight operations, kills
@@ -302,8 +392,8 @@ export default function App(): React.JSX.Element {
       if (!paused && pausedRef.current) showToast('AI 已恢复')
       pausedRef.current = paused
     })
-    const offStop = window.cobrowse.onEmergencyStop(() => {
-      setStopToast('已急停：AI 操作已全部切断（发消息或点「恢复」继续）')
+    const offStop = window.cobrowse.onEmergencyStop((s) => {
+      setStopToast(`已急停：${emergencyStopText(s)}`)
       if (stopToastTimerRef.current != null) window.clearTimeout(stopToastTimerRef.current)
       stopToastTimerRef.current = window.setTimeout(() => {
         stopToastTimerRef.current = null
@@ -433,27 +523,53 @@ export default function App(): React.JSX.Element {
           activeTabId={activeTabId}
           onSwitch={(id) => void window.cobrowse.tabAction({ type: 'switchTab', tabId: id })}
           onClose={(id) => void window.cobrowse.tabAction({ type: 'closeTab', tabId: id })}
-          onNew={() => void window.cobrowse.tabAction({ type: 'newTab' })}
-          onContext={(action, id) => void window.cobrowse.tabAction({ type: action, tabId: id })}
-          onChromeOverlayChange={setChromeOverlay}
+          onNew={newTab}
         />
         <Toolbar
           active={activeTab}
-          onAction={(a, url) => void window.cobrowse.tabAction({ type: a, url })}
+          onAction={(a, url) => {
+            if (a === 'navigate' && url) navigate(url)
+            else void window.cobrowse.tabAction({ type: a, url })
+          }}
           onStopKeysChanged={(keys) => setStopKeys(keys)}
           bookmarked={browserData.bookmarks.some((b) => b.url === activeTab?.url)}
           onBookmark={() => void toggleBookmark()}
-          onOpenLibrary={setLibrary}
           onToggleAI={toggleAI}
           aiOpen={!collapsed}
           onChromeOverlayChange={setChromeOverlay}
           annotationActive={annotationActive}
           onToggleAnnotation={() => void window.cobrowse.annotationToggle()}
         />
+        {findOpen && (
+          <div className="findbar findbar-flow">
+            <input
+              autoFocus
+              placeholder="在页面中查找"
+              value={findText}
+              onChange={(e) => {
+                setFindText(e.target.value)
+                void window.cobrowse.tabAction({ type: 'find', url: e.target.value })
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  if (e.shiftKey) findPrev()
+                  else findNext()
+                }
+              }}
+            />
+            <span className="find-count">
+              {findResult ? `${findResult.activeMatch}/${findResult.matches}` : ''}
+            </span>
+            <button type="button" title="上一个" onClick={findPrev}>↑</button>
+            <button type="button" title="下一个" onClick={findNext}>↓</button>
+            <button type="button" onClick={closeFind}>关闭</button>
+          </div>
+        )}
         <div className="content" ref={contentRef}>
           {showStartPage && (
             <StartPage
-              onNavigate={(v) => void window.cobrowse.tabAction({ type: 'navigate', url: v })}
+              onNavigate={navigate}
               bookmarks={browserData.bookmarks}
               history={browserData.history}
             />
@@ -461,15 +577,14 @@ export default function App(): React.JSX.Element {
         </div>
         {library && <div className="library-overlay"><BrowserPanel
           section={library} data={browserData} downloads={downloads} onClose={() => setLibrary(null)}
-          onNavigate={(url) => { setLibrary(null); void window.cobrowse.tabAction({ type: 'navigate', url }) }}
+          onNavigate={(url) => { setLibrary(null); navigate(url) }}
           onRemoveHistory={(url, visitedAt) => { void window.cobrowse.historyRemove(url, visitedAt).then(() => window.cobrowse.browserData()).then(setBrowserData) }}
           onClearHistory={() => { void window.cobrowse.historyClear().then(() => window.cobrowse.browserData()).then(setBrowserData) }}
           onCancelDownload={(id) => { void window.cobrowse.downloadsCancel(id) }}
-          onClearDownloads={() => { void window.cobrowse.downloadsClear().then(() => window.cobrowse.downloadsList()).then(setDownloads) }}
-          onOpenDownload={(id) => { void window.cobrowse.downloadsOpen(id) }}
-          onRevealDownload={(id) => { void window.cobrowse.downloadsReveal(id) }}
+          onClearDownloads={() => { void window.cobrowse.downloadsClear().then(() => window.cobrowse.downloadsList()).then((rows) => applyDownloads(rows, true)) }}
+          onOpenDownload={(id) => { void window.cobrowse.downloadsOpen(id).then((r) => { if (!r.ok) showToast(r.error || '打开文件失败') }) }}
+          onRevealDownload={(id) => { void window.cobrowse.downloadsReveal(id).then((r) => { if (!r.ok) showToast(r.error || '定位文件失败') }) }}
         /></div>}
-        {findOpen && <div className="findbar"><input autoFocus placeholder="在页面中查找" value={findText} onChange={(e) => { setFindText(e.target.value); void window.cobrowse.tabAction({ type: 'find', url: e.target.value }) }} onKeyDown={(e) => { if (e.key === 'Enter') void window.cobrowse.tabAction({ type: 'find', url: findText }) }} /><button onClick={closeFind}>关闭</button></div>}
       </div>
 
       {collapsed ? (
@@ -500,20 +615,24 @@ export default function App(): React.JSX.Element {
         </>
       )}
 
-      {stopToast && <div className="stop-toast">{stopToast}</div>}
-      {toast && <div className="stop-toast">{toast}</div>}
-      {loadError && (
-        <div className="stop-toast" style={{ pointerEvents: 'auto' }}>
-          页面加载失败：{loadError.desc}（{loadError.url}）
-          <button
-            style={{ pointerEvents: 'auto', marginLeft: 8, cursor: 'pointer' }}
-            onClick={() => {
-              setLoadError(null)
-              void window.cobrowse.tabAction({ type: 'reload' })
-            }}
-          >
-            重试
-          </button>
+      {(stopToast || toast || loadError) && (
+        <div className="toast-stack">
+          {stopToast && <div className="stop-toast">{stopToast}</div>}
+          {toast && <div className="stop-toast">{toast}</div>}
+          {loadError && (
+            <div className="stop-toast" style={{ pointerEvents: 'auto' }}>
+              页面加载失败：{loadError.desc}（{loadError.url}）
+              <button
+                style={{ pointerEvents: 'auto', marginLeft: 8, cursor: 'pointer' }}
+                onClick={() => {
+                  setLoadError(null)
+                  void window.cobrowse.tabAction({ type: 'reload' })
+                }}
+              >
+                重试
+              </button>
+            </div>
+          )}
         </div>
       )}
 

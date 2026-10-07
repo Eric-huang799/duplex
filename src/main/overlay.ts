@@ -33,6 +33,7 @@ export type OverlayCommand =
       annotationId: string
       ok: boolean
       error?: string
+      warning?: string
       elementCount?: number
     }
   | { kind: 'hideAll' }

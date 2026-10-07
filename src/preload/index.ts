@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { BrowserDataSnapshot, ChatSendResult, ContentBounds, DownloadRecord, LoadErrorInfo } from '../shared/protocol'
 
-type TabAction = { type: string; url?: string; tabId?: number }
+type TabAction = { type: string; url?: string; tabId?: number; value?: number }
 
 const api = {
   ready: () => ipcRenderer.invoke('ui:ready') as Promise<unknown>,
@@ -51,6 +51,39 @@ const api = {
     ipcRenderer.on('browser:shortcut', listener)
     return () => ipcRenderer.removeListener('browser:shortcut', listener)
   },
+  getPlatform: (): string => process.platform,
+  onFindResult: (cb: (r: { matches: number; activeMatch: number }) => void): (() => void) => {
+    const listener = (_e: unknown, r: { matches: number; activeMatch: number }): void => cb(r)
+    ipcRenderer.on('browser:find-result', listener)
+    return () => ipcRenderer.removeListener('browser:find-result', listener)
+  },
+  showTabContextMenu: (tabId: number, x: number, y: number): void => {
+    ipcRenderer.send('tabs:context-menu', tabId, x, y)
+  },
+  showEngineMenu: (x: number, y: number): void => {
+    ipcRenderer.send('search:engine-menu', x, y)
+  },
+  showToolsMenu: (
+    x: number,
+    y: number,
+    state: { annotationActive: boolean; theme: string }
+  ): void => {
+    ipcRenderer.send('tools:menu', x, y, state)
+  },
+  onSearchEngineChanged: (cb: (engine: string) => void): (() => void) => {
+    const listener = (_e: unknown, engine: string): void => cb(engine)
+    ipcRenderer.on('search:engine-changed', listener)
+    return () => ipcRenderer.removeListener('search:engine-changed', listener)
+  },
+  onThemeChanged: (cb: (theme: 'system' | 'light' | 'dark') => void): (() => void) => {
+    const listener = (_e: unknown, theme: 'system' | 'light' | 'dark'): void => cb(theme)
+    ipcRenderer.on('theme:changed', listener)
+    return () => ipcRenderer.removeListener('theme:changed', listener)
+  },
+  downloadConfirmGet: () =>
+    ipcRenderer.invoke('downloads:confirm-get') as Promise<{ enabled: boolean }>,
+  downloadConfirmSet: (enabled: boolean) =>
+    ipcRenderer.invoke('downloads:confirm-set', enabled) as Promise<{ ok: boolean; error?: string }>,
   onLoadError: (cb: (info: LoadErrorInfo) => void): (() => void) => {
     const listener = (_e: unknown, info: LoadErrorInfo): void => cb(info)
     ipcRenderer.on('browser:load-error', listener)
@@ -161,8 +194,8 @@ const api = {
       bridgeFound: boolean
     }>,
   agentsList: () => ipcRenderer.invoke('agents:list') as Promise<unknown>,
-  agentsAdd: (name: string, dir: string, command?: string) =>
-    ipcRenderer.invoke('agents:add', name, dir, command) as Promise<{
+  agentsAdd: (name: string, dir: string, command?: string, cwd?: string) =>
+    ipcRenderer.invoke('agents:add', name, dir, command, cwd) as Promise<{
       ok: boolean
       id?: string
       error?: string
@@ -221,8 +254,13 @@ const api = {
     ipcRenderer.on('emergency:state', listener)
     return () => ipcRenderer.removeListener('emergency:state', listener)
   },
-  onEmergencyStop: (cb: (s: { via?: string; aborted?: boolean }) => void): (() => void) => {
-    const listener = (_e: unknown, s: { via?: string; aborted?: boolean }): void => cb(s)
+  onEmergencyStop: (
+    cb: (s: { via?: string; aborted?: boolean; killed?: number; dropped?: number }) => void
+  ): (() => void) => {
+    const listener = (
+      _e: unknown,
+      s: { via?: string; aborted?: boolean; killed?: number; dropped?: number }
+    ): void => cb(s)
     ipcRenderer.on('emergency:stop', listener)
     return () => ipcRenderer.removeListener('emergency:stop', listener)
   },

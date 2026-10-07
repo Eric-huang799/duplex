@@ -8,7 +8,7 @@ import { chatStream, parseToolArguments, type ChatMessage } from './llm'
 import { resolveImportedKey } from './auth-import'
 import { skillsPromptSection } from './skills'
 import { buildOpenAiTools } from './tools-schema'
-import { loadAgentSessions, saveAgentSessions, type AgentSession } from './store'
+import { loadAgentSessionsWithMeta, saveAgentSessions, type AgentSession } from './store'
 import type { ToolExecutor, ToolResult } from '../tool-handlers'
 
 export interface AgentUiEvent {
@@ -100,8 +100,13 @@ class ToolArgsAbortError extends Error {}
 export interface AgentDeps {
   /** Injectable for tests; defaults to the on-disk store. */
   load?: () => AgentSession[]
+  /** Like load, but also reports which sessions lost history to the storage caps. */
+  loadWithMeta?: () => { sessions: AgentSession[]; truncatedIds: Set<string> }
   save?: (sessions: AgentSession[]) => void
 }
+
+/** Constant partID so the one-time truncation notice is never duplicated. */
+const TRUNCATION_NOTICE_PART_ID = 'sys-history-truncated'
 
 export class AgentRuntime {
   private sessions: AgentSession[]
@@ -112,7 +117,8 @@ export class AgentRuntime {
   private abortCtl: AbortController | null = null
   private seq = 0
   private nextId = 1
-  private loadFn: () => AgentSession[]
+  /** Sessions whose loaded history was cut by the store caps (fires one notice each). */
+  private truncatedIds: Set<string>
   private saveFn: (sessions: AgentSession[]) => void
   private persistTimer: ReturnType<typeof setTimeout> | null = null
   /** Pending 60ms-later auto-send of the next queued message (cancelled by abort). */
@@ -129,9 +135,14 @@ export class AgentRuntime {
     private chatFn: typeof chatStream = chatStream,
     deps?: AgentDeps
   ) {
-    this.loadFn = deps?.load ?? loadAgentSessions
     this.saveFn = deps?.save ?? saveAgentSessions
-    this.sessions = this.loadFn()
+    const loaded = deps?.loadWithMeta
+      ? deps.loadWithMeta()
+      : deps?.load
+        ? { sessions: deps.load(), truncatedIds: new Set<string>() }
+        : loadAgentSessionsWithMeta()
+    this.sessions = loaded.sessions
+    this.truncatedIds = loaded.truncatedIds
     if (this.sessions.length === 0) {
       this.sessions = [this.makeSession()]
     }
@@ -140,6 +151,54 @@ export class AgentRuntime {
     this.currentId = first.id
     this.messages = first.messages
     this.uiLog = first.uiEvents
+    // restored events keep their ids; continue numbering after them so React
+    // keys never collide between the restored log and this run's new events
+    this.bumpNextId()
+    this.noticeTruncation(first)
+  }
+
+  /** Continue id numbering after every restored event log. */
+  private bumpNextId(): void {
+    let max = 0
+    for (const s of this.sessions) {
+      for (const e of s.uiEvents) {
+        const id = (e as { id?: unknown }).id
+        if (typeof id === 'number' && Number.isFinite(id) && id > max) max = id
+      }
+    }
+    this.nextId = max + 1
+  }
+
+  /**
+   * One-time separator above the oldest retained message when the store cut
+   * this session's history at load time. Plain assistant text (visible in the
+   * agent panel, unlike internal session events) and a constant partID keeps it
+   * from ever being shown twice.
+   */
+  private noticeTruncation(session: AgentSession): void {
+    if (!this.truncatedIds.has(session.id)) return
+    const already = session.uiEvents.some(
+      (e) => e.kind === 'text' && e.partID === TRUNCATION_NOTICE_PART_ID
+    )
+    if (already) return
+    const ev = {
+      kind: 'text',
+      role: 'assistant',
+      partID: TRUNCATION_NOTICE_PART_ID,
+      text: '（更早的消息已因存储上限不再保留）',
+      done: true,
+      sessionID: 'builtin',
+      messageID: 'builtin',
+      id: this.nextId++,
+      ts: Date.now()
+    }
+    session.uiEvents.unshift(ev)
+    try {
+      this.emitRaw(ev)
+    } catch {
+      /* the window may be gone; the event is still in the restored log */
+    }
+    this.schedulePersist()
   }
 
   private makeSession(): AgentSession {
@@ -234,6 +293,7 @@ export class AgentRuntime {
     this.currentId = s.id
     this.messages = s.messages
     this.uiLog = s.uiEvents
+    this.noticeTruncation(s)
     const ev = {
       kind: 'session',
       status: 'idle',
@@ -371,9 +431,9 @@ export class AgentRuntime {
   }
 
   /** A send that cannot start must keep the user's input visible in the panel. */
-  private failSend(text: string, error: string): { ok: false; error: string } {
+  private failSend(text: string, error: string, echo = true): { ok: false; error: string } {
     this.messages.push({ role: 'user', content: text })
-    this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
+    if (echo) this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
     this.emit({ kind: 'session', status: 'error', error })
     return { ok: false, error }
   }
@@ -396,7 +456,17 @@ export class AgentRuntime {
     })
   }
 
-  async send(text: string): Promise<{ ok: boolean; error?: string }> {
+  /**
+   * Run one user turn. `opts.fromQueue` is set by the auto-send pump: the
+   * queued bubble was already shown (with its "已排队" hint) when the message
+   * arrived, so the resend must not echo it to the UI again. History is only
+   * written here (never at queue time) so a queued message cannot leak into the
+   * still-running turn's context.
+   */
+  async send(
+    text: string,
+    opts?: { fromQueue?: boolean }
+  ): Promise<{ ok: boolean; error?: string }> {
     if (this.running) {
       // busy: queue the message and let the user see it — it will be sent
       // automatically when the current run finishes
@@ -410,9 +480,10 @@ export class AgentRuntime {
       })
       return { ok: true }
     }
+    const echo = !opts?.fromQueue
     const cfg = this.getConfig()
     if (!cfg.baseUrl || !cfg.model) {
-      return this.failSend(text, '未配置模型：请在设置中填写 Base URL 和模型名')
+      return this.failSend(text, '未配置模型：请在设置中填写 Base URL 和模型名', echo)
     }
     // resolve the runtime key: stored key, or imported from a local CLI login
     let apiKey = cfg.apiKey
@@ -420,12 +491,13 @@ export class AgentRuntime {
       if (!cfg.authSource) {
         return this.failSend(
           text,
-          '未配置模型：该配置选择了「导入凭据」，但未指定来源（codex / opencode）'
+          '未配置模型：该配置选择了「导入凭据」，但未指定来源（codex / opencode）',
+          echo
         )
       }
       const r = resolveImportedKey(cfg.authSource, cfg.providerName)
       if (!r.ok || !r.apiKey) {
-        return this.failSend(text, `导入凭据不可用：${r.error ?? '未知错误'}`)
+        return this.failSend(text, `导入凭据不可用：${r.error ?? '未知错误'}`, echo)
       }
       apiKey = r.apiKey
     }
@@ -459,7 +531,9 @@ export class AgentRuntime {
       this.messages[0] = { role: 'system', content: buildSystemPrompt() }
     }
     this.messages.push({ role: 'user', content: text })
-    this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
+    if (echo) {
+      this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
+    }
     let sessionError = false
     try {
       const tools = buildOpenAiTools()
@@ -658,7 +732,7 @@ export class AgentRuntime {
           if (this.running) return
           const next = this.queued.shift()
           if (next) {
-            void this.send(next).catch((e) => {
+            void this.send(next, { fromQueue: true }).catch((e) => {
               console.error('[agent] queued message failed to send:', e)
               this.emit({
                 kind: 'session',

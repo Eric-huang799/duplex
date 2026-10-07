@@ -161,7 +161,7 @@ export function createAnnotationSubmitHandler(
   const deliverAnnotation = deliver ?? defaultDeliver
   return async (payload) => {
     const tab: Tab | null = tabs.getActive()
-    if (!tab) return { ok: false, error: 'no active tab' }
+    if (!tab) return { ok: false, error: '没有活动的标签页（请先切换到一个网页）' }
     let info: AnnotateInfo
     try {
       const points =
@@ -179,7 +179,7 @@ export function createAnnotationSubmitHandler(
       return { ok: false, error: (e as Error)?.message ?? String(e) }
     }
     if (!info || typeof info.url !== 'string') {
-      return { ok: false, error: 'sampling failed (empty result)' }
+      return { ok: false, error: '标注采样失败（页面内容无法读取，可能受保护）' }
     }
 
     try {
