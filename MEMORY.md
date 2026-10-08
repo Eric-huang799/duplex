@@ -1,7 +1,8 @@
 # Duplex 项目记忆（CoBrowse）
 
 ## 当前版本
-- **0.2.6**（已推送 GitHub：`master` + 分支 `codex/v0.2.6` + tag `v0.2.6`；**CI 全绿，Release 已发布**：三平台 4 资产 https://github.com/Eric-huang799/duplex/releases/tag/v0.2.6）
+- **0.2.6**（已推送 GitHub：`master` + 分支 `codex/v0.2.6` + tag `v0.2.6`；**CI 全绿，Release 已发布并设为 Latest**：https://github.com/Eric-huang799/duplex/releases/tag/v0.2.6）
+- **覆盖版（2026-10-09，commit `9746392`）**：tag 已重指到该提交并覆盖发布（修复标注失步致命 bug + external 标注投递 + FB-001）；本机安装版已同步覆盖升级。CI 已加"上传后强制发布"步骤（`40cad45`），避免重打标签后 Release 变草稿。
 - 基线 v0.2.5 = commit 3341679；README 中英双版已更新到 0.2.6 行为（急停键语义、收录强调、作者邀请测试段落）
 - 首次 tag CI 曾因 macOS 腿的 3 条"未固定平台"测试失败；修复（显式平台参数）后重指标签重跑 → 三平台全绿、Release 自动生成
 - 源码根：`C:\Users\lenovo\Desktop\CoBrowse-0.2.5`
