@@ -83,8 +83,10 @@ describe('validateBinding', () => {
   })
 
   it('rejects system-reserved bindings', () => {
-    expect(validateBinding('Alt+F4').ok).toBe(false)
-    expect(validateBinding('Meta+K').ok).toBe(false)
+    expect(validateBinding('Alt+F4', 'win32').ok).toBe(false)
+    expect(validateBinding('Meta+K', 'win32').ok).toBe(false)
+    // Cmd combinations are legitimate on macOS
+    expect(validateBinding('Meta+K', 'darwin').ok).toBe(true)
   })
 })
 
@@ -97,7 +99,9 @@ describe('helpers', () => {
 
   it('buildCombo / displayParts', () => {
     expect(buildCombo({ alt: true }, 'f4')).toBe('Alt+F4')
-    expect(displayParts('Ctrl+Shift+ArrowUp')).toEqual(['Ctrl', 'Shift', '↑'])
+    // platform pinned so the expectations are identical on every CI runner
+    expect(displayParts('Ctrl+Shift+ArrowUp', 'win32')).toEqual(['Ctrl', 'Shift', '↑'])
+    expect(displayParts('Ctrl+Shift+ArrowUp', 'darwin')).toEqual(['⌃', '⇧', '↑'])
     expect(displayParts('Escape')).toEqual(['Esc'])
   })
 })

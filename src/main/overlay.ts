@@ -90,11 +90,11 @@ export function hideAllVisuals(tab: Tab | null): void {
  * Build the emergency-stop hint from the configured keys ("F2 急停"). Esc is
  * reserved for the annotation UI, so a non-Esc key is preferred when present.
  */
-export function formatTakeoverHint(keys: string[]): string {
+export function formatTakeoverHint(keys: string[], platform?: string): string {
   const usable = keys.filter((k) => typeof k === 'string' && k.length > 0)
   const key = usable.find((k) => k !== 'Escape') ?? usable[0]
   if (!key) return '急停（未设置快捷键）'
-  return `${displayParts(key).join('+')} 急停`
+  return `${displayParts(key, platform).join('+')} 急停`
 }
 
 /** The takeover hint for the current settings (dynamic — stop keys are configurable). */

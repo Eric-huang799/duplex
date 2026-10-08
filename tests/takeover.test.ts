@@ -41,10 +41,12 @@ describe('takeover hotkeys (Esc is UI-only by default)', () => {
   })
 
   it('shows a configured, non-Esc key in the status hint', () => {
-    expect(formatTakeoverHint(['F2', 'Ctrl+Shift+K'])).toBe('F2 急停')
-    expect(formatTakeoverHint(['Ctrl+Shift+K'])).toBe('Ctrl+Shift+K 急停')
+    // platform pinned so the expectations are identical on every CI runner
+    expect(formatTakeoverHint(['F2', 'Ctrl+Shift+K'], 'win32')).toBe('F2 急停')
+    expect(formatTakeoverHint(['Ctrl+Shift+K'], 'win32')).toBe('Ctrl+Shift+K 急停')
+    expect(formatTakeoverHint(['Ctrl+Shift+K'], 'darwin')).toBe('⌃+⇧+K 急停')
     // Esc can still be bound explicitly — then it is shown as-is
-    expect(formatTakeoverHint(['Escape'])).toBe('Esc 急停')
+    expect(formatTakeoverHint(['Escape'], 'win32')).toBe('Esc 急停')
   })
 
   it('falls back gracefully when no keys are configured', () => {
