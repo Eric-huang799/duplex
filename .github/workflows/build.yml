@@ -68,3 +68,5 @@ jobs:
           tag="${GITHUB_REF_NAME}"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Duplex $tag" --generate-notes
           gh release upload "$tag" artifacts/* --clobber
+          # Re-pushing a tag can leave its release as a draft: always ship it.
+          gh release edit "$tag" --draft=false --latest
