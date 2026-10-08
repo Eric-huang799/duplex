@@ -47,6 +47,7 @@
   ③ **FB-001 落地**：候选浏览器注册（Windows HKCU，仅打包版、绝不改默认）+ `duplex-open` shim 与 `BROWSER` 注入（面板 CLI / run_command / 脚本）+ 启动参数/second-instance/open-url URL 接收 + `POST /api/open` + 菜单「设为默认浏览器…」。
 - 调试注入 API（http-server.ts/index.ts）曾为未提交调试文件，0.2.6 起已提交并加 `isPackaged` 门控：开发可用、打包版不可达。
 - **待办管理**：用户反馈与延后项统一登记在 `docs/待办与用户反馈.md`（FB-001 起），**积累到 0.3.0 统一实施**（紧急/阻塞项除外）。
+- **测试对象候选（2026-10-09 记）**：后续端到端测试可加 `info.cern.ch`（世界上第一个网站，CERN 托管，极简纯文本、长期稳定）作为第二测试页——example.com 曾因页面改版导致 smoke 断言失效。已在待办登记，**下次迭代纳入 smoke**。
 - **社区收录（2026-10-08）**：Duplex 已被 punkpeye/awesome-mcp-servers 正式收录（PR #15385 已 merge，GitHub API 实查）；freemcp.space 自动列出（未验证，claim/opt-out 可选）；README 中英双版已加两枚收录徽章并推送 GitHub master（commit `3d311e3`）。注：本机到 github.com 主站间歇性超时，push 可用 `git -c http.curloptResolve=github.com:443:140.82.112.3` 强制解析。
 - 待办（延后）：命令面板/标签搜索/会话恢复/阅读模式/标签固定/多选批量/书签 HTML 导入导出、token/费用统计 UI、响应式适配、触屏标注。
 - 本机已安装 0.2.5 与开发版可并存：开发版需 `--user-data-dir` 独立目录避开单例锁；**本机安装版已于 2026-10-07 覆盖升级到 0.2.6**。
