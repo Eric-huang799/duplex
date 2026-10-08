@@ -2,6 +2,8 @@
 
 [![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
 [![Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex/badges/score.svg)](https://glama.ai/mcp/servers/Eric-huang799/duplex)
+[![awesome-mcp-servers](https://img.shields.io/badge/awesome--mcp--servers-listed-blue)](https://github.com/punkpeye/awesome-mcp-servers)
+[![freemcp.space](https://img.shields.io/badge/freemcp.space-listed-orange)](https://freemcp.space/featured/duplex)
 
 <p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex mascot"></p>
 
