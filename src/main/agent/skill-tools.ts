@@ -10,6 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { execFile, spawnSync, type ChildProcess } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
+import { duplexShimEnv, ensureOpenShim } from '../open-shim'
 import { interruptibleAwait, operationSignal } from '../interrupt'
 import { listSkillFiles, listSkills, readSkillFile, readSkillMarkdown } from './skills'
 
@@ -138,7 +139,9 @@ function executeScript(bin: string, execArgs: string[], cwd: string): Promise<To
           cwd,
           windowsHide: true,
           maxBuffer: MAX_BUFFER,
-          encoding: 'utf8'
+          encoding: 'utf8',
+          // FB-001: scripts that open a browser should land in Duplex
+          env: duplexShimEnv(ensureOpenShim())
         },
         (error, stdout, stderr) => {
           const output = truncateOutput(`${stdout ?? ''}${stderr ?? ''}`)

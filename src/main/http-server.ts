@@ -1,7 +1,7 @@
 import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { app } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toolDefs } from '../shared/tools'
@@ -466,6 +466,24 @@ async function handle(
     // Explicit resume — no message is queued (unlike POST /api/chat).
     ;(deps.resumeAi ?? deps.onUserActivity)?.()
     sendJson(res, 200, { ok: true })
+    return
+  }
+
+  if (url.pathname === '/api/open' && req.method === 'POST') {
+    // Used by the `duplex-open` shim so CLI tools can open pages in Duplex.
+    const body = (await readBody(req)) as { url?: string } | undefined
+    const target = String(body?.url ?? '').trim()
+    if (!/^https?:\/\//i.test(target)) {
+      sendJson(res, 400, { error: 'url must be http(s)' })
+      return
+    }
+    deps.tabs.createTab(target)
+    try {
+      for (const w of BrowserWindow.getAllWindows()) w.show()
+    } catch {
+      /* window focus is best effort */
+    }
+    sendJson(res, 200, { ok: true, url: target })
     return
   }
 

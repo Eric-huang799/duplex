@@ -10,6 +10,7 @@ import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import type { ToolResult } from '../tool-handlers'
 import { interruptibleAwait, operationSignal } from '../interrupt'
+import { duplexShimEnv, ensureOpenShim } from '../open-shim'
 import { cobrowseDir } from '../../shared/endpoint'
 
 export type FsConfirmFn = (payload: {
@@ -135,7 +136,9 @@ export function createFsToolHandlers(
           cwd,
           shell: true,
           windowsHide: true,
-          detached: process.platform !== 'win32'
+          detached: process.platform !== 'win32',
+          // FB-001: commands that open a browser should land in Duplex
+          env: duplexShimEnv(ensureOpenShim())
         })
 
         const opSignal = operationSignal()

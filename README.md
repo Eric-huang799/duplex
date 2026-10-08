@@ -215,12 +215,11 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 - Message injection targets the "active session"; with several opencode sessions the target may occasionally be ambiguous.
 - The mirror store holds the recent event stream in memory; it resets on browser restart.
 - The built-in agent is a convenience option: local / smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
-- External CLIs (Claude Code, Codex, …) still open their own web pages in your system default browser; routing them to Duplex is on the v0.3.0 list.
+- CLI tools that open pages through the OS (Claude Code, Codex, …) follow the **system default browser**. To route them to Duplex, pick Duplex once in your OS settings — **⋯ → 设为默认浏览器…** opens that page (it is never forced). CLIs and commands launched *from* Duplex also get a `BROWSER=duplex-open` shim, which covers tools that honour `$BROWSER`.
 
 ## Roadmap
 
 - **v0.3.0 — built from community feedback.** The plan is to collect user reports first, then work through them together:
-  - **Register Duplex as a candidate browser** so CLI tools (Claude Code, Codex, …) open web pages in Duplex instead of the system default browser — without ever forcing itself as default: you stay in control.
   - Command palette, tab search, session restore, reader mode, bookmark HTML import / export, and more — the running list lives in `docs/待办与用户反馈.md`.
 - Richer event mapping for external CLIs and more client integrations keep evolving.
 

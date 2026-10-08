@@ -110,6 +110,8 @@ import { SEARCH_ENGINES, searchUrl, type SearchEngine } from '../shared/search'
 import { isTrustedImportedHost } from '../shared/trusted-hosts'
 import type { ChatSendResult, ContentBounds } from '../shared/protocol'
 import { isLlmProtocol } from '../shared/llm'
+import { duplexShimEnv, ensureOpenShim, extractHttpUrl } from './open-shim'
+import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
 const VERSION = '0.2.6'
 const TOKEN = crypto.randomBytes(24).toString('hex')
@@ -672,7 +674,8 @@ function startExternalSessionSpawn(
     child = spawn(plan.file, plan.args, {
       cwd: plan.cwd,
       windowsHide: true,
-      stdio: ['pipe', 'ignore', 'pipe']
+      stdio: ['pipe', 'ignore', 'pipe'],
+      env: duplexShimEnv(ensureOpenShim())
     })
   } catch (e) {
     return { ok: false, error: `启动失败：${(e as Error)?.message ?? String(e)}` }
@@ -707,7 +710,8 @@ function resumeExternalSessionSpawn(
     child = spawn(plan.file, plan.args, {
       cwd: plan.cwd,
       windowsHide: true,
-      stdio: ['pipe', 'ignore', 'pipe']
+      stdio: ['pipe', 'ignore', 'pipe'],
+      env: duplexShimEnv(ensureOpenShim())
     })
   } catch (e) {
     return { ok: false, error: `启动失败：${(e as Error)?.message ?? String(e)}` }
@@ -753,6 +757,47 @@ function resumeExternalSessionSpawn(
   child.stdin?.end()
   return { ok: true, live }
 }
+
+/**
+ * Resume the currently open external session with a message (used by the
+ * panel's composer AND by page annotations delivered in external mode).
+ */
+function sendToCurrentExternalSession(
+  toolId: string,
+  message: string
+): { ok: boolean; error?: string } {
+  const tool = findAgentTool(String(toolId))
+  if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+  const cur = currentExternalSession
+  if (!cur || cur.toolId !== tool.id) {
+    return { ok: false, error: '请先从「历史会话」中打开一个会话，再发送续聊消息' }
+  }
+  const msg = String(message ?? '').trim()
+  if (!msg) return { ok: false, error: '消息不能为空' }
+  if (liveChildren.size > 0) {
+    return { ok: false, error: '已有任务在运行中，请等待完成，或点「停止」后再发送' }
+  }
+  maybeResumeAi()
+  const meta = readSessionMeta(tool.kind, cur.file)
+  const cliSessionId = meta.cliSessionId ?? path.basename(cur.file, '.jsonl')
+  const spawnResult = resumeExternalSessionSpawn(
+    tool,
+    cliSessionId,
+    meta.cwd ?? '',
+    msg,
+    cur.sessionId,
+    getToolModel(tool.id)
+  )
+  if (!spawnResult.ok) return { ok: false, error: spawnResult.error }
+  // optimistic echo — only after the spawn succeeded
+  pendingUserEcho = { text: msg, since: Date.now() }
+  win?.webContents.send(
+    'mirror:event',
+    transcriptToMirrorEvent({ role: 'user', text: msg, ts: Date.now() }, cur.sessionId)
+  )
+  return { ok: true }
+}
+
 let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
 
@@ -776,11 +821,19 @@ const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_e, commandLine) => {
     if (!win) return
     if (win.isMinimized()) win.restore()
     win.show()
     win.focus()
+    // A URL passed by another launch (e.g. Duplex is the chosen browser) opens
+    // in a new tab of this running instance.
+    const sharedUrl = extractHttpUrl(commandLine ?? [])
+    if (sharedUrl) tabs?.createTab(sharedUrl)
+  })
+  app.on('open-url', (e, url) => {
+    e.preventDefault()
+    if (/^https?:\/\//i.test(url)) tabs?.createTab(url)
   })
   void app.whenReady().then(start)
 }
@@ -964,6 +1017,19 @@ async function start(): Promise<void> {
   const deliverAnnotation = (d: AnnotationDelivery): void => {
     if (annotationElementCounts.size > 100) annotationElementCounts.clear()
     annotationElementCounts.set(d.annotationId, d.elementCount)
+    // External mode: deliver into the open CLI session (Codex / Claude Code can
+    // be resumed from the panel), so annotating "just works" there too.
+    if (currentPanelMode === 'external') {
+      const cur = currentExternalSession
+      if (cur && (cur.kind === 'codex' || cur.kind === 'claude')) {
+        const r = sendToCurrentExternalSession(cur.toolId, d.text)
+        if (r.ok) return
+        throw new Error(`标注发送到外部会话失败：${r.error ?? '未知错误'}`)
+      }
+      throw new Error(
+        '外部工具模式下标注不会送达：请先在面板打开 Codex / Claude 会话，或切换到内置模型 / opencode 模式'
+      )
+    }
     if (currentPanelMode === 'agent' && agentRuntime) {
       try {
         agentRuntime.injectAnnotation(d.text, {
@@ -996,9 +1062,6 @@ async function start(): Promise<void> {
   annotationSubmitHandler = async (payload) => {
     if (isAiPaused()) {
       return { ok: false, error: 'AI 已急停挂起：请先点「恢复」再提交标注' }
-    }
-    if (currentPanelMode === 'external') {
-      return { ok: false, error: '外部工具模式下标注不会送达：请切换到内置模型或 opencode 模式' }
     }
     return annotationSubmit(payload)
   }
@@ -1181,6 +1244,22 @@ function createWindow(): void {
   )
   tabs.createTab()
   tabs.setShortcuts(effectiveShortcuts(loadSettings().shortcuts))
+  // FB-001: route CLI-opened pages to Duplex.
+  // (a) a URL passed on the command line (Duplex launched as the browser)
+  const startupUrl = extractHttpUrl(process.argv)
+  if (startupUrl) tabs.createTab(startupUrl)
+  // (b) candidate-browser registration (packaged builds only, HKCU, never the
+  // default). Deferred so the first paint is never blocked by registry calls.
+  setTimeout(() => {
+    try {
+      registerAsCandidateBrowser()
+    } catch {
+      /* best effort */
+    }
+  }, 3000)
+  // (c) the BROWSER shim used when Duplex spawns CLIs / commands
+  const shim = ensureOpenShim()
+  logLine(`[browser] candidate registration + open shim ready (${shim})`)
 
   mirror.onEvent = (ev) => {
     try {
@@ -1766,6 +1845,7 @@ function setupIpc(): void {
         },
         { label: '设置急停键', click: () => sendBrowserShortcut('menu:stopkeys') },
         { label: '快捷键设置', click: () => sendBrowserShortcut('menu:shortcuts') },
+        { label: '设为默认浏览器…', click: () => openDefaultAppsSettings() },
         { type: 'separator' },
         ...(['system', 'light', 'dark'] as const).map(
           (t): MenuItemConstructorOptions => ({
@@ -1831,6 +1911,15 @@ function setupIpc(): void {
           })
         } catch {
           /* frame is going away */
+        }
+        // A freshly loaded document always starts with its overlay inactive.
+        // Resync the per-tab annotation state, otherwise the first ✎ click
+        // after a navigation / reload would toggle a stale "on" state off and
+        // look like it did nothing (drawing then silently fails too).
+        const readyTabId = findTabIdBySender(_e.sender)
+        if (readyTabId != null && annotationTabState.get(readyTabId) === true) {
+          annotationTabState.set(readyTabId, false)
+          if (readyTabId === tabs?.activeId) sendAnnotationState(false)
         }
         return
       }
@@ -2273,40 +2362,9 @@ function setupIpc(): void {
     return openExternalSession(tool, String(sessionId), String(filePath ?? ''))
   })
 
-  ipcMain.handle('agents:session-send', (_e, toolId: string, message: string) => {
-    const tool = findAgentTool(String(toolId))
-    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
-    const cur = currentExternalSession
-    if (!cur || cur.toolId !== tool.id) {
-      return { ok: false, error: '请先从「历史会话」中打开一个会话，再发送续聊消息' }
-    }
-    const msg = String(message ?? '').trim()
-    if (!msg) return { ok: false, error: '消息不能为空' }
-    if (liveChildren.size > 0) {
-      return { ok: false, error: '已有任务在运行中，请等待完成，或点「停止」后再发送' }
-    }
-    maybeResumeAi()
-    const meta = readSessionMeta(tool.kind, cur.file)
-    const cliSessionId = meta.cliSessionId ?? path.basename(cur.file, '.jsonl')
-    const spawnResult = resumeExternalSessionSpawn(
-      tool,
-      cliSessionId,
-      meta.cwd ?? '',
-      msg,
-      cur.sessionId,
-      getToolModel(tool.id)
-    )
-    if (!spawnResult.ok) return { ok: false, error: spawnResult.error }
-    // optimistic echo — only after the spawn succeeded, so a failed start can
-    // never leave a dangling user message in the panel; the tail skips the
-    // CLI's own transcript echo of it
-    pendingUserEcho = { text: msg, since: Date.now() }
-    win?.webContents.send(
-      'mirror:event',
-      transcriptToMirrorEvent({ role: 'user', text: msg, ts: Date.now() }, cur.sessionId)
-    )
-    return { ok: true }
-  })
+  ipcMain.handle('agents:session-send', (_e, toolId: string, message: string) =>
+    sendToCurrentExternalSession(String(toolId), String(message ?? ''))
+  )
 
   ipcMain.handle('agents:models', (_e, toolId: string) => {
     const tool = findAgentTool(String(toolId))
