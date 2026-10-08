@@ -5,6 +5,8 @@
 [![awesome-mcp-servers](https://img.shields.io/badge/awesome--mcp--servers-listed-blue)](https://github.com/punkpeye/awesome-mcp-servers)
 [![freemcp.space](https://img.shields.io/badge/freemcp.space-listed-orange)](https://freemcp.space/featured/duplex)
 
+> **Listed in** [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) · [freemcp.space](https://freemcp.space/featured/duplex) · [Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex)
+
 <p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex mascot"></p>
 
 **One browser shared by a human and an AI** — the human sees the rendered page, the AI reads the DOM and page source. Same tabs, same live session, at the same time.
@@ -35,17 +37,20 @@
 
 ## ⚠️ Usage notes
 
-- **Security boundaries (high stakes — please read).** Duplex lets the AI drive your **real browser session**, including login state, cookies and local data. Under this architecture, a wrong AI move can touch real accounts and data (sending messages, submitting forms, modifying or deleting content), potentially with serious consequences. Don't leave the agent running unattended in environments where sensitive accounts are signed in. `Esc` takeover is a last-resort human brake — it is **no substitute for your own judgement about what the AI should be allowed to touch**.
+- **Security boundaries (high stakes — please read).** Duplex lets the AI drive your **real browser session**, including login state, cookies and local data. Under this architecture, a wrong AI move can touch real accounts and data (sending messages, submitting forms, modifying or deleting content), potentially with serious consequences. Don't leave the agent running unattended in environments where sensitive accounts are signed in. The emergency-stop hotkeys (default `F2` / `Ctrl+Shift+K`, customizable in settings) are a last-resort human brake — they are **no substitute for your own judgement about what the AI should be allowed to touch**.
 
 - **The tooling layer is still being tuned.** The goal is for **the human to stay in command of the AI's tools**, rather than have AI tooling and the human's own actions crowd each other out of the pipeline (contending for the same page, interrupting input, interleaving conflicting actions). The trade-offs here are still evolving — feedback on human/agent contention is welcome via Issues.
 
-## What's new in v0.2
+## What's new in v0.2.6
 
-- **Skills** — Claude Code-compatible skill format (`SKILL.md`): indexes your existing `~/.claude/skills` and supports importing or authoring duplex-only skills under `~/.cobrowse/skills`. The built-in agent reads and follows them on demand (every script run asks for confirmation first).
-- **Multi-protocol model APIs** — beyond OpenAI-compatible, native support for Anthropic Messages, OpenAI Responses and Google Gemini.
-- **Credential import** — reuse your local Codex (ChatGPT subscription) and opencode logins directly; no API key typing needed.
-- **External agent tools** — switch the panel between opencode / Codex / Claude Code / Gemini CLI / Qwen Code / custom CLIs: transcripts mirror into the panel (history + live), **Codex / Claude Code sessions can be continued by replying right from the panel** (the message headlessly resumes the same session), and new sessions can be started right from the panel. Codex / Claude Code also get a **model picker** (default follows the CLI config; one click writes the choice back to the global config, with a timestamped backup); custom tools can be added manually (session directory + start command).
-- **Safety & robustness** — global emergency-stop hotkeys (default `Esc` / `F2`, customizable from the ⌨ button), triple-confirm deletes, task watchdog with automatic render recovery, process-tree termination, and more.
+- **Every shortcut is customizable** — rebind address bar / tabs / find / panel / annotation / zoom / navigation from **⋯ → Shortcuts**: record a new key, reset one action or all, with conflict and invalid-combo checks (macOS shows ⌘).
+- **A full bookmark manager** — folders (create / rename / delete), add / edit / delete bookmarks, open in a new tab, copy links, sorting (recent / A–Z) and search, all with atomic writes and automatic `.bak` backups.
+- **Page annotations, upgraded** — `Ctrl+Shift+A` to enter/exit, honest delivery receipts, scroll-aware markers, per-box editing, and dual delivery: straight into the built-in agent conversation, or into the opencode queue, depending on the active panel mode.
+- **Native menus everywhere** — right-click a page (open / copy link, search the selection, copy as Markdown, image actions) and a tab (duplicate, close others / to the right, recently-closed list, mute, bookmark all tabs). Opening a menu no longer blanks the page.
+- **In-flow find bar** — `Ctrl+F` keeps the page visible while searching, with a match counter and next / previous.
+- **Safety & polish** — explicit emergency-stop keys (default `F2` / `Ctrl+Shift+K`) with a pause state that survives restarts, IME-safe Enter, per-mode drafts that survive panel switches, download toasts, and dozens of small fixes.
+
+*v0.2 also brought skills, multi-protocol model APIs, credential import and external agent tools — details below and still current.*
 
 ## How Duplex compares
 
@@ -54,7 +59,7 @@
 | Form | Desktop browser (Electron app) | Python automation framework | MCP server (browser extension) | MCP server (Microsoft) | Closed-source product |
 | Who uses the browser | **Human and AI share the same tab and the same live session** | AI only (separate automation instance) | AI drives your current Chrome | AI only (Playwright instance) | AI assistant alongside/operating |
 | What the AI sees | DOM outline snapshot + source + screenshots | Vision + DOM | Screenshots + a11y tree | Accessibility tree | Internal |
-| Human collaboration | **Real-time side-by-side; `Esc` takeover interrupts the AI anytime** | Logs afterwards | Human spectates | Human spectates | Limited intervention |
+| Human collaboration | **Real-time side-by-side; the emergency-stop key interrupts the AI anytime** | Logs afterwards | Human spectates | Human spectates | Limited intervention |
 | Connectable AI | **Built-in models + opencode / Codex / Claude Code / Gemini / Qwen / any MCP client** | Bring your own LLM | Any MCP client | Any MCP client | Official model only |
 | Conversation visibility | **Live side-panel mirror (including external CLIs' chats and tool calls)** | Logs/terminal | In the client | In the client | In-app |
 | Data | Fully local | Local/cloud | Local | Local | Cloud |
@@ -67,9 +72,9 @@
 - **24 MCP tools for AI agents** — `snapshot` compresses any page into a compact DOM outline with `[eN]` refs; the other tools cover tabs, navigation, clicking, typing, dragging, file upload, scrolling, waiting, console logs, JS evaluation and page annotations.
 - **Zero-setup bridge** — a stdio MCP bridge (`mcp-bridge`) auto-launches the browser on the first tool call. Works with opencode, Claude Code, or any MCP client.
 - **Live session mirror** — when your AI works through opencode, its replies, reasoning and tool-call cards stream into the side panel in real time. Type in the panel to inject a message into the *same* session.
-- **AI action visualization** — a translucent cursor, element highlight and a status bar ("AI is clicking «…» — Esc to take over") are drawn in a Shadow-DOM overlay, so you always see what the AI is doing on the page.
-- **Esc takeover** — press `Esc` (or click the status bar) to take control instantly: the running tool call is aborted, in-flight waits return early, and the AI is told the user took over.
-- **Page annotations** — press `?` or use `annotation_mode` to draw a box / circle / arrow / point on any page and attach a question. The annotation is compiled into a structured text brief (DOM outline + visible text + selectors + geometry) and sent to the AI.
+- **AI action visualization** — a translucent cursor, element highlight and a status bar ("AI is clicking «…» — F2 to take over") are drawn in a Shadow-DOM overlay, so you always see what the AI is doing on the page.
+- **Emergency stop** — press the configured emergency-stop key (default `F2` / `Ctrl+Shift+K`) or click the status bar to take control instantly: running tool calls are aborted, external processes started from the panel are terminated, pending confirmations are denied and queued messages are dropped. The pause survives a restart — send a message or click "Resume" to continue.
+- **Page annotations** — press `Ctrl+Shift+A` (or the ✎ button in the toolbar, or use `annotation_mode`) to draw a box / circle / arrow / point on any page and attach a question. The annotation is compiled into a structured text brief (DOM outline + visible text + selectors + geometry) and sent to the AI.
 - **Built-in agent (optional)** — connect any OpenAI-compatible API (DeepSeek, Kimi, Qwen, GLM, Ollama, …) and let the browser drive itself. Provider management supports one-click import from opencode.
 - **Conversation history** — built-in agent sessions are saved locally and can be reopened from the history menu.
 
@@ -111,11 +116,11 @@ Manage OpenAI-compatible providers for the built-in agent: add, edit, delete, or
 
 Built-in agent conversations are stored locally and can be reopened at any time.
 
-### 7. AI action visualization and Esc takeover
+### 7. AI action visualization and emergency stop
 
 ![AI action visualization](docs/screenshots/ai-action-visualization.png)
 
-Every AI action is drawn on the page: a cursor ring, an element highlight and a status bar. Press `Esc` at any moment to take the browser back — the AI stops immediately and waits for your instruction.
+Every AI action is drawn on the page: a cursor ring, an element highlight and a status bar. Press the emergency-stop key (default `F2`) at any moment to take the browser back — the AI stops immediately and waits for your instruction.
 
 ### 8. Page annotations
 
@@ -187,7 +192,7 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 | `drag` | Real drag & drop from one point/element to another |
 | `select_option` / `upload` | Native `<select>` options, and file upload by absolute path |
 | `scroll` | Scroll the page or a specific element into view |
-| `wait` | Wait for time / selector / text — interruptible by Esc |
+| `wait` | Wait for time / selector / text — interruptible by the emergency stop |
 | `get_console` | Read page console logs (errors and warnings) |
 | `annotation_mode` | Enter/exit the annotation overlay (human draws a box/circle/arrow/point + question) |
 | `evaluate` | Evaluate JS in the page, returns JSON-serializable results |
@@ -210,13 +215,14 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 - Message injection targets the "active session"; with several opencode sessions the target may occasionally be ambiguous.
 - The mirror store holds the recent event stream in memory; it resets on browser restart.
 - The built-in agent is a convenience option: local / smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
+- External CLIs (Claude Code, Codex, …) still open their own web pages in your system default browser; routing them to Duplex is on the v0.3.0 list.
 
 ## Roadmap
 
-- **Richer client integrations** — Codex / Claude Code support has landed; more on the way:
-  - The bridge is client-agnostic (standard stdio MCP), so the *tool layer* is not opencode-specific by design.
-  - Session mirroring is in: transcripts replay into the panel live, and replies sent from the panel resume the same session headlessly (Codex `exec resume` / Claude Code `--resume`) — the CLI appends to its transcript and the tail streams it back into the panel.
-  - Next: richer event mapping (tool calls / reasoning cards) and more clients (Gemini CLI / Qwen Code).
+- **v0.3.0 — built from community feedback.** The plan is to collect user reports first, then work through them together:
+  - **Register Duplex as a candidate browser** so CLI tools (Claude Code, Codex, …) open web pages in Duplex instead of the system default browser — without ever forcing itself as default: you stay in control.
+  - Command palette, tab search, session restore, reader mode, bookmark HTML import / export, and more — the running list lives in `docs/待办与用户反馈.md`.
+- Richer event mapping for external CLIs and more client integrations keep evolving.
 
 ## Development
 
@@ -232,7 +238,16 @@ Debug helpers:
 
 - `GET /api/debug/ui-snapshot` — captures the current window to `~/.cobrowse/ui-snapshot.png`.
 - `POST /api/debug/panel-eval` — runs JS in the panel renderer (only when the app is started with `COBROWSE_DEBUG_UI=1`).
+- `POST /api/debug/ui-action` — drives panel actions (used by tests, e.g. `{"action":"panel-mode:opencode"}`).
 - Logs: `~/.cobrowse/app.log` (main + renderer log lines).
+
+## A note from the author
+
+I'm not a professional developer — just a regular computer user who got curious about AI. Duplex is a hobby project I've been building in my spare time, learning as I go (with AI coding tools lending a hand).
+
+It is still rough. There are bugs I haven't found, designs that will annoy you, and rough edges I simply didn't notice. If you're willing to give it a try, any feedback means a great deal to me: a bug, a crash, a confusing step, or simply "it didn't start for me" — please open an [Issue](https://github.com/Eric-huang799/duplex/issues). English or Chinese, either is fine.
+
+Thank you for reading this far — and for giving it a shot.
 
 ## License
 

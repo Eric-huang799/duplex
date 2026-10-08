@@ -1,7 +1,8 @@
 # Duplex 项目记忆（CoBrowse）
 
 ## 当前版本
-- **0.2.6**（本地开发中，未推送 GitHub；基线 v0.2.5 = commit 3341679）
+- **0.2.6**（已推送 GitHub：`master` + 分支 `codex/v0.2.6` + tag `v0.2.6`；tag 推送触发 CI 自动构建三平台 Release）
+- 基线 v0.2.5 = commit 3341679；README 中英双版已更新到 0.2.6 行为（急停键语义、收录强调、作者邀请测试段落）
 - 源码根：`C:\Users\lenovo\Desktop\CoBrowse-0.2.5`
 - 发布资产（v0.2.5）见 Obsidian：`长期记忆/duplex-v0.2.5-资产交接.md`
 
