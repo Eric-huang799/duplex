@@ -1004,6 +1004,7 @@ async function start(): Promise<void> {
     undefined,
     {
       getActiveTabId: () => tabs?.activeId ?? null,
+      getAutoContinueRounds: () => loadSettings().agentAutoContinueRounds,
       onRunStart: (tabId, opts) => {
         collaboration.release('builtin')
         if (tabId != null) { collaboration.bind('builtin', tabId); if (!opts?.fromQueue && !annotationTabState.get(tabId)) collaboration.resume(tabId, false) }

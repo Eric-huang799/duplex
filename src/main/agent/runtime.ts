@@ -109,6 +109,8 @@ export interface AgentDeps {
   /** Like load, but also reports which sessions lost history to the storage caps. */
   loadWithMeta?: () => { sessions: AgentSession[]; truncatedIds: Set<string> }
   save?: (sessions: AgentSession[]) => void
+  /** Extra full rounds after the 60-step cap (0 = off, clamped to 0..5). */
+  getAutoContinueRounds?: () => number
 }
 
 /** Constant partID so the one-time truncation notice is never duplicated. */
@@ -136,6 +138,8 @@ export class AgentRuntime {
   private finishRun: (() => void) | null = null
   /** Set when abort()/abortForEmergency() was called; a stopped run never resends. */
   private stopRequested = false
+  /** Injectable getter for the auto-continue setting (extra rounds after the step cap). */
+  private getAutoContinueRounds?: () => number
 
   constructor(
     private executeTool: ToolExecutor,
@@ -145,6 +149,7 @@ export class AgentRuntime {
     private deps?: AgentDeps
   ) {
     this.saveFn = deps?.save ?? saveAgentSessions
+    this.getAutoContinueRounds = deps?.getAutoContinueRounds
     const loaded = deps?.loadWithMeta
       ? deps.loadWithMeta()
       : deps?.load
@@ -551,17 +556,24 @@ export class AgentRuntime {
     this.activeDone = new Promise<void>((resolve) => { this.finishRun = resolve })
     this.deps?.onRunStart?.(tabId, { fromQueue: opts?.fromQueue })
     // global watchdog: a run must never leave the panel stuck on "working"
+    // (re-armed per auto-continue round so long multi-round tasks still get a
+    // fresh 15-minute budget)
     const watchdogMs = 15 * 60_000
     let watchdogFired = false
-    const watchdog = setTimeout(() => {
-      watchdogFired = true
-      this.deps?.cancelTools?.()
-      try {
-        ctl.abort()
-      } catch {
-        /* ignore */
-      }
-    }, watchdogMs)
+    let watchdog: ReturnType<typeof setTimeout> | undefined
+    const armWatchdog = (): void => {
+      clearTimeout(watchdog)
+      watchdog = setTimeout(() => {
+        watchdogFired = true
+        this.deps?.cancelTools?.()
+        try {
+          ctl.abort()
+        } catch {
+          /* ignore */
+        }
+      }, watchdogMs)
+    }
+    armWatchdog()
     this.emit({ kind: 'session', status: 'busy' })
     // name the conversation after its first user message
     const cur = this.currentSession()
@@ -581,9 +593,17 @@ export class AgentRuntime {
     try {
       const tools = buildOpenAiTools()
       const MAX_STEPS = 60
+      const extraRounds = Math.max(0, Math.min(5, Math.floor(this.getAutoContinueRounds?.() ?? 0)))
       let parseFailures = 0
       let reachedStepLimit = false
-      for (let step = 0; step < MAX_STEPS; step++) {
+      let round = 0
+      // Outer rounds: one normal run plus up to `extraRounds` auto-continues
+      // after the per-run step cap. Each round re-arms the watchdog.
+      roundLoop: for (;;) {
+        round++
+        parseFailures = 0
+        reachedStepLimit = false
+        for (let step = 0; step < MAX_STEPS; step++) {
         if (ctl.signal.aborted) break
         this.flushAnnotationContext()
         const partID = `a${++this.seq}`
@@ -718,9 +738,25 @@ export class AgentRuntime {
           })
         }
         if (step === MAX_STEPS - 1) reachedStepLimit = true
+        }
+        if (reachedStepLimit && !ctl.signal.aborted && round <= extraRounds) {
+          const note = `已达到第 ${round} 轮 60 步上限，自动续接（共 ${extraRounds + 1} 轮）…`
+          this.messages.push({ role: 'assistant', content: note })
+          this.emit({
+            kind: 'text',
+            role: 'assistant',
+            partID: `a${++this.seq}`,
+            text: note,
+            done: true
+          })
+          this.messages.push({ role: 'user', content: '（自动续接）请从当前进度继续完成任务。' })
+          armWatchdog()
+          continue roundLoop
+        }
+        break
       }
       if (reachedStepLimit && !ctl.signal.aborted) {
-        const msg = '已达到单轮 60 步上限，任务可能尚未完成；可继续发消息让 AI 接着做'
+        const msg = `已达到单轮 60 步上限（共 ${round} 轮），任务可能尚未完成；可继续发消息让 AI 接着做`
         this.messages.push({ role: 'assistant', content: msg })
         this.emit({
           kind: 'text',

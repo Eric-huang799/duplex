@@ -56,6 +56,7 @@ const cache: {
   emergencyStopKeys: string[]
   confirmBeforeDownload: boolean
   aiPaused: boolean
+  agentAutoContinueRounds: number
   shortcuts: Record<string, string>
 } = {
   theme: 'system',
@@ -66,6 +67,7 @@ const cache: {
   emergencyStopKeys: [...DEFAULT_STOP_KEYS],
   confirmBeforeDownload: true,
   aiPaused: false,
+  agentAutoContinueRounds: 0,
   shortcuts: {}
 }
 
@@ -203,6 +205,7 @@ export function loadSettings(): {
   emergencyStopKeys: string[]
   confirmBeforeDownload: boolean
   aiPaused: boolean
+  agentAutoContinueRounds: number
   shortcuts: Record<string, string>
 } {
   let raw: Record<string, unknown>
@@ -238,6 +241,13 @@ export function loadSettings(): {
   cache.confirmBeforeDownload =
     typeof raw.confirmBeforeDownload === 'boolean' ? raw.confirmBeforeDownload : true
   cache.aiPaused = raw.aiPaused === true
+  cache.agentAutoContinueRounds = Math.max(
+    0,
+    Math.min(
+      5,
+      Math.floor(typeof raw.agentAutoContinueRounds === 'number' ? raw.agentAutoContinueRounds : 0)
+    )
+  )
   if (raw.shortcuts !== undefined) cache.shortcuts = sanitizeShortcutOverrides(raw.shortcuts)
   return {
     theme: cache.theme,
@@ -248,6 +258,7 @@ export function loadSettings(): {
     emergencyStopKeys: cache.emergencyStopKeys,
     confirmBeforeDownload: cache.confirmBeforeDownload,
     aiPaused: cache.aiPaused,
+    agentAutoContinueRounds: cache.agentAutoContinueRounds,
     shortcuts: { ...cache.shortcuts }
   }
 }
@@ -346,5 +357,13 @@ export function saveConfirmBeforeDownload(value: boolean): SaveResult {
 export function saveAiPaused(value: boolean): SaveResult {
   const r = savePatch({ aiPaused: !!value })
   if (r.ok) cache.aiPaused = !!value
+  return r
+}
+
+/** Auto-continue rounds after the 60-step agent cap (0 = off, clamped 0..5). */
+export function saveAgentAutoContinueRounds(value: number): SaveResult {
+  const next = Math.max(0, Math.min(5, Math.floor(Number(value) || 0)))
+  const r = savePatch({ agentAutoContinueRounds: next })
+  if (r.ok) cache.agentAutoContinueRounds = next
   return r
 }
