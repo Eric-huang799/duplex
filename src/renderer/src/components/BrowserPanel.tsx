@@ -188,6 +188,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
   }
 
   const [importing, setImporting] = useState(false)
+  const [importingLocal, setImportingLocal] = useState(false)
 
   const refresh = (): void => {
     props.onRefresh?.()
@@ -259,6 +260,24 @@ export function BrowserPanel(props: Props): React.JSX.Element {
       refresh()
     } finally {
       setImporting(false)
+    }
+  }
+
+  const runImportLocal = async (): Promise<void> => {
+    if (importingLocal) return
+    setImportingLocal(true)
+    try {
+      const result = await window.cobrowse.bookmarkImportLocal()
+      if (!result.ok) {
+        toast(result.error || '导入本机浏览器书签失败')
+        return
+      }
+      const skippedNote = result.skipped ? `，跳过重复 ${result.skipped} 条` : ''
+      const src = result.sources?.map((s) => `${s.browser}(${s.count})`).join('、')
+      toast(`已导入 ${result.added ?? 0} 条书签${skippedNote}${src ? `，来源：${src}` : ''}`)
+      refresh()
+    } finally {
+      setImportingLocal(false)
     }
   }
 
@@ -589,7 +608,14 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             </button>
             <button onClick={openNewForm}>＋ 新建书签</button>
             <button
-              title="从 Chrome / Edge 导出的书签 HTML 导入（自动去重）"
+              title="自动读取本机 Chrome / Edge 已有的书签（自动去重）"
+              disabled={importingLocal}
+              onClick={() => void runImportLocal()}
+            >
+              {importingLocal ? '读取中…' : '导入本机书签'}
+            </button>
+            <button
+              title="从导出的书签 HTML 文件导入（自动去重）"
               disabled={importing}
               onClick={() => void runImport()}
             >

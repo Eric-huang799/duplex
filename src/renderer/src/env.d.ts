@@ -38,6 +38,13 @@ interface CobrowseApi {
     canceled?: boolean
     error?: string
   }>
+  bookmarkImportLocal(): Promise<{
+    ok: boolean
+    added?: number
+    skipped?: number
+    sources?: Array<{ browser: string; profile: string; count: number }>
+    error?: string
+  }>
   bookmarkUpdate(
     url: string,
     patch: { title?: string; url?: string; folder?: string }

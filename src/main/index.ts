@@ -73,7 +73,7 @@ import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { importSkillFromFolder, listSkills, removeSkill, setSkillEnabled } from './agent/skills'
 import { importStatus } from './agent/auth-import'
-import { parseNetscapeBookmarks } from './bookmark-import'
+import { parseNetscapeBookmarks, scanLocalBrowserBookmarks } from './bookmark-import'
 import {
   claudeDesktopConfigHint,
   claudeMcpCommand,
@@ -1721,6 +1721,26 @@ function setupIpc(): void {
       const result = browserData.importBookmarks(records)
       emitBrowserData()
       return { ok: true, added: result.added, skipped: result.skipped }
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message ?? String(e) }
+    }
+  })
+  ipcMain.handle('browser:bookmark-import-local', () => {
+    try {
+      const local = process.env.LOCALAPPDATA
+      if (!local) return { ok: false, error: '找不到本机应用数据目录（LOCALAPPDATA）' }
+      const scan = scanLocalBrowserBookmarks(local)
+      if (scan.records.length === 0) {
+        return { ok: false, error: '没有找到 Chrome / Edge 的书签（未安装，或书签为空）' }
+      }
+      const result = browserData.importBookmarks(scan.records)
+      emitBrowserData()
+      return {
+        ok: true,
+        added: result.added,
+        skipped: result.skipped,
+        sources: scan.sources
+      }
     } catch (e) {
       return { ok: false, error: (e as Error)?.message ?? String(e) }
     }

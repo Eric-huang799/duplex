@@ -110,6 +110,14 @@ const api = {
       canceled?: boolean
       error?: string
     }>,
+  bookmarkImportLocal: () =>
+    ipcRenderer.invoke('browser:bookmark-import-local') as Promise<{
+      ok: boolean
+      added?: number
+      skipped?: number
+      sources?: Array<{ browser: string; profile: string; count: number }>
+      error?: string
+    }>,
   bookmarkUpdate: (url: string, patch: { title?: string; url?: string; folder?: string }) =>
     ipcRenderer.invoke('browser:bookmark-update', url, patch) as Promise<{
       ok: boolean

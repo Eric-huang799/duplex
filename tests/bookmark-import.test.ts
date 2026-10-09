@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseNetscapeBookmarks } from '../src/main/bookmark-import'
+import { parseChromeBookmarksJson, parseNetscapeBookmarks } from '../src/main/bookmark-import'
 
 const CHROME_EXPORT = `<!DOCTYPE NETSCAPE-Bookmark-file-1>
 <!-- This is an automatically generated file.
@@ -70,5 +70,58 @@ describe('netscape bookmark HTML parser', () => {
     expect(out.map((b) => b.url)).toEqual(['https://ok.example.com/', 'https://nodate.example.com/'])
     expect(out[0]!.addedAt).toBeGreaterThan(0)
     expect(out[1]!.addedAt).toBeGreaterThan(0)
+  })
+})
+
+const LOCAL_CHROME_BOOKMARKS = JSON.stringify({
+  roots: {
+    bookmark_bar: {
+      name: '书签栏',
+      children: [
+        { type: 'url', name: 'Example', url: 'https://example.com/', date_added: '13360000000000000' },
+        {
+          type: 'folder',
+          name: '开发',
+          children: [
+            { type: 'url', name: 'GitHub', url: 'https://github.com/', date_added: '13360000001000000' }
+          ]
+        }
+      ]
+    },
+    other: { name: '其他书签', children: [{ type: 'url', name: 'Wayback', url: 'https://web.archive.org/' }] },
+    synced: { name: '手机书签', children: [] }
+  }
+})
+
+describe('chrome/edge bookmarks JSON (direct local import)', () => {
+  it('flattens roots into records with labeled folder chains', () => {
+    const out = parseChromeBookmarksJson(LOCAL_CHROME_BOOKMARKS, 'Chrome')
+    expect(out.map((b) => b.url)).toEqual([
+      'https://example.com/',
+      'https://github.com/',
+      'https://web.archive.org/'
+    ])
+    expect(out[0]?.folder).toBe('Chrome / 书签栏')
+    expect(out[1]?.folder).toBe('Chrome / 书签栏 / 开发')
+    expect(out[2]?.folder).toBe('Chrome / 其他书签')
+  })
+
+  it('converts chrome epoch microseconds and falls back when missing', () => {
+    const out = parseChromeBookmarksJson(LOCAL_CHROME_BOOKMARKS, 'Chrome')
+    expect(out[0]?.addedAt).toBe((13360000000000000 - 11644473600000000) / 1000)
+    const noTime = parseChromeBookmarksJson(
+      '{"roots":{"other":{"children":[{"type":"url","url":"https://a.io/"}]}}}',
+      'Edge'
+    )
+    expect(noTime[0]?.addedAt).toBeGreaterThan(1600000000000)
+  })
+
+  it('skips non-http urls and tolerates broken json', () => {
+    const mixed = parseChromeBookmarksJson(
+      '{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"x","url":"chrome://settings/"},{"type":"url","name":"y","url":"https://ok.io/"}]}}}',
+      'Chrome'
+    )
+    expect(mixed.map((b) => b.url)).toEqual(['https://ok.io/'])
+    expect(parseChromeBookmarksJson('not json at all', 'Chrome')).toEqual([])
   })
 })
