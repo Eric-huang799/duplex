@@ -22,6 +22,8 @@ export interface TabInfo {
   audioMuted?: boolean
   /** Page is currently producing audio. */
   audioPlaying?: boolean
+  /** Tab runs in an in-memory session; nothing is written to history. */
+  incognito?: boolean
 }
 
 export interface BookmarkRecord { url: string; title: string; favicon?: string; addedAt: number; folder?: string }

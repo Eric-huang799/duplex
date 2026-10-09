@@ -14,6 +14,7 @@ import {
 export type ShortcutAction =
   | 'focusAddress'
   | 'newTab'
+  | 'newTabIncognito'
   | 'reopenClosed'
   | 'closeTab'
   | 'reload'
@@ -38,6 +39,7 @@ export interface ShortcutDef {
 export const SHORTCUT_DEFS: readonly ShortcutDef[] = [
   { id: 'focusAddress', label: '聚焦地址栏' },
   { id: 'newTab', label: '新建标签页' },
+  { id: 'newTabIncognito', label: '新建无痕标签页' },
   { id: 'reopenClosed', label: '恢复关闭的标签页' },
   { id: 'closeTab', label: '关闭标签页' },
   { id: 'reload', label: '刷新' },
@@ -57,6 +59,7 @@ export const SHORTCUT_DEFS: readonly ShortcutDef[] = [
 export const DEFAULT_SHORTCUTS: Record<ShortcutAction, string> = {
   focusAddress: 'Ctrl+L',
   newTab: 'Ctrl+T',
+  newTabIncognito: 'Ctrl+Shift+N',
   reopenClosed: 'Ctrl+Shift+T',
   closeTab: 'Ctrl+W',
   reload: 'Ctrl+R',

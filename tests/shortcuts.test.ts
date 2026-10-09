@@ -12,7 +12,7 @@ import { normalizeBinding } from '../src/shared/hotkeys'
 
 describe('SHORTCUT_DEFS / DEFAULT_SHORTCUTS', () => {
   it('covers every action with a Chinese label and a canonical default', () => {
-    expect(SHORTCUT_DEFS.length).toBe(16)
+    expect(SHORTCUT_DEFS.length).toBe(17)
     const ids = SHORTCUT_DEFS.map((d) => d.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const def of SHORTCUT_DEFS) {

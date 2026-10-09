@@ -48,6 +48,7 @@ import {
 import {
   activeAgentConfig,
   loadSettings,
+  saveAgentAutoContinueRounds,
   saveAiPaused,
   saveConfirmBeforeDownload,
   saveEmergencyStopKeys,
@@ -1302,22 +1303,36 @@ function createWindow(): void {
         /* window is going away */
       }
     },
-    (url, title, favicon) => {
-      if (/^https?:\/\//i.test(url)) browserData.addHistory({ url, title, favicon, visitedAt: Date.now() })
+    (url, title, favicon, incognito) => {
+      // incognito tabs never leave a trace in history
+      if (!incognito && /^https?:\/\//i.test(url))
+        browserData.addHistory({ url, title, favicon, visitedAt: Date.now() })
       emitBrowserData()
     },
     (action) => {
-      if (action === 'newTab' || action === 'reopenClosed' || action === 'nextTab' || action === 'previousTab') {
+      if (
+        action === 'newTab' ||
+        action === 'newTabIncognito' ||
+        action === 'reopenClosed' ||
+        action === 'nextTab' ||
+        action === 'previousTab'
+      ) {
         if (action === 'nextTab' || action === 'previousTab') {
           const all = tabs?.list() ?? []
           const index = all.findIndex((t) => t.id === tabs?.activeId)
           const next = all[(index + (action === 'nextTab' ? 1 : -1) + all.length) % all.length]
           if (next) tabs?.setActive(next.id)
         } else if (action === 'newTab') tabs?.createTab()
+        else if (action === 'newTabIncognito') tabs?.createTab(undefined, { incognito: true })
         else tabs?.reopenClosed()
       } else win?.webContents.send('browser:shortcut', action)
     },
-    (url, title, favicon) => { browserData.updateLatestHistory(url, title, favicon); emitBrowserData() },
+    (url, title, favicon, incognito) => {
+      if (!incognito) {
+        browserData.updateLatestHistory(url, title, favicon)
+        emitBrowserData()
+      }
+    },
     (info) => {
       try {
         win?.webContents.send('browser:load-error', info)
@@ -1797,6 +1812,9 @@ function setupIpc(): void {
             tabs.createTab(url)
             break
           }
+          case 'newTabIncognito':
+            tabs.createTab(undefined, { incognito: true })
+            break
           case 'closeTab':
             if (action.tabId != null) tabs.closeTab(action.tabId)
             break
@@ -1967,6 +1985,19 @@ function setupIpc(): void {
         { label: '书签', click: () => sendBrowserShortcut('menu:library-bookmarks') },
         { label: '浏览记录', click: () => sendBrowserShortcut('menu:library-history') },
         { label: '下载内容', click: () => sendBrowserShortcut('menu:library-downloads') },
+        { label: '新建无痕标签页', click: () => tabs?.createTab(undefined, { incognito: true }) },
+        {
+          label: '60 步上限后自动续接',
+          submenu: ([0, 1, 2, 3, 5] as const).map((n) => ({
+            label: n === 0 ? '关闭（默认）' : `自动续接 ${n} 轮`,
+            type: 'radio' as const,
+            checked: (loadSettings().agentAutoContinueRounds ?? 0) === n,
+            click: () => {
+              const r = saveAgentAutoContinueRounds(n)
+              if (!r.ok) logLine(`[settings] auto-continue save failed: ${r.error ?? ''}`)
+            }
+          }))
+        },
         { label: '复制本页为 Markdown', click: () => copyPageAsMarkdown(activePageWebContents()) },
         { type: 'separator' },
         {

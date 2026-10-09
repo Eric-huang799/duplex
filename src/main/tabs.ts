@@ -34,6 +34,8 @@ export interface Tab {
   favicon?: string
   /** Latest audibility reported by the tab's webContents. */
   audioPlaying?: boolean
+  /** In-memory session (no persistence, no history recording). */
+  incognito?: boolean
 }
 
 /** A tab URL remembered for the "recently closed" list. */
@@ -56,9 +58,9 @@ export class TabManager {
     private win: BrowserWindow,
     private overlayPreload: string | null,
     private onChanged: () => void,
-    private onNavigate: (url: string, title: string, favicon?: string) => void,
+    private onNavigate: (url: string, title: string, favicon?: string, incognito?: boolean) => void,
     private onShortcut: (action: string) => void,
-    private onMetadata: (url: string, title: string, favicon?: string) => void,
+    private onMetadata: (url: string, title: string, favicon?: string, incognito?: boolean) => void,
     private onLoadError?: (info: LoadErrorInfo) => void,
     private onFindResult?: (result: { tabId: number; matches: number; activeMatch: number }) => void,
     private onPageContextMenu?: (tab: Tab, info: PageContextMenuInfo) => void
@@ -106,10 +108,14 @@ export class TabManager {
     }
   }
 
-  createTab(url?: string, options: { background?: boolean } = {}): Tab {
+  createTab(url?: string, options: { background?: boolean; incognito?: boolean } = {}): Tab {
+    const incognito = options.incognito === true
     const view = new WebContentsView({
       webPreferences: {
-        partition: 'persist:cobrowse',
+        // no `persist:` prefix → in-memory partition: cookies/storage die with the tab
+        partition: incognito
+          ? `incognito-${this.nextId}-${Date.now().toString(36)}`
+          : 'persist:cobrowse',
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -117,7 +123,13 @@ export class TabManager {
         ...(this.overlayPreload ? { preload: this.overlayPreload } : {})
       }
     })
-    const tab: Tab = { id: this.nextId++, view, logs: [], audioPlaying: false }
+    const tab: Tab = {
+      id: this.nextId++,
+      view,
+      logs: [],
+      audioPlaying: false,
+      ...(incognito ? { incognito: true } : {})
+    }
     this.tabs.set(tab.id, tab)
     this.win.contentView.addChildView(view)
     view.setBounds(this.bounds)
@@ -125,7 +137,7 @@ export class TabManager {
     this.wireEvents(tab)
 
     view.webContents.setWindowOpenHandler(({ url: openUrl }) => {
-      if (openUrl && /^https?:/i.test(openUrl)) this.createTab(openUrl)
+      if (openUrl && /^https?:/i.test(openUrl)) this.createTab(openUrl, { incognito })
       return { action: 'deny' }
     })
 
@@ -173,6 +185,9 @@ export class TabManager {
         case 'newTab':
           this.createTab()
           break
+        case 'newTabIncognito':
+          this.createTab(undefined, { incognito: true })
+          break
         case 'reopenClosed':
           this.reopenClosed()
           break
@@ -210,10 +225,11 @@ export class TabManager {
     wc.on('did-navigate', changed)
     wc.on('did-navigate', (_event, url) => {
       tab.favicon = undefined
-      this.onNavigate(url, wc.getTitle())
+      this.onNavigate(url, wc.getTitle(), undefined, tab.incognito === true)
     })
     wc.on('did-navigate-in-page', (_event, url, isMainFrame) => {
-      if (isMainFrame) this.onNavigate(url, wc.getTitle(), tab.favicon)
+      if (isMainFrame)
+        this.onNavigate(url, wc.getTitle(), tab.favicon, tab.incognito === true)
     })
     wc.on('page-favicon-updated', (_event, icons) => {
       tab.favicon = icons[0]
@@ -341,7 +357,8 @@ export class TabManager {
     const tab = this.tabs.get(id)
     if (!tab) return false
     const closedUrl = tab.view.webContents.getURL()
-    if (/^https?:\/\//i.test(closedUrl)) {
+    // incognito tabs leave no "recently closed" memory
+    if (!tab.incognito && /^https?:\/\//i.test(closedUrl)) {
       this.closedTabs.push({ url: closedUrl, title: tab.view.webContents.getTitle() || closedUrl })
       if (this.closedTabs.length > 10) this.closedTabs.shift()
     }
@@ -434,7 +451,7 @@ export class TabManager {
     const tab = this.tabs.get(id)
     if (!tab) return false
     try {
-      this.createTab(tab.view.webContents.getURL())
+      this.createTab(tab.view.webContents.getURL(), { incognito: tab.incognito === true })
       return true
     } catch {
       return false
@@ -502,7 +519,8 @@ export class TabManager {
           canGoForward: wc.navigationHistory.canGoForward(),
           favicon: t.favicon,
           audioMuted: wc.isAudioMuted(),
-          audioPlaying: t.audioPlaying === true
+          audioPlaying: t.audioPlaying === true,
+          incognito: t.incognito === true
         })
       } catch {
         /* skip tabs that are going away */

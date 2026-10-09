@@ -68,7 +68,14 @@ export function TabBar({ tabs, activeTabId, onSwitch, onClose, onNew }: Props): 
               {t.audioMuted ? '🔇' : '🔊'}
             </button>
           )}
-          <span className="tab-title">{shortTitle(t)}</span>
+          <span className="tab-title">
+            {t.incognito && (
+              <span style={{ fontSize: 10, marginRight: 3 }} title="无痕标签页（不记录历史）">
+                🕶
+              </span>
+            )}
+            {shortTitle(t)}
+          </span>
           <button
             className="tab-close"
             title="关闭标签"
