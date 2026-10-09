@@ -74,6 +74,9 @@ export class TabManager {
     this.watchdog = setInterval(() => void this.reviveActiveView(), 30_000)
     // the watchdog must never keep the process alive on its own
     this.watchdog.unref?.()
+    // shortcuts must also work while the app's own UI (address bar, panels,
+    // AI chat) has keyboard focus — page-level handlers can't see those keys
+    this.attachUiShortcuts()
   }
 
   /** If the active view lost its visibility (Electron quirk after occlusion),
@@ -147,6 +150,99 @@ export class TabManager {
     return tab
   }
 
+  /** Resolve a keyboard event to a configured shortcut action, if any. */
+  private matchShortcutAction(like: {
+    key: string
+    ctrlKey: boolean
+    altKey: boolean
+    shiftKey: boolean
+    metaKey: boolean
+  }): ShortcutAction | null {
+    for (const id of Object.keys(this.shortcutsMap) as ShortcutAction[]) {
+      if (matchesBinding(this.shortcutsMap[id], like, process.platform)) return id
+    }
+    return null
+  }
+
+  /**
+   * Shortcuts wired onto page webContents only fire while a web page has
+   * keyboard focus. Mirror the same handling onto the top-level window so
+   * they also work while focus sits in the app's own UI (address bar,
+   * library, AI chat…). Keyboard focus is exclusive, so the two handlers
+   * never double-fire.
+   */
+  private attachUiShortcuts(): void {
+    this.win.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return
+      if ((input.control || input.meta) && !input.alt && /^[1-9]$/.test(input.key)) {
+        event.preventDefault()
+        const ids = Array.from(this.tabs.keys())
+        const target = input.key === '9' ? ids[ids.length - 1] : ids[Number(input.key) - 1]
+        if (target != null) this.setActive(target)
+        return
+      }
+      const action = this.matchShortcutAction({
+        key: input.key,
+        ctrlKey: input.control,
+        altKey: input.alt,
+        shiftKey: input.shift,
+        metaKey: input.meta
+      })
+      if (!action) return
+      event.preventDefault()
+      const active = this.activeId != null ? (this.tabs.get(this.activeId) ?? null) : null
+      this.dispatchShortcut(action, active)
+    })
+  }
+
+  /** Execute a shortcut action; page-scoped ones target the given tab
+   *  (the active tab when the keypress came from the app UI). */
+  private dispatchShortcut(action: ShortcutAction, tab: Tab | null): void {
+    const wc = tab?.view.webContents
+    switch (action) {
+      case 'closeTab':
+        if (tab) this.closeTab(tab.id)
+        break
+      case 'reload':
+        wc?.reload()
+        break
+      case 'newTab':
+        this.createTab()
+        break
+      case 'newTabIncognito':
+        this.createTab(undefined, { incognito: true })
+        break
+      case 'reopenClosed':
+        this.reopenClosed()
+        break
+      case 'zoomIn':
+        if (wc) wc.setZoomLevel(Math.min(5, wc.getZoomLevel() + 0.5))
+        break
+      case 'zoomOut':
+        if (wc) wc.setZoomLevel(Math.max(-5, wc.getZoomLevel() - 0.5))
+        break
+      case 'zoomReset':
+        wc?.setZoomLevel(0)
+        break
+      case 'back': {
+        if (!wc) break
+        const nav = wc.navigationHistory
+        if (nav.canGoBack()) nav.goBack()
+        break
+      }
+      case 'forward': {
+        if (!wc) break
+        const nav = wc.navigationHistory
+        if (nav.canGoForward()) nav.goForward()
+        break
+      }
+      default:
+        // app-level shortcuts (mirrors the chrome UI); the main-process
+        // handler still expects the legacy 'previousTab' name
+        this.onShortcut(action === 'prevTab' ? 'previousTab' : action)
+    }
+  }
+
   private wireEvents(tab: Tab): void {
     const wc = tab.view.webContents
     wc.on('before-input-event', (event, input) => {
@@ -159,62 +255,16 @@ export class TabManager {
         if (target != null) this.setActive(target)
         return
       }
-      const like = {
+      const action = this.matchShortcutAction({
         key: input.key,
         ctrlKey: input.control,
         altKey: input.alt,
         shiftKey: input.shift,
         metaKey: input.meta
-      }
-      let action: ShortcutAction | null = null
-      for (const id of Object.keys(this.shortcutsMap) as ShortcutAction[]) {
-        if (matchesBinding(this.shortcutsMap[id], like, process.platform)) {
-          action = id
-          break
-        }
-      }
+      })
       if (!action) return
       event.preventDefault()
-      switch (action) {
-        case 'closeTab':
-          this.closeTab(tab.id)
-          break
-        case 'reload':
-          wc.reload()
-          break
-        case 'newTab':
-          this.createTab()
-          break
-        case 'newTabIncognito':
-          this.createTab(undefined, { incognito: true })
-          break
-        case 'reopenClosed':
-          this.reopenClosed()
-          break
-        case 'zoomIn':
-          wc.setZoomLevel(Math.min(5, wc.getZoomLevel() + 0.5))
-          break
-        case 'zoomOut':
-          wc.setZoomLevel(Math.max(-5, wc.getZoomLevel() - 0.5))
-          break
-        case 'zoomReset':
-          wc.setZoomLevel(0)
-          break
-        case 'back': {
-          const nav = wc.navigationHistory
-          if (nav.canGoBack()) nav.goBack()
-          break
-        }
-        case 'forward': {
-          const nav = wc.navigationHistory
-          if (nav.canGoForward()) nav.goForward()
-          break
-        }
-        default:
-          // app-level shortcuts while the page has focus (mirrors the chrome UI);
-          // the main-process handler still expects the legacy 'previousTab' name
-          this.onShortcut(action === 'prevTab' ? 'previousTab' : action)
-      }
+      this.dispatchShortcut(action, tab)
     })
     const changed = (): void => {
       if (tab.id === this.activeId) this.activateView()
