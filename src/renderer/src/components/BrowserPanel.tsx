@@ -187,6 +187,8 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     window.dispatchEvent(new CustomEvent('duplex:toast', { detail: text }))
   }
 
+  const [importing, setImporting] = useState(false)
+
   const refresh = (): void => {
     props.onRefresh?.()
   }
@@ -240,6 +242,24 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     setNewOpen(false)
     toast('已添加书签')
     refresh()
+  }
+
+  const runImport = async (): Promise<void> => {
+    if (importing) return
+    setImporting(true)
+    try {
+      const result = await window.cobrowse.bookmarkImport()
+      if (result.canceled) return
+      if (!result.ok) {
+        toast(result.error || '导入书签失败')
+        return
+      }
+      const skippedNote = result.skipped ? `，跳过重复/无效 ${result.skipped} 条` : ''
+      toast(`已导入 ${result.added ?? 0} 条书签${skippedNote}`)
+      refresh()
+    } finally {
+      setImporting(false)
+    }
   }
 
   const startEdit = (b: Bookmark): void => {
@@ -568,6 +588,13 @@ export function BrowserPanel(props: Props): React.JSX.Element {
               排序：{sort === 'recent' ? '最近添加' : '标题 A–Z'}
             </button>
             <button onClick={openNewForm}>＋ 新建书签</button>
+            <button
+              title="从 Chrome / Edge 导出的书签 HTML 导入（自动去重）"
+              disabled={importing}
+              onClick={() => void runImport()}
+            >
+              {importing ? '导入中…' : '导入 HTML'}
+            </button>
           </span>
         </div>
         <div

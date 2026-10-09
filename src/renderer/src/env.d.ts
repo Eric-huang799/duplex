@@ -31,6 +31,13 @@ interface CobrowseApi {
     favicon?: string
     folder?: string
   }): Promise<{ ok: boolean; error?: string }>
+  bookmarkImport(): Promise<{
+    ok: boolean
+    added?: number
+    skipped?: number
+    canceled?: boolean
+    error?: string
+  }>
   bookmarkUpdate(
     url: string,
     patch: { title?: string; url?: string; folder?: string }

@@ -72,6 +72,7 @@ import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { importSkillFromFolder, listSkills, removeSkill, setSkillEnabled } from './agent/skills'
 import { importStatus } from './agent/auth-import'
+import { parseNetscapeBookmarks } from './bookmark-import'
 import {
   claudeDesktopConfigHint,
   claudeMcpCommand,
@@ -1683,6 +1684,31 @@ function setupIpc(): void {
     const result = browserData.renameFolder(oldName, newName)
     if (result.ok) emitBrowserData()
     return result
+  })
+  ipcMain.handle('browser:bookmark-import', async () => {
+    const picked = await dialog.showOpenDialog(win!, {
+      title: '导入书签（Chrome / Edge 导出的 HTML）',
+      filters: [{ name: '书签 HTML', extensions: ['html', 'htm'] }],
+      properties: ['openFile']
+    })
+    if (picked.canceled || picked.filePaths.length === 0) {
+      return { ok: true, added: 0, skipped: 0, canceled: true }
+    }
+    try {
+      const file = picked.filePaths[0]!
+      if (fs.statSync(file).size > 30 * 1024 * 1024) {
+        return { ok: false, error: '文件超过 30MB，不太像书签导出文件' }
+      }
+      const records = parseNetscapeBookmarks(fs.readFileSync(file, 'utf8'))
+      if (records.length === 0) {
+        return { ok: false, error: '没有找到书签（请确认是浏览器导出的书签 HTML 文件）' }
+      }
+      const result = browserData.importBookmarks(records)
+      emitBrowserData()
+      return { ok: true, added: result.added, skipped: result.skipped }
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message ?? String(e) }
+    }
   })
   ipcMain.handle('browser:history-remove', (_e, url: string, visitedAt: number) => {
     browserData.removeHistory(url, visitedAt)

@@ -361,6 +361,43 @@ export class BrowserDataStore {
     return { ok: true }
   }
 
+  /**
+   * Merge imported bookmarks (dedup by URL; existing URLs are skipped).
+   * Folders not yet present are created on the fly. Returns how many were
+   * added vs skipped (duplicates / non-http URLs).
+   */
+  importBookmarks(
+    records: Array<{ url: string; title: string; addedAt?: number; folder?: string }>
+  ): { added: number; skipped: number } {
+    let added = 0
+    let skipped = 0
+    for (const record of records) {
+      if (!record || !/^https?:\/\//i.test(record.url)) {
+        skipped++
+        continue
+      }
+      if (this.data.bookmarks.some((item) => item.url === record.url)) {
+        skipped++
+        continue
+      }
+      const folder = record.folder?.trim() ?? ''
+      if (folder && !this.data.bookmarkFolders.includes(folder)) {
+        this.data.bookmarkFolders.push(folder)
+      }
+      const addedAt =
+        typeof record.addedAt === 'number' && record.addedAt > 0 ? record.addedAt : Date.now()
+      this.data.bookmarks.push({
+        url: record.url,
+        title: record.title?.trim() || record.url,
+        addedAt,
+        ...(folder ? { folder } : {})
+      })
+      added++
+    }
+    if (added > 0) this.scheduleSave()
+    return { added, skipped }
+  }
+
   addDownload(record: DownloadRecord): void {
     const index = this.data.downloads.findIndex((item) => item.id === record.id)
     if (index >= 0) this.data.downloads[index] = record

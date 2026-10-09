@@ -102,6 +102,14 @@ const api = {
   },
   bookmarkAdd: (record: { url: string; title: string; favicon?: string; folder?: string }) =>
     ipcRenderer.invoke('browser:bookmark-add', record) as Promise<{ ok: boolean; error?: string }>,
+  bookmarkImport: () =>
+    ipcRenderer.invoke('browser:bookmark-import') as Promise<{
+      ok: boolean
+      added?: number
+      skipped?: number
+      canceled?: boolean
+      error?: string
+    }>,
   bookmarkUpdate: (url: string, patch: { title?: string; url?: string; folder?: string }) =>
     ipcRenderer.invoke('browser:bookmark-update', url, patch) as Promise<{
       ok: boolean
