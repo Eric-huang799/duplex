@@ -586,7 +586,7 @@ describe('agent session store (history persistence)', () => {
   it('trims long histories but keeps the system prompt', () => {
     const msgs = [
       { role: 'system' as const, content: 'sys' },
-      ...Array.from({ length: 300 }, (_, i) => ({ role: 'user' as const, content: `m${i}` }))
+      ...Array.from({ length: 1500 }, (_, i) => ({ role: 'user' as const, content: `m${i}` }))
     ]
     const s: AgentSession = {
       id: 'x',
@@ -594,12 +594,12 @@ describe('agent session store (history persistence)', () => {
       createdAt: 1,
       updatedAt: 1,
       messages: msgs,
-      uiEvents: Array.from({ length: 700 }, (_, i) => ({ i }))
+      uiEvents: Array.from({ length: 2500 }, (_, i) => ({ i }))
     }
     const [trimmed] = trimSessionsForSave([s])
-    expect(trimmed.messages.length).toBe(200)
+    expect(trimmed.messages.length).toBe(1000)
     expect(trimmed.messages[0].content).toBe('sys')
-    expect(trimmed.uiEvents.length).toBe(500)
+    expect(trimmed.uiEvents.length).toBe(2000)
   })
 
   it('creates/switches/deletes sessions and persists via injected store', () => {
@@ -1030,6 +1030,73 @@ describe('buildAnnotationText (code-layer structured description)', () => {
   })
 })
 
+describe('agent step-limit auto-continue', () => {
+  const alwaysToolCallChat = (counter: { calls: number }) =>
+    (async () => {
+      counter.calls++
+      return {
+        text: '',
+        toolCalls: [
+          {
+            id: `c${counter.calls}`,
+            type: 'function' as const,
+            function: { name: 'navigate', arguments: '{"url":"https://a.com"}' }
+          }
+        ]
+      }
+    }) as never
+
+  const runtimeDeps = (extra: Record<string, unknown> = {}): never =>
+    ({ load: () => [], save: () => undefined, ...extra }) as never
+
+  const getConfig = (): never =>
+    ({
+      baseUrl: 'http://x/v1',
+      apiKey: '',
+      model: 'm',
+      protocol: 'openai-chat',
+      authType: 'key',
+      providerName: 't'
+    }) as never
+
+  it('continues past the 60-step cap for the configured extra rounds', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const counter = { calls: 0 }
+    const rt = new AgentRuntime(
+      (async () => ({ content: [{ type: 'text', text: 'ok' }] })) as never,
+      getConfig,
+      (ev) => events.push(ev),
+      alwaysToolCallChat(counter),
+      runtimeDeps({ getAutoContinueRounds: () => 1 })
+    )
+    await rt.send('test')
+    // 2 rounds × 60 steps = 120 model calls; default (off) would stop at 60
+    expect(counter.calls).toBe(120)
+    const texts = events
+      .filter((e) => e.kind === 'text' && e.done)
+      .map((e) => String(e.text ?? ''))
+    expect(texts.some((t) => t.includes('自动续接'))).toBe(true)
+  })
+
+  it('stops at the 60-step cap with the notice when auto-continue is off (default)', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const counter = { calls: 0 }
+    const rt = new AgentRuntime(
+      (async () => ({ content: [{ type: 'text', text: 'ok' }] })) as never,
+      getConfig,
+      (ev) => events.push(ev),
+      alwaysToolCallChat(counter),
+      runtimeDeps()
+    )
+    await rt.send('test')
+    expect(counter.calls).toBe(60)
+    const texts = events
+      .filter((e) => e.kind === 'text' && e.done)
+      .map((e) => String(e.text ?? ''))
+    expect(texts.some((t) => t.includes('60 步上限'))).toBe(true)
+  })
+})
+
 describe('session history truncation notice', () => {
   it('reports sessions cut by the caps and shows the notice once per restore', () => {
     const raw = [
@@ -1040,14 +1107,14 @@ describe('session history truncation notice', () => {
         updatedAt: 2,
         messages: [
           { role: 'system', content: 'sys' },
-          ...Array.from({ length: 250 }, (_, i) => ({ role: 'user', content: `m${i}` }))
+          ...Array.from({ length: 1200 }, (_, i) => ({ role: 'user', content: `m${i}` }))
         ],
         uiEvents: []
       }
     ]
     const meta = normalizeRawSessionsWithMeta(raw)
     expect(meta.truncatedIds.has('s1')).toBe(true)
-    expect(meta.sessions[0].messages.length).toBe(200)
+    expect(meta.sessions[0].messages.length).toBe(1000)
 
     const rt = new AgentRuntime(
       (async () => ({ content: [] })) as never,

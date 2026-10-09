@@ -16,9 +16,9 @@ export interface AgentSession {
   uiEvents: Record<string, unknown>[]
 }
 
-const MAX_SESSIONS = 50
-const MAX_MESSAGES = 200
-const MAX_UI_EVENTS = 500
+const MAX_SESSIONS = 200
+const MAX_MESSAGES = 1000
+const MAX_UI_EVENTS = 2000
 
 // Safety net: unit tests must NEVER touch the user's real conversation store,
 // even if a test forgets to inject a mock store.

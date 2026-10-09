@@ -44,6 +44,9 @@ const empty = (): BrowserData => ({
 
 const SAVE_DEBOUNCE_MS = 500
 
+/** Keep at most this many history entries (oldest dropped beyond the cap). */
+const MAX_HISTORY = 20000
+
 export class BrowserDataStore {
   private data: BrowserData
   private file: string
@@ -70,7 +73,7 @@ export class BrowserDataStore {
     const data: BrowserData = {
       bookmarks: Array.isArray(parsed.bookmarks) ? parsed.bookmarks : [],
       bookmarkFolders: folders,
-      history: Array.isArray(parsed.history) ? parsed.history.slice(-5000) : [],
+      history: Array.isArray(parsed.history) ? parsed.history.slice(-MAX_HISTORY) : [],
       downloads: Array.isArray(parsed.downloads) ? parsed.downloads.slice(-500) : []
     }
     for (const item of data.downloads) {
@@ -208,7 +211,8 @@ export class BrowserDataStore {
   addHistory(record: HistoryRecord): void {
     if (!/^https?:\/\//i.test(record.url)) return
     this.data.history.push(record)
-    if (this.data.history.length > 5000) this.data.history.splice(0, this.data.history.length - 5000)
+    if (this.data.history.length > MAX_HISTORY)
+      this.data.history.splice(0, this.data.history.length - MAX_HISTORY)
     this.scheduleSave()
   }
 
