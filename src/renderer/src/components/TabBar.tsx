@@ -7,6 +7,7 @@ interface Props {
   onSwitch: (id: number) => void
   onClose: (id: number) => void
   onNew: () => void
+  onNewIncognito: () => void
 }
 
 function shortTitle(t: TabInfo): string {
@@ -16,7 +17,7 @@ function shortTitle(t: TabInfo): string {
   return clean.length > 22 ? clean.slice(0, 22) + '…' : clean
 }
 
-export function TabBar({ tabs, activeTabId, onSwitch, onClose, onNew }: Props): React.JSX.Element {
+export function TabBar({ tabs, activeTabId, onSwitch, onClose, onNew, onNewIncognito }: Props): React.JSX.Element {
   const barRef = useRef<HTMLDivElement>(null)
 
   // keep the active tab visible when tabs overflow
@@ -90,6 +91,14 @@ export function TabBar({ tabs, activeTabId, onSwitch, onClose, onNew }: Props): 
       ))}
       <button className="tab-new" onClick={onNew} onDoubleClick={(e) => e.stopPropagation()} title="新建标签页">
         +
+      </button>
+      <button
+        className="tab-new"
+        onClick={onNewIncognito}
+        onDoubleClick={(e) => e.stopPropagation()}
+        title="新建无痕标签页（Ctrl+Shift+N）"
+      >
+        🕶
       </button>
     </div>
   )

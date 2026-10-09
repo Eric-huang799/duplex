@@ -644,6 +644,7 @@ export default function App(): React.JSX.Element {
           onSwitch={(id) => void window.cobrowse.tabAction({ type: 'switchTab', tabId: id })}
           onClose={(id) => void window.cobrowse.tabAction({ type: 'closeTab', tabId: id })}
           onNew={newTab}
+          onNewIncognito={() => void window.cobrowse.tabAction({ type: 'newTabIncognito' })}
         />
         <Toolbar
           active={activeTab}
