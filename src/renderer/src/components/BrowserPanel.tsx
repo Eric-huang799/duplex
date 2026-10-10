@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import type { BrowserDataSnapshot, DownloadRecord } from '../../../shared/protocol'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import type { BrowserDataSnapshot, DownloadRecord, HistoryRecord } from '../../../shared/protocol'
+import { groupHistoryByDay } from '../../../shared/omnibox'
 
 type Section = 'bookmarks' | 'history' | 'downloads'
 type Bookmark = BrowserDataSnapshot['bookmarks'][number]
@@ -137,6 +138,27 @@ export function BrowserPanel(props: Props): React.JSX.Element {
       return props.downloads.filter((x) => `${x.filename} ${x.url}`.toLowerCase().includes(q))
     return []
   }, [props.section, props.data, props.downloads, q])
+
+  // Chrome-style day/month grouping for the full history page.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
+  const historyGroups = useMemo(
+    () => (props.section === 'history' ? groupHistoryByDay(items as HistoryRecord[]) : []),
+    [props.section, items]
+  )
+
+  const renderHistoryRow = (row: HistoryRecord): React.JSX.Element => {
+    const when = row.visitedAt
+    const icon = faviconSrc(row.url, row.favicon)
+    return (
+      <article className="library-row" key={`${row.url}-${when}`}>
+        <button className="library-row-open" onClick={() => props.onNavigate(row.url)}>
+          {icon && <img key={icon} src={icon} onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />}
+          <span className="library-row-main"><strong>{row.title || row.url}</strong><small>{row.url}<i>{new Date(when).toLocaleString()}</i></small></span>
+        </button>
+        <button className="row-remove" title="从记录中移除" onClick={() => props.onRemoveHistory(row.url, when)}>×</button>
+      </article>
+    )
+  }
 
   const bookmarks = useMemo(() => {
     if (props.section !== 'bookmarks') return [] as Bookmark[]
@@ -732,28 +754,38 @@ export function BrowserPanel(props: Props): React.JSX.Element {
           )}
         </div>
         <div className="library-list">
-          {items.length === 0 ? emptyState : items.map((item) => {
-            if (props.section === 'downloads') {
-              const row = item as DownloadRecord
-              const pct = row.totalBytes > 0 ? Math.min(100, Math.round(row.receivedBytes / row.totalBytes * 100)) : 0
-              const size = (n: number): string => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`
-              return <article className="library-row download-row" key={row.id}>
-                <div className="library-file-icon">↓</div><div className="library-row-main"><strong>{row.filename}</strong><small>{row.state === 'progressing' ? `${size(row.receivedBytes)} / ${size(row.totalBytes)}` : row.state === 'completed' ? size(row.totalBytes) : row.state === 'cancelled' ? '已取消' : '下载中断'}</small>
-                  {row.state === 'progressing' && <div className="download-progress"><i style={{ width: `${pct}%` }} /></div>}
-                </div><div className="library-row-actions">
-                  {row.state === 'progressing' ? <button onClick={() => props.onCancelDownload(row.id)}>取消</button> : <><button disabled={row.state !== 'completed'} onClick={() => props.onOpenDownload(row.id)}>打开</button><button onClick={() => props.onRevealDownload(row.id)}>文件夹</button></>}
-                </div>
-              </article>
-            }
-            const row = item as BrowserDataSnapshot['history'][number]
-            const when = row.visitedAt
-            const icon = faviconSrc(row.url, row.favicon)
-            return <article className="library-row" key={`${row.url}-${when}`}>
-              <button className="library-row-open" onClick={() => props.onNavigate(row.url)}>
-                {icon && <img key={icon} src={icon} onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />}
-                <span className="library-row-main"><strong>{row.title || row.url}</strong><small>{row.url}<i>{new Date(when).toLocaleString()}</i></small></span>
-              </button>
-              <button className="row-remove" title="从记录中移除" onClick={() => props.onRemoveHistory(row.url, when)}>×</button>
+          {items.length === 0 ? emptyState : props.section === 'history' ? (
+            historyGroups.map((g) => (
+              <Fragment key={g.key}>
+                <button
+                  type="button"
+                  className="library-group-head"
+                  onClick={() =>
+                    setCollapsedGroups((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(g.key)) next.delete(g.key)
+                      else next.add(g.key)
+                      return next
+                    })
+                  }
+                >
+                  <i>{collapsedGroups.has(g.key) ? '▸' : '▾'}</i>
+                  {g.label}
+                  <span>{g.records.length} 条</span>
+                </button>
+                {!collapsedGroups.has(g.key) && g.records.map(renderHistoryRow)}
+              </Fragment>
+            ))
+          ) : items.map((item) => {
+            const row = item as DownloadRecord
+            const pct = row.totalBytes > 0 ? Math.min(100, Math.round(row.receivedBytes / row.totalBytes * 100)) : 0
+            const size = (n: number): string => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`
+            return <article className="library-row download-row" key={row.id}>
+              <div className="library-file-icon">↓</div><div className="library-row-main"><strong>{row.filename}</strong><small>{row.state === 'progressing' ? `${size(row.receivedBytes)} / ${size(row.totalBytes)}` : row.state === 'completed' ? size(row.totalBytes) : row.state === 'cancelled' ? '已取消' : '下载中断'}</small>
+                {row.state === 'progressing' && <div className="download-progress"><i style={{ width: `${pct}%` }} /></div>}
+              </div><div className="library-row-actions">
+                {row.state === 'progressing' ? <button onClick={() => props.onCancelDownload(row.id)}>取消</button> : <><button disabled={row.state !== 'completed'} onClick={() => props.onOpenDownload(row.id)}>打开</button><button onClick={() => props.onRevealDownload(row.id)}>文件夹</button></>}
+              </div>
             </article>
           })}
         </div>

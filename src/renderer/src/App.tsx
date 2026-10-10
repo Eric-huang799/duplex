@@ -650,6 +650,7 @@ export default function App(): React.JSX.Element {
           active={activeTab}
           onAction={(a, url, tabId) => {
             if (a === 'navigate' && url) navigate(url, tabId)
+            else if (a === 'home') navigate('about:blank', tabId)
             else void window.cobrowse.tabAction({ type: a, url, tabId: activeTabId ?? undefined })
           }}
           onStopKeysChanged={(keys) => setStopKeys(keys)}
@@ -660,6 +661,9 @@ export default function App(): React.JSX.Element {
           onChromeOverlayChange={setChromeOverlay}
           annotationActive={annotationActive}
           onToggleAnnotation={() => void window.cobrowse.annotationToggle()}
+          bookmarks={browserData.bookmarks}
+          history={browserData.history}
+          onOpenHistory={() => setLibrary('history')}
         />
         {(aiPaused || confirms.some((c) => c.state === 'pending') || collaboration.tabs.some((tab) => tab.owner || tab.paused)) && (
           <div className="collaboration-bar" role="status">

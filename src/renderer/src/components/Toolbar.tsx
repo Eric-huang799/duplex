@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import type { TabInfo } from '../../../shared/protocol'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { TabInfo, BookmarkRecord, HistoryRecord } from '../../../shared/protocol'
+import { buildOmniboxSuggestions, type OmniboxSuggestion } from '../../../shared/omnibox'
 import { VirtualKeyboard } from './VirtualKeyboard'
 import { comboFromEvent, displayParts, isModifierKey, normalizeBinding, sameBinding, validateBinding } from '../../../shared/hotkeys'
 import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, validateShortcuts, type ShortcutAction } from '../../../shared/shortcuts'
@@ -17,9 +18,13 @@ interface Props {
   annotationActive?: boolean
   onToggleAnnotation?: () => void
   onChromeOverlayChange?: (id: string, open: boolean) => void
+  /** Local data for omnibox suggestions + the recent-history popup (Chrome-style). */
+  bookmarks?: BookmarkRecord[]
+  history?: HistoryRecord[]
+  onOpenHistory?: () => void
 }
 
-function Icon({ name, filled = false }: { name: 'back' | 'forward' | 'reload' | 'star' | 'more' | 'stop'; filled?: boolean }): React.JSX.Element {
+function Icon({ name, filled = false }: { name: 'back' | 'forward' | 'reload' | 'star' | 'more' | 'stop' | 'home' | 'history'; filled?: boolean }): React.JSX.Element {
   const common = { viewBox: '0 0 24 24', width: 17, height: 17, fill: name === 'star' && filled ? 'currentColor' : 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true as const }
   const paths: Record<typeof name, React.ReactNode> = {
     back: <path d="m15 18-6-6 6-6" />,
@@ -27,14 +32,19 @@ function Icon({ name, filled = false }: { name: 'back' | 'forward' | 'reload' | 
     reload: <><path d="M20 7v5h-5" /><path d="M20 12a8 8 0 1 1-2.4-5.7L20 9" /></>,
     stop: <><path d="M6.5 6.5 17.5 17.5" /><path d="M17.5 6.5 6.5 17.5" /></>,
     star: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9L12 3Z" />,
+    home: <><path d="m3 10.8 9-7.8 9 7.8" /><path d="M5.5 9.5V21h13V9.5" /></>,
+    history: <><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.3" /><path d="M3.5 3.5v4.8h4.8" /><path d="M12 7.5V12l3 2.5" /></>,
     more: <><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></>
   }
   return <svg {...common}>{paths[name]}</svg>
 }
 
-export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = false, onBookmark, onToggleAI, aiOpen = false, annotationActive = false, onToggleAnnotation, onChromeOverlayChange }: Props): React.JSX.Element {
+export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = false, onBookmark, onToggleAI, aiOpen = false, annotationActive = false, onToggleAnnotation, onChromeOverlayChange, bookmarks = [], history = [], onOpenHistory }: Props): React.JSX.Element {
   const [input, setInput] = useState('')
   const [editing, setEditing] = useState(false)
+  const [sugs, setSugs] = useState<OmniboxSuggestion[]>([])
+  const [hl, setHl] = useState(-1)
+  const [histOpen, setHistOpen] = useState(false)
   const editTabRef = useRef<number | undefined>(active?.id)
   const currentTabRef = useRef<number | undefined>(active?.id)
   currentTabRef.current = active?.id
@@ -223,6 +233,54 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   const noPage = !active || !active.url || active.url === 'about:blank'
   const showAnnotationToggle = annotationActive || typeof onToggleAnnotation === 'function'
 
+  // Chrome-style: incognito tabs never surface local history/bookmarks in suggestions.
+  const localHistory = active?.incognito ? [] : history
+  const localBookmarks = active?.incognito ? [] : bookmarks
+  const engineName = engines.find((e) => e.key === engine)?.name ?? '搜索'
+
+  const refreshSugs = (value: string): void => {
+    setSugs(buildOmniboxSuggestions(value, localHistory, localBookmarks, { engineName }))
+    setHl(-1)
+  }
+
+  const closeSugs = (): void => {
+    setSugs([])
+    setHl(-1)
+  }
+
+  const recent = buildOmniboxSuggestions('', localHistory, [], { recentLimit: 10 })
+
+  const pickSuggestion = (s: OmniboxSuggestion): void => {
+    if (s.kind === 'search') submit()
+    else onAction('navigate', s.url, editTabRef.current)
+    closeSugs()
+    setEditing(false)
+    ;(document.activeElement as HTMLElement | null)?.blur()
+  }
+
+  useEffect(() => {
+    onChromeOverlayChange?.('toolbar-history-pop', histOpen)
+    return () => onChromeOverlayChange?.('toolbar-history-pop', false)
+  }, [histOpen, onChromeOverlayChange])
+
+  useEffect(() => {
+    if (!histOpen) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as HTMLElement | null
+      if (t?.closest('.hist-wrap')) return
+      setHistOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setHistOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [histOpen])
+
   const submit = (): void => {
     const v = input.trim()
     if (v) onAction('navigate', v, editTabRef.current)
@@ -281,35 +339,123 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
       <button className="tb-btn" disabled={!active?.canGoBack} onClick={() => onAction('back')} title="后退"><Icon name="back" /></button>
       <button className="tb-btn" disabled={!active?.canGoForward} onClick={() => onAction('forward')} title="前进"><Icon name="forward" /></button>
       <button className="tb-btn" disabled={noPage} onClick={() => onAction(active?.loading ? 'stopLoad' : 'reload')} title={active?.loading ? '停止加载' : '刷新'}><Icon name={active?.loading ? 'stop' : 'reload'} /></button>
-      <input
-        className="urlbar"
-        value={input}
-        spellCheck={false}
-        placeholder="输入网址或搜索内容，回车打开"
-        onFocus={(e) => { editTabRef.current = active?.id; setEditing(true); e.currentTarget.select() }}
-        onBlur={() => setEditing(false)}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) submit()
-          if (e.key === 'Escape') {
-            setEditing(false)
-            ;(e.target as HTMLInputElement).blur()
-          }
-        }}
-      />
-      <div className="engine-wrap address-engine">
-        <button
-          className="tb-btn engine-trigger"
-          title={`搜索引擎：${engines.find((e) => e.key === engine)?.name ?? engine}`}
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect()
-            window.cobrowse.showEngineMenu(rect.left, rect.bottom + 4)
+      <button className="tb-btn tb-home" disabled={noPage} onClick={() => onAction('home')} title="回到主页（起始页）"><Icon name="home" /></button>
+      <div className="urlbar-wrap">
+        <input
+          className="urlbar"
+          value={input}
+          spellCheck={false}
+          placeholder="输入网址或搜索内容，回车打开"
+          onFocus={(e) => { editTabRef.current = active?.id; setEditing(true); refreshSugs(input); e.currentTarget.select() }}
+          onBlur={() => { setEditing(false); closeSugs() }}
+          onChange={(e) => { setInput(e.target.value); refreshSugs(e.target.value) }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' && sugs.length > 0) {
+              e.preventDefault()
+              setHl((i) => Math.min(i + 1, sugs.length - 1))
+              return
+            }
+            if (e.key === 'ArrowUp' && sugs.length > 0) {
+              e.preventDefault()
+              setHl((i) => Math.max(i - 1, -1))
+              return
+            }
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+              const pick = hl >= 0 ? sugs[hl] : null
+              if (pick && pick.kind !== 'search') pickSuggestion(pick)
+              else submit()
+              closeSugs()
+              return
+            }
+            if (e.key === 'Escape') {
+              if (sugs.length > 0) {
+                // 第一段 Esc 只收起下拉（Chrome 交互），再按才退出编辑
+                closeSugs()
+                return
+              }
+              setEditing(false)
+              ;(e.target as HTMLInputElement).blur()
+            }
           }}
-        >
-          {engines.find((e) => e.key === engine)?.name ?? '搜索'}　⌄
-        </button>
+        />
+        <div className="engine-wrap address-engine">
+          <button
+            className="tb-btn engine-trigger"
+            title={`搜索引擎：${engines.find((e) => e.key === engine)?.name ?? engine}`}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              window.cobrowse.showEngineMenu(rect.left, rect.bottom + 4)
+            }}
+          >
+            {engines.find((e) => e.key === engine)?.name ?? '搜索'}　⌄
+          </button>
+        </div>
+        {editing && sugs.length > 0 && (
+          <div className="omnibox-pop">
+            {sugs.map((s, i) => (
+              <button
+                type="button"
+                key={`${s.kind}-${i}-${s.url}`}
+                className={`omnibox-item${i === hl ? ' on' : ''}`}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setHl(i)}
+                onClick={() => pickSuggestion(s)}
+              >
+                <span className="omnibox-ico">{s.kind === 'search' ? '🔍' : s.kind === 'bookmark' ? '★' : '🕘'}</span>
+                <span className="omnibox-label">{s.label}</span>
+                <span className="omnibox-sub">{s.sub}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <button className={`tb-btn bookmark-button ${bookmarked ? 'is-bookmarked' : ''}`} disabled={noPage} title={bookmarked ? '移除书签' : '添加书签'} onClick={onBookmark}><Icon name="star" filled={bookmarked} /></button>
+      <div className="hist-wrap">
+        <button
+          className="tb-btn hist-trigger"
+          title="最近浏览记录"
+          onClick={(e) => {
+            e.stopPropagation()
+            setHistOpen((v) => !v)
+          }}
+        ><Icon name="history" /></button>
+        {histOpen && (
+          <div className="hist-pop" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="hist-pop-head">最近浏览</div>
+            {recent.length === 0 ? (
+              <div className="hist-pop-empty">暂无浏览记录</div>
+            ) : (
+              recent.map((s, i) => (
+                <button
+                  type="button"
+                  key={`${i}-${s.url}`}
+                  className="omnibox-item"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setHistOpen(false)
+                    onAction('navigate', s.url, currentTabRef.current)
+                  }}
+                >
+                  <span className="omnibox-ico">🕘</span>
+                  <span className="omnibox-label">{s.label}</span>
+                  <span className="omnibox-sub">{s.sub}</span>
+                </button>
+              ))
+            )}
+            <button
+              type="button"
+              className="hist-pop-foot"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setHistOpen(false)
+                onOpenHistory?.()
+              }}
+            >
+              查看全部浏览记录
+            </button>
+          </div>
+        )}
+      </div>
       <div className="tools-wrap">
         <button
           className="tb-btn tools-trigger"
