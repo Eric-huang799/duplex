@@ -39,18 +39,17 @@
 
 - **Security boundaries (high stakes — please read).** Duplex lets the AI drive your **real browser session**, including login state, cookies and local data. Under this architecture, a wrong AI move can touch real accounts and data (sending messages, submitting forms, modifying or deleting content), potentially with serious consequences. Don't leave the agent running unattended in environments where sensitive accounts are signed in. The emergency-stop hotkeys (default `F2` / `Ctrl+Shift+K`, customizable in settings) are a last-resort human brake — they are **no substitute for your own judgement about what the AI should be allowed to touch**.
 
-- **The tooling layer is still being tuned.** The goal is for **the human to stay in command of the AI's tools**, rather than have AI tooling and the human's own actions crowd each other out of the pipeline (contending for the same page, interrupting input, interleaving conflicting actions). The trade-offs here are still evolving — feedback on human/agent contention is welcome via Issues.
+- **You and the AI share one page — and you come first.** While you are scrolling, typing or interacting, the AI keeps observing but pauses its own modifications on that page instead of fighting you for the same input. A status bar lists the pages under human control, each with a one-click resume for when you're ready. The emergency stop remains the hard brake: one key cuts every AI action, the CLI processes it started, and all queued messages.
 
-## What's new in v0.2.6
+## What's new in v0.2.9
 
-- **Every shortcut is customizable** — rebind address bar / tabs / find / panel / annotation / zoom / navigation from **⋯ → Shortcuts**: record a new key, reset one action or all, with conflict and invalid-combo checks (macOS shows ⌘).
-- **A full bookmark manager** — folders (create / rename / delete), add / edit / delete bookmarks, open in a new tab, copy links, sorting (recent / A–Z) and search, all with atomic writes and automatic `.bak` backups.
-- **Page annotations, upgraded** — `Ctrl+Shift+A` to enter/exit, honest delivery receipts, scroll-aware markers, per-box editing, and dual delivery: straight into the built-in agent conversation, or into the opencode queue, depending on the active panel mode.
-- **Native menus everywhere** — right-click a page (open / copy link, search the selection, copy as Markdown, image actions) and a tab (duplicate, close others / to the right, recently-closed list, mute, bookmark all tabs). Opening a menu no longer blanks the page.
-- **In-flow find bar** — `Ctrl+F` keeps the page visible while searching, with a match counter and next / previous.
-- **Safety & polish** — explicit emergency-stop keys (default `F2` / `Ctrl+Shift+K`) with a pause state that survives restarts, IME-safe Enter, per-mode drafts that survive panel switches, download toasts, and dozens of small fixes.
+- **Human-first collaboration** — the AI yields to you. When you scroll, type, tap or focus something, it keeps reading and thinking but pauses its own modifications on that page; a status bar shows which pages are under human control and hands each one back with a click. Your scroll position and focus are preserved even while the AI acts.
+- **Playwright under the hood** — page actions now drive the browser's own Chromium through the debugging protocol: Playwright locators survive DOM changes, iframes and open shadow DOM work, waits and script execution are cancellable, and AI input is marked so the app can tell it apart from yours.
+- **Task-tab binding & message integrity** — each AI task is bound to its tab: switching tabs no longer redirects the AI, and closing the task tab reports an error instead of silently acting on another page. Panel messages and annotations carry their source tab / document / target session; injections are claimed once (60 s lease + renew + ACK), so nothing leaks to the wrong session and retries don't duplicate.
+- **Session restore** — on exit Duplex saves your tabs, their order and the active page; the next launch brings them back (blank pages included; local `file:` / `data:` pages are not persisted).
+- **Sharper stops** — stopping a built-in task cancels its model run, tools and pending confirmations; the emergency stop additionally terminates CLI children started by the app and clears queued injections.
 
-*v0.2 also brought skills, multi-protocol model APIs, credential import and external agent tools — details below and still current.*
+*Also in this build (from the 0.2.6 batch): fully customizable shortcuts, the complete bookmark manager, native context menus, the in-flow find bar, the `F2` / `Ctrl+Shift+K` emergency stop, and honest annotation delivery.*
 
 ## How Duplex compares
 
@@ -60,23 +59,25 @@
 | Who uses the browser | **Human and AI share the same tab and the same live session** | AI only (separate automation instance) | AI drives your current Chrome | AI only (Playwright instance) | AI assistant alongside/operating |
 | What the AI sees | DOM outline snapshot + source + screenshots | Vision + DOM | Screenshots + a11y tree | Accessibility tree | Internal |
 | Human collaboration | **Real-time side-by-side; the emergency-stop key interrupts the AI anytime** | Logs afterwards | Human spectates | Human spectates | Limited intervention |
+| When both act on one page | **The AI yields while you interact; per-page pause + one-click resume** | — | — | — | — |
 | Connectable AI | **Built-in models + opencode / Codex / Claude Code / Gemini / Qwen / any MCP client** | Bring your own LLM | Any MCP client | Any MCP client | Official model only |
 | Conversation visibility | **Live side-panel mirror (including external CLIs' chats and tool calls)** | Logs/terminal | In the client | In the client | In-app |
 | Data | Fully local | Local/cloud | Local | Local | Cloud |
 
-> In one line: browser-use / Playwright MCP let the AI **run a flow for you**; Duplex lets the AI **use the browser together with you** — same tab, same session, takeover anytime.
+> In one line: browser-use / Playwright MCP let the AI **run a flow for you**; Duplex lets the AI **use the browser together with you** — same tab, same session, and when you both reach for the page, you go first.
 
 ## Highlights
 
-- **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes (light / dark / follow system) and a wallpaper start page with a clock and search.
-- **24 MCP tools for AI agents** — `snapshot` compresses any page into a compact DOM outline with `[eN]` refs; the other tools cover tabs, navigation, clicking, typing, dragging, file upload, scrolling, waiting, console logs, JS evaluation and page annotations.
+- **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes, a wallpaper start page, **customizable keyboard shortcuts** and a **full bookmark manager** (folders, edit, sort, search).
+- **Human-first collaboration** — the AI works on its own bound tab, reads while you interact, pauses its page modifications when you take over, and hands pages back one by one. Same tab, same live session — without stepping on each other.
+- **24 MCP tools, Playwright-backed** — `snapshot` compresses any page into a compact DOM outline with `[eN]` refs; clicks, typing, drags and reads run through Playwright locators (stable across DOM changes, iframe & open-shadow capable, cancellable waits). The rest covers tabs, navigation, upload, console logs, JS evaluation and page annotations.
 - **Zero-setup bridge** — a stdio MCP bridge (`mcp-bridge`) auto-launches the browser on the first tool call. Works with opencode, Claude Code, or any MCP client.
 - **Live session mirror** — when your AI works through opencode, its replies, reasoning and tool-call cards stream into the side panel in real time. Type in the panel to inject a message into the *same* session.
 - **AI action visualization** — a translucent cursor, element highlight and a status bar ("AI is clicking «…» — F2 to take over") are drawn in a Shadow-DOM overlay, so you always see what the AI is doing on the page.
 - **Emergency stop** — press the configured emergency-stop key (default `F2` / `Ctrl+Shift+K`) or click the status bar to take control instantly: running tool calls are aborted, external processes started from the panel are terminated, pending confirmations are denied and queued messages are dropped. The pause survives a restart — send a message or click "Resume" to continue.
-- **Page annotations** — press `Ctrl+Shift+A` (or the ✎ button in the toolbar, or use `annotation_mode`) to draw a box / circle / arrow / point on any page and attach a question. The annotation is compiled into a structured text brief (DOM outline + visible text + selectors + geometry) and sent to the AI.
+- **Page annotations** — press `Ctrl+Shift+A` (or the ✎ button in the toolbar, or use `annotation_mode`) to draw a box / circle / arrow / point on any page and attach a question. The annotation is compiled into a structured text brief (DOM outline + visible text + selectors + geometry) and sent to the AI — with delivery receipts, and stale annotations are rejected.
 - **Built-in agent (optional)** — connect any OpenAI-compatible API (DeepSeek, Kimi, Qwen, GLM, Ollama, …) and let the browser drive itself. Provider management supports one-click import from opencode.
-- **Conversation history** — built-in agent sessions are saved locally and can be reopened from the history menu.
+- **Conversation history & session restore** — built-in agent sessions are saved locally and can be reopened any time; browser tabs and the active page come back after a restart.
 
 ## Feature tour
 
@@ -135,6 +136,8 @@ Draw a box (or circle / arrow / point) around anything and ask a question about 
 1. Download the latest installer from [Releases](../../releases): `Duplex Setup x.y.z.exe` (Windows), `.dmg` (macOS, Apple Silicon / Intel) or `.AppImage` (Linux).
 2. Run it and launch Duplex.
 
+> Prefer no installer? A portable **zip** (unzip anywhere, run `Duplex.exe`) is attached to releases as well.
+
 ### Build from source
 
 ```bash
@@ -153,6 +156,8 @@ npm run dev    # development mode with HMR
 # or
 npm start      # preview the production build
 ```
+
+> Running a dev build next to the installed app? Set `DUPLEX_DATA_DIR` to another directory so the two don't share settings and the local endpoint.
 
 ### Connect opencode (recommended)
 
@@ -187,12 +192,12 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 | `snapshot` | **Page as text** — compact DOM outline; interactive elements carry `[eN]` refs |
 | `get_html` / `query` | Raw HTML, or detailed info for elements matching a CSS selector |
 | `screenshot` | PNG screenshot of the visible page (for multimodal models) |
-| `click` / `dblclick` / `hover` | Click / double-click / hover; `target` accepts an `eN` ref or a CSS selector |
+| `click` / `dblclick` / `hover` | Click / double-click / hover through Playwright; `target` accepts an `eN` ref or a CSS selector, and the action waits for the element to be actionable |
 | `type` / `press` | Type text (optionally submitting) and press keys, incl. combos like `Control+A` |
 | `drag` | Real drag & drop from one point/element to another |
 | `select_option` / `upload` | Native `<select>` options, and file upload by absolute path |
 | `scroll` | Scroll the page or a specific element into view |
-| `wait` | Wait for time / selector / text — interruptible by the emergency stop |
+| `wait` | Wait for time / selector / text — cancellable; yields with a reason while you are interacting |
 | `get_console` | Read page console logs (errors and warnings) |
 | `annotation_mode` | Enter/exit the annotation overlay (human draws a box/circle/arrow/point + question) |
 | `evaluate` | Evaluate JS in the page, returns JSON-serializable results |
@@ -203,34 +208,49 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 
 - The Electron main process serves a small local HTTP API on `127.0.0.1` protected by a per-launch bearer token (endpoint info is written to `~/.cobrowse/endpoint.json`).
 - `dist-bridge/index.cjs` is a stdio MCP server that proxies tool calls to that API and auto-launches the app when it is not running.
-- The opencode plugin pushes session events (text, reasoning, tool calls) into the panel, and long-polls for messages queued in the browser (~10 ms injection latency).
-- Panel messages and page annotations are injected into the active opencode session with `session.promptAsync`.
-- Codex and Claude Code are mirrored from their local session transcripts (history + live tail); replies sent from the panel headlessly resume the same session (`codex exec resume` / `claude --resume`) and the new turns stream back through the same tail.
+- Page automation is **Playwright over the browser's own Chromium**: the app reads `DevToolsActivePort`, matches `targetId` to each tab and drives locators, iframes, open shadow DOM, cancellable waits and script evaluation — the same page you are looking at, not a separate automation instance.
+- A **collaboration layer** binds every task to its tab, serializes same-page writes, watches for real human input (wheel / touch / keyboard / focus) and pauses AI modifications per page; the status bar reflects it and offers one-click resume per page.
+- The opencode plugin pushes session events (text, reasoning, tool calls) into the panel and long-polls for queued messages; deliveries are claimed once (60 s lease, renewed, ACK'd) and target the bound session rather than "whichever session is active".
+- Panel messages and page annotations are injected with identity: annotations capture the source tab, URL and a document marker, and stale ones are rejected — they cannot cross into the wrong session.
+- Codex and Claude Code are mirrored from their local session transcripts (history + live tail); replies sent from the panel headlessly resume the same session (`codex exec resume` / `claude --resume`) and the new turns stream back through the same tail. Launches are matched by structured session IDs, not "most recently modified file".
+- Browser state (tab order, HTTP(S) URLs, the active page) is saved on exit and restored on the next start.
 - External scripts can also push messages into the session: `POST /api/chat { "text": "..." }`.
 
 ## Known limitations
 
-- Page internals inside iframes and shadow DOM are not covered by `snapshot` / `click` — shadow DOM is only detected, not entered.
-- `eN` refs are invalidated by navigation; re-run `snapshot` after the page changes.
-- Message injection targets the "active session"; with several opencode sessions the target may occasionally be ambiguous.
-- The mirror store holds the recent event stream in memory; it resets on browser restart.
+- While you are interacting with a page, AI input on it is synthesized DOM events (`isTrusted=false`); sites that depend on real key/mouse events, `contenteditable`, or custom widgets may need manual coordination — and side effects already applied cannot be undone.
+- Cancellation granularity: in-flight Playwright calls are bounded by 200–250 ms polling — an action that already completed (click, submit, write) cannot be rolled back.
+- `evaluate` cleans up timers / RAF / fetch inside its scope, but cannot revoke callbacks registered elsewhere (e.g. via `document.defaultView`); advanced uses are being constrained further.
+- Element refs are snapshot-scoped: after navigation or large DOM changes take a fresh `snapshot` (stale refs fail with a clear message instead of clicking something wrong).
+- Direct MCP clients share a default caller identity; an explicit task start / end / handoff protocol is planned for 0.3.0.
+- opencode message de-duplication relies on the plugin; if it stays disconnected longer than the lease, an accepted-but-unacknowledged message may be delivered twice — exact dedupe needs upstream message IDs.
+- Custom CLIs without a structured launch identity are accepted only when a unique new transcript appears; ambiguous cases are refused rather than guessed.
+- Built-in multimodal image context, site-specific custom widgets and cross-platform interaction have not been fully verified yet.
 - The built-in agent is a convenience option: local / smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
 - CLI tools that open pages through the OS (Claude Code, Codex, …) follow the **system default browser**. To route them to Duplex, pick Duplex once in your OS settings — **⋯ → 设为默认浏览器…** opens that page (it is never forced). CLIs and commands launched *from* Duplex also get a `BROWSER=duplex-open` shim, which covers tools that honour `$BROWSER`.
 
 ## Roadmap
 
-- **v0.3.0 — built from community feedback.** The plan is to collect user reports first, then work through them together:
-  - Command palette, tab search, session restore, reader mode, bookmark HTML import / export, and more — the running list lives in `docs/待办与用户反馈.md`.
-- Richer event mapping for external CLIs and more client integrations keep evolving.
+- **v0.3.0 — collaboration, continued.** Next up:
+  - An explicit task-lifecycle / handoff protocol for MCP callers (start, end, restore) and finer-grained cancellable action steps.
+  - Fallbacks for `contenteditable` and custom widgets; a richer CLI session lifecycle; multimodal verification.
+  - Community backlog: command palette, tab search, reader mode, bookmark HTML import / export, and more — tracked in `docs/待办与用户反馈.md`.
 
 ## Development
 
 ```bash
 npm run dev        # dev mode (electron-vite, HMR for the renderer)
 npm run typecheck  # TypeScript checks (node + web)
-npm test           # unit tests (vitest)
+npm test           # unit tests (vitest, 300+ cases)
 npm run smoke      # end-to-end smoke test (launches the bridge and a real browser)
 npm run dist       # build the Windows installer (electron-builder)
+```
+
+Self-contained smokes (a hidden Electron plus a temporary data directory — they never touch your own sessions):
+
+```bash
+node tests/playwright-connection-smoke.mjs   # the Playwright layer against a hidden fixture browser
+node tests/private-029-smoke.mjs             # 11 main-process collaboration scenarios
 ```
 
 Debug helpers:
