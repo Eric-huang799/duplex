@@ -172,7 +172,9 @@ export class TabManager {
    * never double-fire.
    */
   private attachUiShortcuts(): void {
-    this.win.webContents.on('before-input-event', (event, input) => {
+    // bare window mocks (unit tests) have no webContents; the real
+    // BrowserWindow always does — attach only when it actually exists
+    this.win.webContents?.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
       if ((input.control || input.meta) && !input.alt && /^[1-9]$/.test(input.key)) {
         event.preventDefault()
