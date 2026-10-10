@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.eric-huang799/duplex",
+  "description": "stdio MCP bridge for Duplex - a browser shared by a human and an AI",
+  "repository": {
+    "url": "https://github.com/Eric-huang799/duplex",
+    "source": "github",
+    "subfolder": "npm/duplex-bridge"
+  },
+  "version": "0.2.9",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "duplex-bridge",
+      "version": "0.2.9",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
