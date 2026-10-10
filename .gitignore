@@ -11,3 +11,4 @@ logs/
 opencode.json
 NVIDIA Corporation/
 HANDOFF.md
+npm/duplex-bridge/index.cjs

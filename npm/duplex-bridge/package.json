@@ -1,0 +1,26 @@
+{
+  "name": "duplex-bridge",
+  "version": "0.2.9",
+  "description": "stdio MCP bridge for Duplex - a browser shared by a human and an AI",
+  "license": "MIT",
+  "author": "Eric-huang799",
+  "homepage": "https://github.com/Eric-huang799/duplex",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Eric-huang799/duplex.git"
+  },
+  "bin": {
+    "duplex-bridge": "./index.cjs"
+  },
+  "files": [
+    "index.cjs",
+    "README.md"
+  ],
+  "mcpName": "io.github.eric-huang799/duplex",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "prepack": "node prepack.mjs"
+  }
+}

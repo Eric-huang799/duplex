@@ -184,9 +184,21 @@ async function ensureEndpoint(): Promise<EndpointInfo> {
     // Installed build: nothing to locate or compile, only launch the app.
     launchApp(null)
   } else {
-    const root = findRoot()
-    await ensureBuilt(root)
-    launchApp(root)
+    // npm-installed bridge (e.g. `npx duplex-bridge`): there is no project
+    // root next to the package. Prefer an installed Duplex app; only use a
+    // local checkout (with its build step) when one can actually be found.
+    let root: string | null = null
+    try {
+      root = findRoot()
+    } catch {
+      root = null
+    }
+    if (installedAppPath() || !root) {
+      launchApp(null)
+    } else {
+      await ensureBuilt(root)
+      launchApp(root)
+    }
   }
 
   const deadline = Date.now() + 30_000
