@@ -9,6 +9,7 @@ import * as cdp from './cdp'
 import * as scripts from './page-scripts'
 import type { MirrorStore } from './mirror'
 import type { AnnotationTool } from '../shared/protocol'
+import { operationSignal } from './interrupt'
 
 export const ANNOTATION_TOOL_LABELS: Record<AnnotationTool, string> = {
   rect: '矩形框选',
@@ -49,6 +50,7 @@ export interface AnnotateInfo {
 
 /** One submitted annotation, ready for whichever downstream channel delivers it. */
 export interface AnnotationDelivery {
+  tabId: number
   text: string
   question?: string
   tool: AnnotationTool
@@ -59,6 +61,10 @@ export interface AnnotationDelivery {
 }
 
 export interface AnnotationSubmitPayload {
+  /** Omitted only by legacy internal callers. Page IPC supplies all three. */
+  tabId?: number
+  documentURL?: string
+  documentToken?: string
   annotationId: string
   tool: AnnotationTool
   rect: { x: number; y: number; w: number; h: number }
@@ -141,7 +147,8 @@ export type AnnotationSubmitHandler = (
 export function createAnnotationSubmitHandler(
   tabs: TabManager,
   mirror: MirrorStore,
-  deliver?: (d: AnnotationDelivery) => void
+  deliver?: (d: AnnotationDelivery) => void,
+  options: { isAiPaused?: () => boolean } = {}
 ): AnnotationSubmitHandler {
   // Default (single-channel) delivery: injection queue for the AI session plus
   // the side-panel annotation card. A caller-supplied deliver takes over both.
@@ -160,10 +167,25 @@ export function createAnnotationSubmitHandler(
   }
   const deliverAnnotation = deliver ?? defaultDeliver
   return async (payload) => {
-    const tab: Tab | null = tabs.getActive()
-    if (!tab) return { ok: false, error: '没有活动的标签页（请先切换到一个网页）' }
-    let info: AnnotateInfo
+    const tab: Tab | null = payload.tabId == null ? tabs.getActive() : tabs.getTab(payload.tabId)
+    if (!tab) return { ok: false, error: '标注来源标签页已关闭' }
+    if (payload.tabId != null && (!payload.documentURL || !payload.documentToken)) {
+      return { ok: false, error: '标注缺少来源页面信息，请重新标注' }
+    }
+    const signal = operationSignal()
+    const checkCancelled = (): void => {
+      if (signal?.aborted || options.isAiPaused?.()) throw new Error('标注已取消，AI 当前处于暂停状态或操作已被中断')
+    }
     try {
+      checkCancelled()
+      const documentScript = '({ url: location.href, token: document.documentElement.getAttribute("data-duplex-document") })'
+      const before = await cdp.evalInPage<{ url: string; token: string | null }>(tab, documentScript)
+      checkCancelled()
+      if (!before || typeof before.url !== 'string' ||
+        (payload.documentURL != null && before.url !== payload.documentURL) ||
+        (payload.documentToken != null && before.token !== payload.documentToken)) {
+        throw new Error('标注来源页面已变化，请重新标注')
+      }
       const points =
         payload.tool === 'arrow' && payload.arrow
           ? [
@@ -171,18 +193,19 @@ export function createAnnotationSubmitHandler(
               { x: payload.arrow.x2, y: payload.arrow.y2, tag: 'end' }
             ]
           : undefined
-      info = await cdp.evalInPage<AnnotateInfo>(
+      const info = await cdp.evalInPage<AnnotateInfo>(
         tab,
         scripts.buildAnnotateScript(payload.rect, points)
       )
-    } catch (e) {
-      return { ok: false, error: (e as Error)?.message ?? String(e) }
-    }
-    if (!info || typeof info.url !== 'string') {
-      return { ok: false, error: '标注采样失败（页面内容无法读取，可能受保护）' }
-    }
-
-    try {
+      checkCancelled()
+      if (!info || typeof info.url !== 'string') {
+        throw new Error('标注采样失败（页面内容无法读取，可能受保护）')
+      }
+      const after = await cdp.evalInPage<{ url: string; token: string | null }>(tab, documentScript)
+      checkCancelled()
+      if (!after || after.url !== before.url || after.token !== before.token || info.url !== before.url) {
+        throw new Error('标注采样期间页面已变化，请重新标注')
+      }
       const question = (payload.question ?? '').trim()
       const text = buildAnnotationText(info, {
         tool: payload.tool,
@@ -191,7 +214,9 @@ export function createAnnotationSubmitHandler(
       const summary =
         `${ANNOTATION_TOOL_LABELS[payload.tool] ?? payload.tool} · ${info.elementCount} 个元素` +
         (question ? ` · 「${question.slice(0, 40)}」` : '')
+      checkCancelled()
       deliverAnnotation({
+        tabId: tab.id,
         text,
         question: question || undefined,
         tool: payload.tool,

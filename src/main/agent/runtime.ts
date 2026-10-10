@@ -36,6 +36,8 @@ const SYSTEM_PROMPT = `你是 Duplex 浏览器的内置操作 agent。你可以�
 - 每完成一个关键步骤后再决定下一步，不要臆测页面内容——先读（snapshot）再操作。
 - 完成任务后，用简洁的中文给出最终回答（说明你做了什么、发现了什么）。不要在回答里粘贴大段 HTML。
 - 如果用户按下了急停快捷键接管了浏览器（工具结果里会提示"用户已接管"），立即停止操作并简短告知用户，等待其指示。
+- 任务标签在开始时固定；人切换活动标签后仍操作任务页。人持续滚动时读取和普通元素操作可以继续，保护人的焦点与阅读位置；不要反复等待人停止滚动。
+- 人点击、输入、导航或标注时，修改操作可能暂停而读取可继续。收到需要用户恢复或协调的结果时，继续必要读取并说明当前进度，等待用户指示，不重试修改动作。
 - 涉及提交表单、发送消息、下单等敏感操作前，如果用户没有明确要求，先说明你将要做什么。`
 
 /** Base prompt plus the currently enabled skills (progressive disclosure:
@@ -98,6 +100,10 @@ class AbortedOperationError extends Error {
 class ToolArgsAbortError extends Error {}
 
 export interface AgentDeps {
+  getActiveTabId?: () => number | null
+  onRunStart?: (tabId?: number, opts?: { fromQueue?: boolean }) => void
+  onRunEnd?: () => void
+  cancelTools?: () => void
   /** Injectable for tests; defaults to the on-disk store. */
   load?: () => AgentSession[]
   /** Like load, but also reports which sessions lost history to the storage caps. */
@@ -124,7 +130,10 @@ export class AgentRuntime {
   /** Pending 60ms-later auto-send of the next queued message (cancelled by abort). */
   private autoSendTimer: ReturnType<typeof setTimeout> | null = null
   /** Messages sent while the agent was busy — auto-sent after the current run. */
-  private queued: string[] = []
+  private queued: Array<{ text: string; tabId?: number }> = []
+  private annotationContext: string[] = []
+  private activeDone: Promise<void> | null = null
+  private finishRun: (() => void) | null = null
   /** Set when abort()/abortForEmergency() was called; a stopped run never resends. */
   private stopRequested = false
 
@@ -133,7 +142,7 @@ export class AgentRuntime {
     private getConfig: () => AgentConfig,
     private emitRaw: (ev: Record<string, unknown>) => void,
     private chatFn: typeof chatStream = chatStream,
-    deps?: AgentDeps
+    private deps?: AgentDeps
   ) {
     this.saveFn = deps?.save ?? saveAgentSessions
     const loaded = deps?.loadWithMeta
@@ -290,6 +299,10 @@ export class AgentRuntime {
   }
 
   private activateSession(s: AgentSession): void {
+    if (this.autoSendTimer) clearTimeout(this.autoSendTimer)
+    this.autoSendTimer = null
+    this.queued.length = 0
+    this.annotationContext.length = 0
     this.currentId = s.id
     this.messages = s.messages
     this.uiLog = s.uiEvents
@@ -329,12 +342,13 @@ export class AgentRuntime {
     this.stopRequested = true
     this.queued.length = 0
     this.abortCtl?.abort()
+    this.deps?.cancelTools?.()
     if (this.running || hadPendingAutoSend) {
       this.emit({
         kind: 'text',
         role: 'assistant',
         partID: `stop${++this.seq}`,
-        text: `已停止；已取消 ${dropped} 条排队消息`,
+        text: `正在停止当前操作；已取消 ${dropped} 条排队消息`,
         done: true
       })
     }
@@ -349,6 +363,7 @@ export class AgentRuntime {
     this.stopRequested = true
     this.queued.length = 0
     this.abortCtl?.abort()
+    this.deps?.cancelTools?.()
   }
 
   /**
@@ -365,6 +380,7 @@ export class AgentRuntime {
       annotationId: string
       tool: 'rect' | 'circle' | 'arrow' | 'point'
       elementCount: number
+      tabId?: number
     }
   ): void {
     this.pushUiEvent({
@@ -382,14 +398,19 @@ export class AgentRuntime {
     })
     if (meta.question) {
       // the annotation text carries the question — run it as a normal user turn
-      void this.send(text).catch((e) => {
+      void this.send(text, { tabId: meta.tabId }).catch((e) => {
         console.error('[agent] annotation run failed to start:', e)
         this.emit({ kind: 'session', status: 'error', error: (e as Error)?.message ?? String(e) })
       })
       return
     }
-    this.messages.push({ role: 'user', content: text })
+    if (this.running) this.annotationContext.push(text)
+    else this.messages.push({ role: 'user', content: text })
     this.emit({ kind: 'text', role: 'user', partID: `u${++this.seq}`, text, done: true })
+  }
+
+  private flushAnnotationContext(): void {
+    for (const text of this.annotationContext.splice(0)) this.messages.push({ role: 'user', content: text })
   }
 
   private emit(ev: AgentUiEvent): void {
@@ -439,21 +460,12 @@ export class AgentRuntime {
   }
 
   /** Race a tool call against the run signal so abort/watchdog always release the panel. */
-  private awaitWithAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-    if (signal.aborted) {
-      p.catch(() => undefined)
-      return Promise.reject(new AbortedOperationError())
-    }
-    let onAbort: (() => void) | null = null
-    const stopped = new Promise<T>((_resolve, reject) => {
-      onAbort = () => reject(new AbortedOperationError())
-      signal.addEventListener('abort', onAbort, { once: true })
-    })
-    // the abandoned side of the race must not surface as an unhandled rejection
-    p.catch(() => undefined)
-    return Promise.race([p, stopped]).finally(() => {
-      if (onAbort) signal.removeEventListener('abort', onAbort)
-    })
+  private async awaitWithAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+    // cancelTools stops the concrete operation. Keep the run active until it
+    // settles so a replacement instruction cannot overlap its dispatch.
+    const result = await p
+    if (signal.aborted) throw new AbortedOperationError()
+    return result
   }
 
   /**
@@ -465,12 +477,18 @@ export class AgentRuntime {
    */
   async send(
     text: string,
-    opts?: { fromQueue?: boolean }
+    opts?: { fromQueue?: boolean; tabId?: number; interrupt?: boolean }
   ): Promise<{ ok: boolean; error?: string }> {
+    const tabId = opts?.tabId ?? this.deps?.getActiveTabId?.() ?? undefined
+    if (opts?.interrupt && this.running) {
+      const done = this.activeDone
+      this.abort()
+      await done
+    }
     if (this.running) {
       // busy: queue the message and let the user see it — it will be sent
       // automatically when the current run finishes
-      this.queued.push(text)
+      this.queued.push({ text, tabId })
       this.emit({
         kind: 'text',
         role: 'user',
@@ -508,11 +526,14 @@ export class AgentRuntime {
     this.stopRequested = false
     const ctl = new AbortController()
     this.abortCtl = ctl
+    this.activeDone = new Promise<void>((resolve) => { this.finishRun = resolve })
+    this.deps?.onRunStart?.(tabId, { fromQueue: opts?.fromQueue })
     // global watchdog: a run must never leave the panel stuck on "working"
     const watchdogMs = 15 * 60_000
     let watchdogFired = false
     const watchdog = setTimeout(() => {
       watchdogFired = true
+      this.deps?.cancelTools?.()
       try {
         ctl.abort()
       } catch {
@@ -542,6 +563,7 @@ export class AgentRuntime {
       let reachedStepLimit = false
       for (let step = 0; step < MAX_STEPS; step++) {
         if (ctl.signal.aborted) break
+        this.flushAnnotationContext()
         const partID = `a${++this.seq}`
         let acc = ''
         const { text: assistantText, toolCalls } = await this.chatFn({
@@ -710,8 +732,13 @@ export class AgentRuntime {
       }
     } finally {
       clearTimeout(watchdog)
+      this.flushAnnotationContext()
       this.running = false
       this.abortCtl = null
+      this.deps?.onRunEnd?.()
+      this.finishRun?.()
+      this.finishRun = null
+      this.activeDone = null
       // a session error event is the terminal event for the panel (it also
       // clears the busy state); an extra idle would mask the error
       if (!sessionError) this.emit({ kind: 'session', status: 'idle' })
@@ -732,7 +759,7 @@ export class AgentRuntime {
           if (this.running) return
           const next = this.queued.shift()
           if (next) {
-            void this.send(next, { fromQueue: true }).catch((e) => {
+            void this.send(next.text, { fromQueue: true, tabId: next.tabId }).catch((e) => {
               console.error('[agent] queued message failed to send:', e)
               this.emit({
                 kind: 'session',

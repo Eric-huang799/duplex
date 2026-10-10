@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { TabInfo } from '../../../shared/protocol'
 import { VirtualKeyboard } from './VirtualKeyboard'
 import { comboFromEvent, displayParts, isModifierKey, normalizeBinding, sameBinding, validateBinding } from '../../../shared/hotkeys'
@@ -8,7 +8,7 @@ type ThemeSetting = 'system' | 'light' | 'dark'
 
 interface Props {
   active: TabInfo | null
-  onAction: (action: string, url?: string) => void
+  onAction: (action: string, url?: string, tabId?: number) => void
   onStopKeysChanged?: (keys: string[]) => void
   bookmarked?: boolean
   onBookmark?: () => void
@@ -35,6 +35,9 @@ function Icon({ name, filled = false }: { name: 'back' | 'forward' | 'reload' | 
 export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = false, onBookmark, onToggleAI, aiOpen = false, annotationActive = false, onToggleAnnotation, onChromeOverlayChange }: Props): React.JSX.Element {
   const [input, setInput] = useState('')
   const [editing, setEditing] = useState(false)
+  const editTabRef = useRef<number | undefined>(active?.id)
+  const currentTabRef = useRef<number | undefined>(active?.id)
+  currentTabRef.current = active?.id
   const [theme, setTheme] = useState<ThemeSetting>('system')
   const [engine, setEngine] = useState('baidu')
   const [engines, setEngines] = useState<Array<{ key: string; name: string }>>([])
@@ -59,7 +62,12 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   }, [stopKeysOpen, onChromeOverlayChange])
 
   useEffect(() => {
-    const focus = (): void => { setEditing(true); document.querySelector<HTMLInputElement>('.urlbar')?.focus(); document.querySelector<HTMLInputElement>('.urlbar')?.select() }
+    const focus = (): void => {
+      editTabRef.current = currentTabRef.current
+      setEditing(true)
+      document.querySelector<HTMLInputElement>('.urlbar')?.focus()
+      document.querySelector<HTMLInputElement>('.urlbar')?.select()
+    }
     window.addEventListener('duplex:focus-address', focus)
     return () => window.removeEventListener('duplex:focus-address', focus)
   }, [])
@@ -217,7 +225,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
 
   const submit = (): void => {
     const v = input.trim()
-    if (v) onAction('navigate', v)
+    if (v) onAction('navigate', v, editTabRef.current)
     setEditing(false)
     ;(document.activeElement as HTMLElement | null)?.blur()
   }
@@ -278,11 +286,11 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
         value={input}
         spellCheck={false}
         placeholder="输入网址或搜索内容，回车打开"
-        onFocus={(e) => { setEditing(true); e.currentTarget.select() }}
+        onFocus={(e) => { editTabRef.current = active?.id; setEditing(true); e.currentTarget.select() }}
         onBlur={() => setEditing(false)}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') submit()
+          if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) submit()
           if (e.key === 'Escape') {
             setEditing(false)
             ;(e.target as HTMLInputElement).blur()

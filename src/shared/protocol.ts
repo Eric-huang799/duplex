@@ -125,6 +125,7 @@ export interface MirrorAnnotationEvent {
 
 /** Main → renderer: page load failed (shown as a toast with retry). */
 export interface LoadErrorInfo {
+  tabId: number
   url: string
   code: number
   desc: string
@@ -145,6 +146,28 @@ export interface Injection {
   text: string
   createdAt: number
   source: 'panel' | 'annotation' | 'api'
+  targetSessionID?: string | null
+  consumerID?: string
+  generation?: number
+}
+
+export interface CollaborationTabState {
+  tabId: number
+  owner: string | null
+  paused: boolean
+  reason: string | null
+  scrolling: boolean
+}
+
+export interface CollaborationState {
+  tabs: CollaborationTabState[]
+}
+
+export interface ExternalSessionState {
+  toolId: string
+  sessionId: string
+  title: string
+  file: string
 }
 
 /** Result of chat:send — warning is set when no AI consumer is connected. */

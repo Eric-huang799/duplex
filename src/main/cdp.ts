@@ -21,7 +21,9 @@ export async function cdp(
   method: string,
   params?: Record<string, unknown>
 ): Promise<any> {
+  if (operationSignal()?.aborted) throw new Error('操作已被用户中断');
   await ensureAttached(tab)
+  if (operationSignal()?.aborted) throw new Error('操作已被用户中断');
   return tab.view.webContents.debugger.sendCommand(method, params)
 }
 

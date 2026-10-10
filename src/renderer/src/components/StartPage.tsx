@@ -108,7 +108,7 @@ export function StartPage({ onNavigate, bookmarks = [], history = [] }: Props): 
             placeholder="搜索或输入网址"
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') submit()
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) submit()
             }}
           />
           <div className="start-engine-wrap">

@@ -130,6 +130,31 @@ body {
   position: relative;
 }
 
+.collaboration-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 6px 12px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.collaboration-bar button {
+  margin-left: 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: var(--bg-btn);
+  color: var(--text-strong);
+  cursor: pointer;
+}
+
+.composer-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+
 /* ---------- tab bar ---------- */
 
 .tabbar {

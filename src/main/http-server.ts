@@ -1,7 +1,7 @@
 import http from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toolDefs } from '../shared/tools'
@@ -9,6 +9,7 @@ import type { MirrorPush, MirrorStore } from './mirror'
 import type { TabManager } from './tabs'
 import type { ToolExecutor } from './tool-handlers'
 import type { SessionBus, SessionCommand } from './session-bus'
+import { withCaller } from './collaboration'
 
 export interface HttpServerDeps {
   token: string
@@ -143,7 +144,7 @@ async function handle(
   if (originAllowed) res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id'
+    'authorization, content-type, mcp-session-id, mcp-protocol-version, last-event-id, duplex-caller-id'
   )
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   if (req.method === 'OPTIONS') {
@@ -207,8 +208,8 @@ async function handle(
 
   if (url.pathname === '/api/session/command' && req.method === 'GET') {
     const waitMs = Math.min(Math.max(Number(url.searchParams.get('wait')) || 0, 0), 30000)
-    const items =
-      waitMs > 0 ? await deps.sessionBus.waitForCommands(waitMs) : []
+    const consumerID = url.searchParams.get('consumerID') || undefined
+    const items = await deps.sessionBus.waitForCommands(waitMs, consumerID)
     sendJson(res, 200, items)
     return
   }
@@ -220,6 +221,7 @@ async function handle(
           activeTitle?: string | null
           sessions?: Array<{ id: string; title: string; updated: number }>
           reason?: string
+          consumerID?: string
         }
       | undefined
     if (!body) {
@@ -227,13 +229,21 @@ async function handle(
       return
     }
     deps.sessionBus.report(body)
+    if (typeof body.consumerID === 'string' && body.consumerID) {
+      for (const session of body.sessions ?? []) {
+        if (typeof session.id === 'string') deps.mirror.rebindConsumer(session.id, body.consumerID)
+      }
+      if (typeof body.activeSessionID === 'string' && body.activeSessionID) {
+        deps.mirror.rebindConsumer(body.activeSessionID, body.consumerID)
+      }
+    }
     const gateOk = !deps.mirrorGate || deps.mirrorGate() || body.reason === 'listed'
     if (gateOk) {
       deps.mirror.add({
         kind: 'session-info',
         activeSessionID: deps.sessionBus.state.activeSessionID,
         activeTitle: deps.sessionBus.state.activeTitle ?? undefined,
-        sessions: body.sessions,
+        sessions: deps.sessionBus.state.sessions,
         reason:
           (body.reason as 'listed' | 'selected' | 'created' | 'auto' | undefined) ?? undefined
       })
@@ -454,10 +464,13 @@ async function handle(
     // A consumer is polling: let the mirror know so idle re-delivery stops
     // (optional method — provided by mirror.ts).
     ;(deps.mirror as unknown as { touchConsumer?: () => void }).touchConsumer?.()
-    // Both modes TAKE: with several plugin instances polling, peeking would
-    // deliver the same message to all of them (duplicate fan-out).
+    const consumer = {
+      id: url.searchParams.get('consumerID') || undefined,
+      sessionID: url.searchParams.get('sessionID') || undefined
+    }
+    // Claims remain retained until the same consumer acknowledges them.
     const items =
-      waitMs > 0 ? await deps.mirror.waitForInjections(waitMs) : deps.mirror.takeInjections()
+      waitMs > 0 ? await deps.mirror.waitForInjections(waitMs, consumer) : deps.mirror.takeInjections(consumer)
     sendJson(res, 200, items)
     return
   }
@@ -477,12 +490,7 @@ async function handle(
       sendJson(res, 400, { error: 'url must be http(s)' })
       return
     }
-    deps.tabs.createTab(target)
-    try {
-      for (const w of BrowserWindow.getAllWindows()) w.show()
-    } catch {
-      /* window focus is best effort */
-    }
+    deps.tabs.createTab(target, { background: true })
     sendJson(res, 200, { ok: true, url: target })
     return
   }
@@ -495,7 +503,10 @@ async function handle(
       return
     }
     deps.onUserActivity?.()
-    const inj = deps.mirror.addInjection(text, 'api')
+    const inj = deps.mirror.addInjection(text, 'api', {
+      sessionID: deps.sessionBus.state.activeSessionID,
+      consumerID: deps.sessionBus.state.activeConsumerID
+    })
     sendJson(res, 200, { ok: true, id: inj.id })
     return
   }
@@ -508,21 +519,22 @@ async function handle(
     return
   }
 
-  if (url.pathname === '/api/injections/requeue' && req.method === 'POST') {
-    const body = (await readBody(req)) as { text?: string } | undefined
-    const text = String(body?.text ?? '').trim()
-    if (text) {
-      deps.onUserActivity?.()
-      deps.mirror.addInjection(text, 'api')
+  if (req.method === 'POST' && [
+    '/api/injections/requeue', '/api/injections/ack', '/api/injections/renew'
+  ].includes(url.pathname)) {
+    const body = (await readBody(req)) as { id?: unknown; consumerID?: unknown } | undefined
+    if (typeof body?.id !== 'string' || !body.id ||
+      (body.consumerID !== undefined && typeof body.consumerID !== 'string')) {
+      sendJson(res, 400, { ok: false, error: 'id and a valid optional consumerID are required' })
+      return
     }
-    sendJson(res, 200, { ok: true })
-    return
-  }
-
-  if (url.pathname === '/api/injections/ack' && req.method === 'POST') {
-    const body = (await readBody(req)) as { id?: string } | undefined
-    if (body?.id) deps.mirror.ackInjection(String(body.id))
-    sendJson(res, 200, { ok: true })
+    // Background delivery work cannot create a new message or resume the AI.
+    const ok = url.pathname.endsWith('/ack')
+      ? deps.mirror.ackInjection(body.id, body.consumerID)
+      : url.pathname.endsWith('/renew')
+        ? deps.mirror.renewInjection(body.id, body.consumerID)
+        : deps.mirror.releaseInjection(body.id, body.consumerID)
+    sendJson(res, 200, { ok })
     return
   }
 
@@ -535,6 +547,13 @@ async function handleMcpPost(
   body: unknown,
   deps: HttpServerDeps
 ): Promise<void> {
+  const rawCaller = req.headers['duplex-caller-id']
+  if (rawCaller !== undefined && (typeof rawCaller !== 'string' ||
+    !/^[A-Za-z0-9:._-]{1,128}$/.test(rawCaller))) {
+    sendJson(res, 400, { error: 'duplex-caller-id must be 1–128 ASCII identifier characters' })
+    return
+  }
+  const callerID = rawCaller ?? 'mcp:direct'
   const server = new McpServer({ name: 'duplex', version: deps.version })
   for (const def of toolDefs) {
     if (def.internal) continue
@@ -542,7 +561,7 @@ async function handleMcpPost(
       def.name,
       { description: def.description, inputSchema: def.input },
       async (args: Record<string, unknown>) => {
-        const result = await deps.executeTool(def.name, args ?? {})
+        const result = await withCaller(callerID, () => deps.executeTool(def.name, args ?? {}))
         return result as { content: Array<{ type: 'text'; text: string }> }
       }
     )

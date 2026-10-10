@@ -1,4 +1,4 @@
-import type { BrowserDataSnapshot, ChatSendResult, ContentBounds, DownloadRecord, LoadErrorInfo, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
+import type { BrowserDataSnapshot, ChatSendResult, CollaborationState, ContentBounds, DownloadRecord, ExternalSessionState, LoadErrorInfo, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
 import type { LlmProtocol } from '../../shared/llm'
 
 interface CobrowseApi {
@@ -6,7 +6,7 @@ interface CobrowseApi {
   onTabs(cb: (tabs: TabInfo[], activeTabId: number | null) => void): () => void
   onBrowserShortcut(cb: (action: string) => void): () => void
   getPlatform(): string
-  onFindResult(cb: (r: { matches: number; activeMatch: number }) => void): () => void
+  onFindResult(cb: (r: { tabId: number; matches: number; activeMatch: number }) => void): () => void
   showTabContextMenu(tabId: number, x: number, y: number): void
   showEngineMenu(x: number, y: number): void
   showToolsMenu(
@@ -68,7 +68,7 @@ interface CobrowseApi {
     sessions: SessionSummary[]
   }>
   onAgent(cb: (ev: MirrorEvent & { info?: string }) => void): () => void
-  agentSend(text: string): Promise<{ ok: boolean; error?: string }>
+  agentSend(text: string, options?: { interrupt?: boolean }): Promise<{ ok: boolean; error?: string }>
   agentAbort(): Promise<unknown>
   agentReset(): Promise<unknown>
   agentNewSession(): Promise<{ ok: boolean; error?: string }>
@@ -188,6 +188,11 @@ interface CobrowseApi {
     error?: string
   }>
   agentsSessionClose(): Promise<{ ok: boolean }>
+  externalState(): Promise<ExternalSessionState | null>
+  onExternalState(cb: (state: ExternalSessionState | null) => void): () => void
+  collaborationGet(): Promise<CollaborationState>
+  collaborationResume(tabId: number): Promise<{ ok: boolean; error?: string }>
+  onCollaborationState(cb: (state: CollaborationState) => void): () => void
   agentsSetMirrorSource(source: 'opencode' | 'external'): Promise<{ ok: boolean }>
   agentsStop(toolId?: string): Promise<{ ok: boolean; killed: number }>
   onAgentsChildren(cb: (count: number) => void): () => void

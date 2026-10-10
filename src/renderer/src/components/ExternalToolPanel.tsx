@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ExternalSessionState } from '../../../shared/protocol'
 
 export interface AgentToolInfo {
   id: string
@@ -81,18 +82,24 @@ export function ExternalToolPanel({
   }
 
   useEffect(() => {
-    setOpened(null)
-    onOpenedChange?.(null)
     setNewHint(false)
     setMenuOpen(false)
     setWatchError(false)
-    void window.cobrowse.agentsSessionClose()
-    void window.cobrowse.agentsSetMirrorSource('external')
+    let live = true
+    let received = false
+    const applyState = (state: ExternalSessionState | null): void => {
+      if (!live) return
+      const info = state?.toolId === toolId ? { id: state.sessionId, title: state.title } : null
+      setOpened(info)
+      onOpenedChange?.(info)
+      if (info) { setNewHint(false); setWatchError(false) }
+    }
+    const off = window.cobrowse.onExternalState((state) => { received = true; applyState(state) })
+    void window.cobrowse.externalState().then((state) => { if (!received) applyState(state) })
     void refresh()
     return () => {
-      onOpenedChange?.(null)
-      void window.cobrowse.agentsSessionClose()
-      void window.cobrowse.agentsSetMirrorSource('opencode')
+      live = false
+      off()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toolId])
@@ -125,9 +132,6 @@ export function ExternalToolPanel({
       setError(r.error ?? '打开失败')
       return
     }
-    const info = { id: s.id, title: r.title ?? s.title }
-    setOpened(info)
-    onOpenedChange?.(info)
     setNewHint(false)
     setMenuOpen(false)
     setWatchError(false)
@@ -324,10 +328,9 @@ export function ExternalToolPanel({
             <button
               className="session-item session-new-top"
               onClick={() => {
-                setNewHint(true)
-                setOpened(null)
-                onOpenedChange?.(null)
-                setMenuOpen(false)
+                void window.cobrowse.agentsSessionClose().then((r) => {
+                  if (r.ok) { setNewHint(true); setMenuOpen(false) }
+                })
               }}
             >
               ＋ 新建对话

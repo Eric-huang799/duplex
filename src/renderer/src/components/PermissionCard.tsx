@@ -83,8 +83,6 @@ export function PermissionCard({
     if (!isPending) return
     const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
     ref.current?.scrollIntoView({ block: 'nearest', behavior: reduced ? 'auto' : 'smooth' })
-    // Esc must work right away on a blocking request
-    ref.current?.focus({ preventScroll: true })
     // only when this card first appears as pending
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

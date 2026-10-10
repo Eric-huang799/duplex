@@ -2,7 +2,8 @@ import type { Tab, TabManager } from './tabs'
 import * as cdp from './cdp'
 import * as scripts from './page-scripts'
 import { markAiActive, overlaySend, takeoverHint } from './overlay'
-import { interruptibleSleep, operationSignal } from './interrupt'
+import { operationSignal } from './interrupt'
+import { performPageAction } from './playwright-browser'
 import { resolveAddress } from '../shared/url'
 import { DEFAULT_ENGINE, SEARCH_ENGINES, searchUrl } from '../shared/search'
 
@@ -22,6 +23,7 @@ const errorText = (s: string): ToolResult => ({
   content: [{ type: 'text', text: s }],
   isError: true
 })
+const PAGE_TOOLS = new Set(['click', 'dblclick', 'hover', 'type', 'drag', 'select_option', 'upload', 'press', 'scroll', 'evaluate', 'screenshot', 'wait'])
 
 function json(obj: unknown): string {
   try {
@@ -33,102 +35,6 @@ function json(obj: unknown): string {
 
 const interruptedText = (): ToolResult =>
   text(`操作已被用户中断（用户触发「${takeoverHint()}」接管了浏览器）。请等待用户的下一步指示，不要重试。`)
-
-interface ResolveInfo {
-  error?: string
-  x: number
-  y: number
-  tag: string
-  text: string
-  visible: boolean
-  /** A4 page script sets this when the target's center sat outside the viewport and the click point had to be clamped. */
-  clamped?: boolean
-  rect: { x: number; y: number; w: number; h: number }
-}
-
-async function resolveTarget(tab: Tab, target: string): Promise<ResolveInfo> {
-  return cdp.evalInPage<ResolveInfo>(tab, scripts.buildResolveScript(target))
-}
-
-/**
- * Resolve a target; when the page script had to clamp the click point to the
- * viewport edge, scroll the element into view once and resolve again.
- */
-async function resolveTargetForClick(tab: Tab, target: string): Promise<ResolveInfo> {
-  let r = await resolveTarget(tab, target)
-  if (r && !r.error && r.clamped) {
-    await cdp.evalInPage(tab, scripts.buildScrollScript(target, 0, 0)).catch(() => undefined)
-    await interruptibleSleep(180)
-    r = await resolveTarget(tab, target)
-  }
-  return r
-}
-
-/**
- * Report whether a native <select> would have several equally-good matches for
- * the requested option (same matching tiers as buildSelectScript). Selection
- * must then be rejected so the AI can re-choose a more specific value.
- */
-function buildSelectAmbiguityProbe(target: string, option: string): string {
-  const t = JSON.stringify(target)
-  const o = JSON.stringify(option)
-  return `(() => {
-  const target = ${t};
-  const wanted = ${o};
-  let el = null;
-  if (/^e\\d+$/.test(target)) {
-    el = (window.__cobrowse && window.__cobrowse.refMap && window.__cobrowse.refMap.get(target)) || null;
-  } else {
-    try { el = document.querySelector(target); } catch (e) { return { error: 'invalid selector: ' + target }; }
-  }
-  if (!el) return { error: 'element not found: ' + target };
-  if (el.tagName !== 'SELECT') return { notSelect: true };
-  const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-  const w = norm(wanted);
-  const opts = Array.from(el.options);
-  const exactText = opts.filter((x) => norm(x.textContent) === w);
-  const exactValue = opts.filter((x) => norm(x.value) === w);
-  const containsText = opts.filter((x) => norm(x.textContent).includes(w));
-  const containsValue = opts.filter((x) => norm(x.value).includes(w));
-  const tier = exactText.length ? exactText : exactValue.length ? exactValue : containsText.length ? containsText : containsValue;
-  if (tier.length > 1) {
-    return {
-      ambiguous: tier.slice(0, 10).map((x) => (x.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) + ' [value=' + String(x.value).slice(0, 40) + ']')
-    };
-  }
-  return {};
-})()`
-}
-
-/** Resolve a target, then show cursor + highlight + status (blueprint state C). */
-async function visualizeTarget(
-  tab: Tab,
-  target: string,
-  verb: string,
-  opts?: { sleepMs?: number; activeMs?: number }
-): Promise<{ r: ResolveInfo; label: string } | { error: string }> {
-  const r = await resolveTargetForClick(tab, target)
-  if (r?.error) return { error: r.error }
-  if (r?.clamped) {
-    return {
-      error:
-        '目标元素的中心点不在可视区域内，点击坐标仍被视口裁剪（clamped）。已跳过本次操作：请先用 scroll 把元素滚入视口，再重试。'
-    }
-  }
-  const label = r.text ? `「${r.text.slice(0, 16)}」` : `<${r.tag}>`
-  markAiActive(opts?.activeMs ?? 6000)
-  overlaySend(tab, { kind: 'showCursor', x: r.x, y: r.y })
-  overlaySend(tab, { kind: 'highlight', rect: r.rect })
-  overlaySend(tab, {
-    kind: 'status',
-    text: `AI 正在${verb} ${label}`,
-    hint: takeoverHint(),
-    tone: 'busy',
-    ttl: 4200
-  })
-  await interruptibleSleep(opts?.sleepMs ?? 300)
-  return { r, label }
-}
 
 export function createToolExecutor(
   tabs: TabManager,
@@ -149,6 +55,18 @@ async function dispatch(
   args: Record<string, unknown>,
   getEngine?: () => string | undefined
 ): Promise<ToolResult> {
+  if (PAGE_TOOLS.has(name)) {
+    const tab = tabs.requireTab(args.tabId as number | undefined)
+    markAiActive(5000)
+    if (!['wait', 'screenshot', 'evaluate'].includes(name)) {
+      overlaySend(tab, { kind: 'status', text: `AI 正在执行 ${name}`, hint: takeoverHint(), tone: 'busy', ttl: 2400 })
+    }
+    const result = await performPageAction(tab, name, args)
+    if (name === 'screenshot') {
+      return { content: [{ type: 'image', data: (result as { png: string }).png, mimeType: 'image/png' }] }
+    }
+    return text(result === undefined ? 'returned undefined' : json(result))
+  }
   switch (name) {
     case 'list_tabs': {
       return text(json(tabs.list()))
@@ -162,7 +80,7 @@ async function dispatch(
           ? addr.url
           : searchUrl(addr.query, getEngine?.())
         : undefined
-      const tab = tabs.createTab(url)
+      const tab = tabs.createTab(url, { background: true })
       let loadTimedOut = false
       if (url) loadTimedOut = (await cdp.waitForLoad(tab)) === 'timeout'
       const wc = tab.view.webContents
@@ -363,237 +281,6 @@ async function dispatch(
       return text(json(r))
     }
 
-    case 'screenshot': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const fullPage = args.fullPage === true
-      const size = await cdp.evalInPage<{ w: number; h: number; ph: number }>(
-        tab,
-        '({ w: innerWidth, h: innerHeight, ph: Math.round(document.documentElement.scrollHeight) })'
-      )
-      if (fullPage && size.ph > 20000) {
-        return errorText(
-          `页面高度 ${size.ph}px 超过整页截图上限（20000px），已拒绝整页截图以防卡死。请改用普通截图（fullPage=false），或先 scroll 到目标区域再截图。`
-        )
-      }
-      const data = await cdp.captureScreenshot(tab, fullPage)
-      const label = fullPage
-        ? `full-page screenshot (${size.w}px wide, ${size.ph}px tall)`
-        : `viewport screenshot (${size.w}x${size.h})`
-      return {
-        content: [
-          { type: 'text', text: label },
-          { type: 'image', data, mimeType: 'image/png' }
-        ]
-      }
-    }
-
-    case 'click': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const target = String(args.target)
-      const v = await visualizeTarget(tab, target, '点击')
-      if ('error' in v) return errorText(v.error)
-      if (operationSignal()?.aborted) return interruptedText()
-      await cdp.clickAt(tab, v.r.x, v.r.y)
-      overlaySend(tab, { kind: 'clickFx', x: v.r.x, y: v.r.y })
-      // refresh the status bar as a completion state so it stays visible even
-      // when a slow machine makes the click itself take several seconds
-      overlaySend(tab, { kind: 'status', text: `AI 已点击 ${v.label}`, tone: 'info', ttl: 2400 })
-      return text(
-        json({ clicked: true, target, element: `${v.r.tag} "${v.r.text}"`, at: { x: v.r.x, y: v.r.y }, wasVisible: v.r.visible })
-      )
-    }
-
-    case 'hover': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const target = String(args.target)
-      const v = await visualizeTarget(tab, target, '悬停')
-      if ('error' in v) return errorText(v.error)
-      await cdp.hoverAt(tab, v.r.x, v.r.y)
-      return text(
-        json({ hovered: true, target, element: `${v.r.tag} "${v.r.text}"`, at: { x: v.r.x, y: v.r.y } })
-      )
-    }
-
-    case 'dblclick': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const target = String(args.target)
-      const v = await visualizeTarget(tab, target, '双击')
-      if ('error' in v) return errorText(v.error)
-      if (operationSignal()?.aborted) return interruptedText()
-      await cdp.dblclickAt(tab, v.r.x, v.r.y)
-      overlaySend(tab, { kind: 'clickFx', x: v.r.x, y: v.r.y })
-      overlaySend(tab, { kind: 'status', text: `AI 已双击 ${v.label}`, tone: 'info', ttl: 2400 })
-      return text(
-        json({ doubleClicked: true, target, element: `${v.r.tag} "${v.r.text}"`, at: { x: v.r.x, y: v.r.y } })
-      )
-    }
-
-    case 'drag': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const from = String(args.from)
-      const to = String(args.to)
-      const r = await cdp.evalInPage<{
-        error?: string
-        from: {
-          x: number
-          y: number
-          rect: { x: number; y: number; w: number; h: number }
-          visible?: boolean
-          tag: string
-          text: string
-        }
-        to: {
-          x: number
-          y: number
-          rect: { x: number; y: number; w: number; h: number }
-          tag: string
-          text: string
-        }
-      }>(tab, scripts.buildDragResolveScript(from, to))
-      if (r?.error) return errorText(r.error)
-      markAiActive(10000)
-      overlaySend(tab, { kind: 'showCursor', x: r.from.x, y: r.from.y })
-      overlaySend(tab, { kind: 'highlight', rect: r.from.rect })
-      overlaySend(tab, {
-        kind: 'status',
-        text: `AI 正在拖拽 ${r.from.tag} → ${r.to.tag}`,
-        hint: takeoverHint(),
-        tone: 'busy',
-        ttl: 3000
-      })
-      await interruptibleSleep(300)
-      overlaySend(tab, { kind: 'highlight', rect: r.to.rect })
-      await cdp.dragFromTo(tab, r.from.x, r.from.y, r.to.x, r.to.y)
-      overlaySend(tab, { kind: 'clickFx', x: r.to.x, y: r.to.y })
-      return text(
-        json({
-          dragged: true,
-          from: { target: from, element: `${r.from.tag} "${r.from.text}"`, inViewport: r.from.visible !== false },
-          to: { target: to, element: `${r.to.tag} "${r.to.text}"` },
-          at: { x: r.to.x, y: r.to.y }
-        })
-      )
-    }
-
-    case 'select_option': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const target = String(args.target)
-      const option = String(args.option)
-      const probe = await cdp.evalInPage<{
-        error?: string
-        ambiguous?: string[]
-        notSelect?: boolean
-      }>(tab, buildSelectAmbiguityProbe(target, option))
-      if (probe?.error) return errorText(probe.error)
-      if (probe?.ambiguous && probe.ambiguous.length > 1) {
-        return errorText(
-          `「${option}」在该下拉框中匹配到多个选项，无法确定要选哪一个。请改用更精确的选项文本或 value 重试。候选：${probe.ambiguous.join(' / ')}`
-        )
-      }
-      const r = await cdp.evalInPage<{
-        error?: string
-        options?: string[]
-        ok?: boolean
-        selected?: { text: string; value: string; index: number }
-        valueNow?: string
-      }>(tab, scripts.buildSelectScript(target, option))
-      if (r?.error) {
-        return errorText(r.error + (r.options ? ' | available options: ' + r.options.join(' / ') : ''))
-      }
-      return text(json(r))
-    }
-
-    case 'upload': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const target = String(args.target)
-      const files = Array.isArray(args.files) ? args.files.map(String) : []
-      if (files.length === 0) return errorText('files must be a non-empty array of absolute paths')
-      const res = await cdp.setFileInputFiles(tab, target, files)
-      if (!res.ok) return errorText(res.error ?? 'upload failed')
-      return text(json({ uploaded: files.length, files, target }))
-    }
-
-    case 'type': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const target = String(args.target)
-      const value = String(args.text ?? '')
-      const clear = args.clear !== false
-      const submit = args.submit === true
-      const f = await cdp.evalInPage<{
-        error?: string
-        field?: boolean
-        tag: string
-        text?: string
-        rect?: { x: number; y: number; w: number; h: number }
-        cx?: number
-        cy?: number
-      }>(tab, scripts.buildFocusScript(target, clear))
-      if (f?.error) return errorText(f.error)
-      const label = f.text ? `「${f.text.slice(0, 16)}」` : `<${f.tag}>`
-      markAiActive(8000)
-      if (f.cx != null && f.cy != null && f.rect) {
-        overlaySend(tab, { kind: 'showCursor', x: f.cx, y: f.cy })
-        overlaySend(tab, { kind: 'highlight', rect: f.rect })
-      }
-      overlaySend(tab, {
-        kind: 'status',
-        text: `AI 正在输入到 ${label}`,
-        hint: takeoverHint(),
-        tone: 'busy',
-        ttl: 2200
-      })
-      await cdp.sleep(280)
-      await cdp.insertText(tab, value)
-      if (submit) await cdp.pressKey(tab, 'Enter')
-      const read = await cdp.evalInPage<{ value?: string; length?: number; error?: string }>(
-        tab,
-        scripts.buildReadValueScript(target)
-      )
-      const actual = read?.value ?? ''
-      const filled = f.field ? actual === value : actual.includes(value)
-      return text(
-        json({
-          filled,
-          target,
-          length: value.length,
-          actualNow: actual.slice(0, 120),
-          submitted: submit,
-          warning: filled ? undefined : '输入可能未生效（页面受控组件）'
-        })
-      )
-    }
-
-    case 'press': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const key = String(args.key)
-      await cdp.pressKey(tab, key)
-      return text(`pressed ${key}`)
-    }
-
-    case 'scroll': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const selector = typeof args.selector === 'string' && args.selector ? args.selector : null
-      const hasDx = args.dx != null
-      const dy = Number(args.dy ?? (hasDx ? 0 : 600))
-      const dx = Number(args.dx ?? 0)
-      const dirText =
-        dy > 0 ? '向下' : dy < 0 ? '向上' : dx > 0 ? '向右' : dx < 0 ? '向左' : '向下'
-      markAiActive(5000)
-      overlaySend(tab, {
-        kind: 'status',
-        text: selector ? `AI 正在滚动到 ${selector.slice(0, 40)}` : `AI 正在${dirText}滚动`,
-        hint: takeoverHint(),
-        tone: 'busy',
-        ttl: 1600
-      })
-      const r = await cdp.evalInPage<{ error?: string }>(
-        tab,
-        scripts.buildScrollScript(selector, dy, dx)
-      )
-      if (r && (r as { error?: string }).error) return errorText((r as { error: string }).error)
-      return text(json(r))
-    }
-
     case 'annotation_mode': {
       const tab = tabs.requireTab(args.tabId as number | undefined)
       const active = args.active === true
@@ -605,82 +292,6 @@ async function dispatch(
         ttl: 2800
       })
       return text(json({ annotationMode: active }))
-    }
-
-    case 'evaluate': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const script = String(args.script)
-      const r = await cdp.evalInPage<unknown>(tab, `(async () => { ${script}\n })()`)
-      if (r === undefined) {
-        return text('returned undefined (write `return value` inside the script to get a result)')
-      }
-      return text(json(r))
-    }
-
-    case 'wait': {
-      const tab = tabs.requireTab(args.tabId as number | undefined)
-      const selector = typeof args.selector === 'string' && args.selector ? args.selector : null
-      const wantedText = typeof args.text === 'string' && args.text ? args.text : null
-      const requestedTimeout = Number(args.timeout) || 10000
-      const timeout = Math.min(Math.max(requestedTimeout, 500), 30000)
-      const timeoutCapped = requestedTimeout > 30000
-      const capNote = timeoutCapped ? { note: '已按上限等待 30 秒' } : {}
-
-      if (selector || wantedText) {
-        const t0 = Date.now()
-        const deadline = t0 + timeout
-        while (Date.now() < deadline) {
-          if (operationSignal()?.aborted) {
-            return text(
-              json({
-                found: false,
-                interrupted: true,
-                note: timeoutCapped ? '等待被用户中断（急停）；已按上限等待 30 秒' : '等待被用户中断（急停）'
-              })
-            )
-          }
-          const check = await cdp.evalInPage<boolean>(
-            tab,
-            selector
-              ? `!!document.querySelector(${JSON.stringify(selector)})`
-              : `!!document.body && document.body.innerText.includes(${JSON.stringify(wantedText)})`
-          )
-          if (check) {
-            return text(
-              json({
-                found: true,
-                kind: selector ? 'selector' : 'text',
-                value: selector ?? wantedText,
-                waitedMs: Date.now() - t0,
-                ...capNote
-              })
-            )
-          }
-          await interruptibleSleep(300)
-        }
-        return text(
-          json({
-            found: false,
-            timeoutMs: timeout,
-            ...(timeoutCapped
-              ? { note: '等待超时，已按上限等待 30 秒；页面状态未变化' }
-              : { note: 'timed out; page state did not change' })
-          })
-        )
-      }
-
-      const requestedMs = Number(args.ms) || 1000
-      const ms = Math.min(Math.max(requestedMs, 1), 30000)
-      const msCapped = requestedMs > 30000
-      const t0 = Date.now()
-      await interruptibleSleep(ms)
-      return text(
-        json({
-          waitedMs: Date.now() - t0,
-          interrupted: operationSignal()?.aborted ?? false,
-          ...(msCapped ? { note: '已按上限等待 30 秒' } : {})
-        })
-      )
     }
 
     case 'get_console': {

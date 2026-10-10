@@ -9,6 +9,17 @@ import {
 } from '../src/main/interrupt'
 
 describe('interruptibleAwait / interruptibleSleep (emergency stop)', () => {
+  it('ordinary stop cancels only its owner and tab intervention only its writes', () => {
+    const a = beginOperation({ owner: 'builtin', tabId: 1, mutates: true })
+    const b = beginOperation({ owner: 'mcp', tabId: 1, mutates: true })
+    const read = beginOperation({ owner: 'mcp', tabId: 1, mutates: false })
+    const other = beginOperation({ owner: 'mcp', tabId: 2, mutates: true })
+    abortOperation({ owner: 'builtin' })
+    expect([a,b,read,other].map(c => c.signal.aborted)).toEqual([true,false,false,false])
+    abortOperation({ tabId: 1, writesOnly: true })
+    expect([a,b,read,other].map(c => c.signal.aborted)).toEqual([true,true,false,false])
+    for (const c of [a,b,read,other]) endOperation(c)
+  })
   it('resolves the fallback as soon as the operation aborts', async () => {
     const ac = beginOperation()
     const t0 = Date.now()

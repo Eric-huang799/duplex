@@ -168,6 +168,7 @@ export function SidePanel({
   }
 
   const clearDraftIfUnchanged = (sent: string): void => {
+    if (draftModeRef.current !== mode) return
     if (draftRef.current.trim() !== sent) return
     updateDraft('')
   }
@@ -265,6 +266,7 @@ export function SidePanel({
     return off
   }, [])
   const [agentReady, setAgentReady] = useState(false)
+  const [modifyNextSend, setModifyNextSend] = useState(false)
   const [agentError, setAgentError] = useState('')
   const [agentSessionMenu, setAgentSessionMenu] = useState(false)
   const [agentSessions, setAgentSessions] = useState<
@@ -427,9 +429,10 @@ export function SidePanel({
     }
     if (isAgent) {
       setAgentError('')
-      void window.cobrowse.agentSend(t).then((res) => {
+      void window.cobrowse.agentSend(t, modifyNextSend ? { interrupt: true } : undefined).then((res) => {
         if (res.ok) {
           clearDraftIfUnchanged(t)
+          setModifyNextSend(false)
           return
         }
         if (res.error) setAgentError(res.error)
@@ -439,6 +442,11 @@ export function SidePanel({
     updateDraft('')
     onSend(t)
   }
+
+  useEffect(() => {
+    window.cobrowse.setChromeOverlay('panel-add-tool', addOpen)
+    return () => window.cobrowse.setChromeOverlay('panel-add-tool', false)
+  }, [addOpen])
 
   // ------- opencode-mode derived state -------
   // Busy = the most recent state-defining event (tool status or session
@@ -899,9 +907,15 @@ export function SidePanel({
           }}
         />
         {isAgent && agentSessionState === 'busy' ? (
-          <button className="send-btn stop" onClick={() => void window.cobrowse.agentAbort()}>
-            停止
-          </button>
+          <div className="composer-actions">
+            <button className="send-btn stop" onClick={() => void window.cobrowse.agentAbort()}>停止</button>
+            <button className="send-btn" onClick={() => {
+              setModifyNextSend(true)
+              void window.cobrowse.agentAbort()
+              composerRef.current?.focus()
+            }}>暂停并修改</button>
+            <button className="send-btn" disabled={!draft.trim()} onClick={send}>补充排队</button>
+          </div>
         ) : mode === 'external' && (externalPending || agentChildren > 0) ? (
           <button
             className="send-btn stop"
@@ -923,7 +937,7 @@ export function SidePanel({
               (mode === 'external' && (externalPending || (!extReplyReady && !externalCanStart)))
             }
           >
-            {externalPending ? (extReplyReady ? '发送中…' : '启动中…') : '发送'}
+            {externalPending ? (extReplyReady ? '发送中…' : '启动中…') : isAgent && modifyNextSend ? '发送修改' : '发送'}
           </button>
         )}
       </div>

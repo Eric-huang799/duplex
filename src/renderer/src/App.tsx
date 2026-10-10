@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { LoadErrorInfo, MirrorEvent, TabInfo } from '../../shared/protocol'
+import type { CollaborationState, LoadErrorInfo, MirrorEvent, TabInfo } from '../../shared/protocol'
 import { matchesBinding, parseBinding } from '../../shared/hotkeys'
 import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, type ShortcutAction } from '../../shared/shortcuts'
 import type { PermissionRequest } from './components/PermissionCard'
@@ -61,6 +61,11 @@ export default function App(): React.JSX.Element {
   const [library, setLibrary] = useState<'bookmarks' | 'history' | 'downloads' | null>(null)
   const [findOpen, setFindOpen] = useState(false)
   const [findText, setFindText] = useState('')
+  const [findTabId, setFindTabId] = useState<number | null>(null)
+  const findTabRef = useRef<number | null>(null)
+  const activeTabRef = useRef<number | null>(null)
+  activeTabRef.current = activeTabId
+  const [collaboration, setCollaboration] = useState<CollaborationState>({ tabs: [] })
   const [mirror, setMirror] = useState<MirrorEvent[]>([])
   const [localMsgs, setLocalMsgs] = useState<LocalMessage[]>([])
   const [panelWidth, setPanelWidth] = useState(400)
@@ -78,13 +83,14 @@ export default function App(): React.JSX.Element {
   const [platform] = useState(() => window.cobrowse.getPlatform())
   const [stopToast, setStopToast] = useState('')
   const [toast, setToast] = useState('')
-  const [findResult, setFindResult] = useState<{ matches: number; activeMatch: number } | null>(null)
+  const [findResult, setFindResult] = useState<{ tabId: number; matches: number; activeMatch: number } | null>(null)
   const [loadError, setLoadError] = useState<LoadErrorInfo | null>(null)
   const [annotationActive, setAnnotationActive] = useState(false)
   const [aiPaused, setAiPaused] = useState(false)
   const [providersChecked, setProvidersChecked] = useState(() => savedPanelMode() !== null)
   const [initialShowProviders, setInitialShowProviders] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const [contentTop, setContentTop] = useState(84)
   const toggleBookmarkRef = useRef<() => void>(() => {})
   const downloadsRef = useRef<DownloadRecord[]>([])
   const downloadsLoadedRef = useRef(false)
@@ -100,7 +106,19 @@ export default function App(): React.JSX.Element {
     setFindOpen(false)
     setFindText('')
     setFindResult(null)
-    void window.cobrowse.tabAction({ type: 'find', url: '' })
+    if (findTabRef.current != null) void window.cobrowse.tabAction({ type: 'find', url: '', tabId: findTabRef.current })
+    findTabRef.current = null
+    setFindTabId(null)
+  }, [])
+
+  const openFind = useCallback((): void => {
+    if (activeTabRef.current == null) return
+    if (findTabRef.current != null) void window.cobrowse.tabAction({ type: 'find', url: '', tabId: findTabRef.current })
+    findTabRef.current = activeTabRef.current
+    setFindTabId(activeTabRef.current)
+    setFindText('')
+    setFindResult(null)
+    setFindOpen(true)
   }, [])
 
   const toggleAI = useCallback((): void => {
@@ -141,8 +159,8 @@ export default function App(): React.JSX.Element {
   )
 
   const navigate = useCallback(
-    (url: string): void => {
-      void window.cobrowse.tabAction({ type: 'navigate', url }).then((r) => {
+    (url: string, tabId = activeTabRef.current ?? undefined): void => {
+      void window.cobrowse.tabAction({ type: 'navigate', url, tabId }).then((r) => {
         const res = r as { ok?: boolean; error?: string } | undefined
         if (res && res.ok === false) showToast(res.error || '导航失败')
       })
@@ -158,12 +176,12 @@ export default function App(): React.JSX.Element {
 
   const findNext = useCallback((): void => {
     if (!findText) return
-    void window.cobrowse.tabAction({ type: 'findNext', url: findText })
+    if (findTabRef.current != null) void window.cobrowse.tabAction({ type: 'findNext', url: findText, tabId: findTabRef.current })
   }, [findText])
 
   const findPrev = useCallback((): void => {
     if (!findText) return
-    void window.cobrowse.tabAction({ type: 'findPrev', url: findText })
+    if (findTabRef.current != null) void window.cobrowse.tabAction({ type: 'findPrev', url: findText, tabId: findTabRef.current })
   }, [findText])
 
   const respondConfirm = useCallback((id: number, ok: boolean): void => {
@@ -188,7 +206,9 @@ export default function App(): React.JSX.Element {
     const offBrowserData = window.cobrowse.onBrowserData(setBrowserData)
     void window.cobrowse.downloadsList().then((rows) => applyDownloads(rows, true))
     const offDownloads = window.cobrowse.onDownloads((rows) => applyDownloads(rows))
-    const offFindResult = window.cobrowse.onFindResult((r) => setFindResult(r))
+    const offFindResult = window.cobrowse.onFindResult((r) => {
+      if (r.tabId === findTabRef.current) setFindResult(r)
+    })
     const offAnnotation = window.cobrowse.onAnnotationState(setAnnotationActive)
     const offLoadError = window.cobrowse.onLoadError((info) => {
       setLoadError(info)
@@ -201,7 +221,7 @@ export default function App(): React.JSX.Element {
     const offShortcut = window.cobrowse.onBrowserShortcut((action) => {
       if (action === 'focusAddress') window.dispatchEvent(new Event('duplex:focus-address'))
       if (action === 'bookmark') toggleBookmarkRef.current()
-      if (action === 'find') setFindOpen(true)
+      if (action === 'find') openFind()
       if (action === 'togglePanel') toggleAI()
       if (action === 'annotationToggle') void window.cobrowse.annotationToggle()
       if (action === 'menu:library-bookmarks') setLibrary('bookmarks')
@@ -288,9 +308,7 @@ export default function App(): React.JSX.Element {
         const next = [...prev.filter((c) => c.id !== req.id), { ...req, state: 'pending' as const }]
         return next.length > 20 ? next.slice(next.length - 20) : next
       })
-      // a blocked run must never hide behind a collapsed panel
-      setCollapsed(false)
-      localStorage.setItem('duplex-ai-open', 'true')
+      showToast('AI 操作等待确认，请打开 AI 面板查看')
     })
     const offConfirmCancel = window.cobrowse.onAgentConfirmCancel((s) => {
       setConfirms((prev) =>
@@ -342,7 +360,7 @@ export default function App(): React.JSX.Element {
           toggleBookmarkRef.current()
           break
         case 'find':
-          setFindOpen(true)
+          openFind()
           break
         case 'togglePanel':
           toggleAI()
@@ -540,6 +558,7 @@ export default function App(): React.JSX.Element {
     if (!el) return
     const report = (): void => {
       const r = el.getBoundingClientRect()
+      setContentTop(el.offsetTop)
       window.cobrowse.setContentBounds({
         x: Math.round(r.x),
         y: Math.round(r.y),
@@ -556,6 +575,20 @@ export default function App(): React.JSX.Element {
       window.removeEventListener('resize', report)
     }
   }, [panelWidth, collapsed])
+
+  useEffect(() => {
+    let received = false
+    const off = window.cobrowse.onCollaborationState((state) => {
+      received = true
+      setCollaboration(state)
+    })
+    void window.cobrowse.collaborationGet().then((state) => { if (!received) setCollaboration(state) })
+    return off
+  }, [])
+
+  useEffect(() => {
+    if (findOpen && !tabs.some((tab) => tab.id === findTabId)) closeFind()
+  }, [tabs, findTabId, findOpen, closeFind])
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
   const showStartPage = !activeTab || !activeTab.url || activeTab.url === 'about:blank'
@@ -605,9 +638,9 @@ export default function App(): React.JSX.Element {
         />
         <Toolbar
           active={activeTab}
-          onAction={(a, url) => {
-            if (a === 'navigate' && url) navigate(url)
-            else void window.cobrowse.tabAction({ type: a, url })
+          onAction={(a, url, tabId) => {
+            if (a === 'navigate' && url) navigate(url, tabId)
+            else void window.cobrowse.tabAction({ type: a, url, tabId: activeTabId ?? undefined })
           }}
           onStopKeysChanged={(keys) => setStopKeys(keys)}
           bookmarked={browserData.bookmarks.some((b) => b.url === activeTab?.url)}
@@ -618,6 +651,18 @@ export default function App(): React.JSX.Element {
           annotationActive={annotationActive}
           onToggleAnnotation={() => void window.cobrowse.annotationToggle()}
         />
+        {(aiPaused || confirms.some((c) => c.state === 'pending') || collaboration.tabs.some((tab) => tab.owner || tab.paused)) && (
+          <div className="collaboration-bar" role="status">
+            {aiPaused && <span>AI 已急停 <button onClick={() => window.cobrowse.resumeAi()}>恢复 AI</button></span>}
+            {confirms.some((c) => c.state === 'pending') && <button onClick={() => { setCollapsed(false); localStorage.setItem('duplex-ai-open', 'true') }}>查看待确认操作</button>}
+            {collaboration.tabs.filter((tab) => tab.owner || tab.paused).map((state) => (
+              <span key={state.tabId}>
+                任务页 #{state.tabId} · {state.paused ? `人工接管${state.reason ? `（${state.reason}）` : ''}` : state.scrolling ? '人工阅读中' : 'AI 正在处理'}
+                {state.paused && <button onClick={() => { void window.cobrowse.collaborationResume(state.tabId).then((r) => { if (!r.ok) showToast(r.error || '恢复失败') }) }}>恢复此页 AI</button>}
+              </span>
+            ))}
+          </div>
+        )}
         {findOpen && (
           <div className="findbar findbar-flow">
             <input
@@ -626,7 +671,7 @@ export default function App(): React.JSX.Element {
               value={findText}
               onChange={(e) => {
                 setFindText(e.target.value)
-                void window.cobrowse.tabAction({ type: 'find', url: e.target.value })
+                if (findTabId != null) void window.cobrowse.tabAction({ type: 'find', url: e.target.value, tabId: findTabId })
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
@@ -639,6 +684,7 @@ export default function App(): React.JSX.Element {
             <span className="find-count">
               {findResult ? `${findResult.activeMatch}/${findResult.matches}` : ''}
             </span>
+            {findTabId !== activeTabId && <button onClick={() => void window.cobrowse.tabAction({ type: 'switchTab', tabId: findTabId ?? undefined })}>查找页 #{findTabId}</button>}
             <button type="button" title="上一个" onClick={findPrev}>↑</button>
             <button type="button" title="下一个" onClick={findNext}>↓</button>
             <button type="button" onClick={closeFind}>关闭</button>
@@ -653,7 +699,7 @@ export default function App(): React.JSX.Element {
             />
           )}
         </div>
-        {library && <div className="library-overlay"><BrowserPanel
+        {library && <div className="library-overlay" style={{ top: contentTop }}><BrowserPanel
           section={library} data={browserData} downloads={downloads} onClose={() => setLibrary(null)}
           onNavigate={(url) => { setLibrary(null); navigate(url) }}
           onRefresh={() => { void window.cobrowse.browserData().then(setBrowserData) }}
@@ -705,21 +751,13 @@ export default function App(): React.JSX.Element {
                 style={{ pointerEvents: 'auto', marginLeft: 8, cursor: 'pointer' }}
                 onClick={() => {
                   setLoadError(null)
-                  void window.cobrowse.tabAction({ type: 'reload' })
+                  void window.cobrowse.tabAction({ type: 'reload', tabId: loadError.tabId })
                 }}
               >
                 重试
               </button>
             </div>
           )}
-        </div>
-      )}
-
-      {aiPaused && (
-        <div className="ai-paused-banner">
-          <span className="ai-paused-dot" />
-          <span>AI 已急停挂起 · 发消息或点「恢复」继续</span>
-          <button onClick={() => window.cobrowse.resumeAi()}>恢复</button>
         </div>
       )}
 

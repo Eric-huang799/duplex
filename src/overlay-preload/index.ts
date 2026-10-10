@@ -402,6 +402,7 @@ function bindingHasModifier(binding: string): boolean {
 
 function setup(): void {
   if (!document.body || document.getElementById(HOST_ID)) return
+  document.documentElement.setAttribute('data-duplex-document', globalThis.crypto.randomUUID())
   const host = document.createElement('div')
   host.id = HOST_ID
   host.style.cssText =
@@ -541,6 +542,7 @@ function setup(): void {
   window.addEventListener('mouseup', onAnnotUp)
   window.addEventListener('scroll', onWindowScroll, { passive: true })
   window.addEventListener('blur', onWindowBlur)
+  installHumanActivity()
 
   window.addEventListener(
     'keydown',
@@ -727,6 +729,67 @@ function apply(cmd: OverlayCommand): void {
 }
 
 // ============================ annotation mode ============================
+
+/** The document attributes are shared with the main world despite context isolation. */
+function installHumanActivity(): void {
+  let lastScrollReport = 0
+  const isOverlay = (event: Event): boolean => event.composedPath().some(node => node === nodes?.host)
+  const report = (activity: 'scroll' | 'pointer' | 'key' | 'input'): void => {
+    ipcRenderer.send('overlay:event', { kind: 'humanActivity', activity })
+  }
+  const scrolling = (event: Event): void => {
+    if (!event.isTrusted || isOverlay(event)) return
+    const until = Date.now() + 900
+    ;(window as unknown as { __duplexHumanScrollingUntil: number }).__duplexHumanScrollingUntil = until
+    document.documentElement.setAttribute('data-duplex-human-scroll-until', String(until))
+    if (Date.now() - lastScrollReport >= 100) { lastScrollReport = Date.now(); report('scroll') }
+  }
+  window.addEventListener('wheel', scrolling, { capture: true, passive: true })
+  window.addEventListener('touchmove', scrolling, { capture: true, passive: true })
+  const aiEvent = (event: Event): boolean => {
+    const raw = document.documentElement.getAttribute('data-duplex-ai-input')
+    if (!raw) return false
+    try {
+        const marker = JSON.parse(raw) as { kind: string; target?: string; x?: number; y?: number; key?: string; keys?: string[]; text?: string }
+      if (event instanceof PointerEvent && ['pointer', 'drag'].includes(marker.kind)) {
+        if (marker.target) return event.composedPath().some(node => node instanceof Element && node.getAttribute('data-duplex-ai-target') === marker.target)
+        return marker.x != null && marker.y != null && Math.abs(event.clientX - marker.x) < 4 && Math.abs(event.clientY - marker.y) < 4
+      }
+        const keys = marker.keys ?? (marker.key ? [marker.key] : [])
+        if (event instanceof KeyboardEvent && marker.kind === 'key') return keys.includes(event.key)
+        if (event instanceof InputEvent && marker.kind === 'key') return (event.data != null && keys.includes(event.data))
+          || (keys.includes('Enter') && ['insertLineBreak', 'insertParagraph'].includes(event.inputType))
+          || (keys.includes('Backspace') && event.inputType === 'deleteContentBackward')
+          || (keys.includes('Delete') && event.inputType === 'deleteContentForward')
+      if (event instanceof InputEvent && marker.kind === 'type') return event.data === marker.text
+    } catch {}
+    return false
+  }
+    const touches = new Map<number, { x: number; y: number; moved: boolean }>()
+    window.addEventListener('pointerdown', event => {
+      if (!event.isTrusted || isOverlay(event) || aiEvent(event)) return
+      if (event.pointerType === 'touch') {
+        touches.set(event.pointerId, { x: event.clientX, y: event.clientY, moved: false })
+        scrolling(event)
+      } else report('pointer')
+  }, true)
+    window.addEventListener('pointermove', event => {
+      const start = touches.get(event.pointerId)
+      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 8) start.moved = true
+    }, true)
+    window.addEventListener('pointerup', event => {
+      const start = touches.get(event.pointerId)
+      touches.delete(event.pointerId)
+      if (start && !start.moved && !isOverlay(event)) report('pointer')
+    }, true)
+    window.addEventListener('pointercancel', event => touches.delete(event.pointerId), true)
+  window.addEventListener('keydown', event => {
+    if (event.isTrusted && !isOverlay(event) && !aiEvent(event)) report('key')
+  }, true)
+  window.addEventListener('input', event => {
+    if (event.isTrusted && !isOverlay(event) && !aiEvent(event)) report('input')
+  }, true)
+}
 
 function setAnnotationActive(active: boolean): void {
   const changed = annotActive !== active
@@ -1195,6 +1258,8 @@ function submitCard(): void {
     : undefined
   ipcRenderer.send('overlay:event', {
     kind: 'annotationSubmit',
+    documentURL: location.href,
+    documentToken: document.documentElement.getAttribute('data-duplex-document'),
     annotationId: id,
     tool: m.tool,
     rect,
@@ -1250,7 +1315,7 @@ if (
     setup()
     // send ready only after setup registered the overlay:cmd listener, otherwise
     // the hotkey-config reply from the main process is lost
-    ipcRenderer.send('overlay:event', { kind: 'ready', url: location.href })
+    ipcRenderer.send('overlay:event', { kind: 'ready', url: location.href, documentURL: location.href, documentToken: document.documentElement.getAttribute('data-duplex-document') })
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, { once: true })

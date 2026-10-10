@@ -60,7 +60,7 @@ export class TabManager {
     private onShortcut: (action: string) => void,
     private onMetadata: (url: string, title: string, favicon?: string) => void,
     private onLoadError?: (info: LoadErrorInfo) => void,
-    private onFindResult?: (result: { matches: number; activeMatch: number }) => void,
+    private onFindResult?: (result: { tabId: number; matches: number; activeMatch: number }) => void,
     private onPageContextMenu?: (tab: Tab, info: PageContextMenuInfo) => void
   ) {
     // Chromium can leave a WebContentsView "hidden" (suspended rendering,
@@ -106,19 +106,21 @@ export class TabManager {
     }
   }
 
-  createTab(url?: string): Tab {
+  createTab(url?: string, options: { background?: boolean } = {}): Tab {
     const view = new WebContentsView({
       webPreferences: {
         partition: 'persist:cobrowse',
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
+        backgroundThrottling: false,
         ...(this.overlayPreload ? { preload: this.overlayPreload } : {})
       }
     })
     const tab: Tab = { id: this.nextId++, view, logs: [], audioPlaying: false }
     this.tabs.set(tab.id, tab)
     this.win.contentView.addChildView(view)
+    view.setBounds(this.bounds)
     view.setVisible(false)
     this.wireEvents(tab)
 
@@ -127,7 +129,7 @@ export class TabManager {
       return { action: 'deny' }
     })
 
-    this.setActive(tab.id)
+    if (!options.background || this.activeId == null) this.setActive(tab.id)
     void view.webContents.loadURL(url ?? 'about:blank')
     this.emit()
     return tab
@@ -222,6 +224,7 @@ export class TabManager {
     wc.on('found-in-page', (_event, result) => {
       try {
         this.onFindResult?.({
+          tabId: tab.id,
           matches: result.matches,
           activeMatch: result.activeMatchOrdinal
         })
@@ -264,7 +267,7 @@ export class TabManager {
       // -3 = ERR_ABORTED (a new navigation started or the user stopped the
       // load): not a real failure, keep it out of the error toast.
       if (isMainFrame === false || code === -3) return
-      this.onLoadError?.({ url, code, desc })
+      this.onLoadError?.({ tabId: tab.id, url, code, desc })
     })
     wc.on('did-fail-load', changed)
     wc.on('render-process-gone', changed)
@@ -474,12 +477,12 @@ export class TabManager {
 
   updateBounds(bounds: ContentBounds): void {
     this.bounds = bounds
-    const active = this.getActive()
-    if (!active) return
-    try {
-      if (!active.view.webContents.isDestroyed()) active.view.setBounds(bounds)
-    } catch {
-      /* ignore */
+    for (const tab of this.tabs.values()) {
+      try {
+        if (!tab.view.webContents.isDestroyed()) tab.view.setBounds(bounds)
+      } catch {
+        /* view is going away */
+      }
     }
   }
 

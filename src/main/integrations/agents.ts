@@ -183,13 +183,13 @@ export function buildStartPlan(
   switch (tool.kind) {
     case 'codex':
       return {
-        ...viaShell('codex', ['exec', '--skip-git-repo-check', ...(m ? ['-m', m] : []), '-']),
+        ...viaShell('codex', ['exec', '--json', '--skip-git-repo-check', ...(m ? ['-m', m] : []), '-']),
         useStdin: true,
         cwd
       }
     case 'claude':
       return {
-        ...viaShell('claude', ['-p', ...(m ? ['--model', m] : [])]),
+        ...viaShell('claude', ['-p', '--output-format', 'stream-json', '--verbose', ...(m ? ['--model', m] : [])]),
         useStdin: true,
         cwd
       }

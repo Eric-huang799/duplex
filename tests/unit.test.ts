@@ -774,7 +774,7 @@ describe('local-model hardening (tolerant parsing + watchdogs)', () => {
     expect(calls).toBe(1)
     expect(
       events.some(
-        (e) => e.kind === 'text' && String(e.text).includes('已停止；已取消 1 条排队消息')
+        (e) => e.kind === 'text' && String(e.text).includes('正在停止当前操作；已取消 1 条排队消息')
       )
     ).toBe(true)
   })

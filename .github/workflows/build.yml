@@ -11,6 +11,8 @@ permissions:
 
 jobs:
   build:
+    # 0.2.9 is local private development; never upload its build to this public repository.
+    if: ${{ !startsWith(github.ref, 'refs/tags/v0.2.9') && !contains(github.ref, 'private') }}
     strategy:
       fail-fast: false
       matrix:
@@ -52,7 +54,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !startsWith(github.ref, 'refs/tags/v0.2.9') && !contains(github.ref, 'private')
     needs: build
     runs-on: ubuntu-latest
     steps:

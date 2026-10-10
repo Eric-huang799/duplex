@@ -3,15 +3,20 @@
  * Every script is a self-contained IIFE expression.
  *
  * The snapshot script builds a compact text DOM outline where meaningful
- * elements get stable [eN] refs. Refs are valid until the next snapshot or
- * page navigation. The ref map lives on window.__cobrowse.refMap.
+ * elements get document-scoped [eN] refs. Three recent snapshots are retained;
+ * identifiers never restart inside a document or alias across documents.
  */
 
 export function buildSnapshotScript(): string {
   return `(() => {
   const MAX_LINES = 400;
-  const refMap = new Map();
-  let nextRef = 1;
+  const state = window.__cobrowse = window.__cobrowse || {};
+  const refMap = state.refMap = state.refMap || new Map();
+  const refMeta = state.refMeta = state.refMeta || new Map();
+  const generations = state.generations = state.generations || [];
+  if (!state.nextRef) state.nextRef = Math.floor(Math.random() * 1000000000) * 1000000 + 1;
+  let nextRef = state.nextRef;
+  const currentRefs = [];
   const lines = [];
   let truncated = false;
   let emittedCount = 0;
@@ -56,6 +61,7 @@ export function buildSnapshotScript(): string {
     if (truncated) return;
     const tag = el.tagName;
     if (!tag || SKIP.has(tag)) return;
+    if (el.id === '__cobrowse_overlay_host') return;
     if (!isVisible(el)) return;
 
     const role = el.getAttribute('role');
@@ -72,6 +78,8 @@ export function buildSnapshotScript(): string {
       if (emittedCount >= MAX_LINES) { truncated = true; return; }
       const ref = 'e' + (nextRef++);
       refMap.set(ref, el);
+      currentRefs.push(ref);
+      refMeta.set(ref, { tag: el.tagName, text: clean(el.textContent, 160), href: el.getAttribute('href'), type: el.getAttribute('type') });
       let line = '  '.repeat(depth) + '[' + ref + '] <' + fmtTag(el) + '>';
       if (tag === 'INPUT') {
         const it = (el.type || 'text').toLowerCase();
@@ -119,18 +127,22 @@ export function buildSnapshotScript(): string {
     lines.push('(outline error: ' + e.message + ')');
   }
 
-  window.__cobrowse = window.__cobrowse || {};
-  window.__cobrowse.refMap = refMap;
+  state.nextRef = nextRef;
+  generations.push(currentRefs);
+  while (generations.length > 3) {
+    for (const ref of generations.shift()) { refMap.delete(ref); refMeta.delete(ref); }
+  }
 
   const header = [
     'url: ' + location.href,
     'title: ' + document.title,
+    'document: ' + (document.documentElement.getAttribute ? document.documentElement.getAttribute('data-duplex-document') || 'unmarked' : 'unmarked'),
     'viewport: ' + innerWidth + 'x' + innerHeight + '  scrollY: ' + Math.round(scrollY) + ' / page: ' + Math.round(document.documentElement.scrollHeight),
-    'refs: [eN] usable with click/type until next snapshot',
+    'refs: [eN] document-scoped; latest three snapshots retained; refresh after page changes',
     '---'
   ].join('\\n');
 
-  const footer = truncated ? '\\n--- (truncated at ' + MAX_LINES + ' lines; ' + (nextRef - 1) + ' refs total — use query/get_html for the rest)' : '';
+  const footer = truncated ? '\\n--- (truncated at ' + MAX_LINES + ' lines; ' + currentRefs.length + ' refs emitted — use query/get_html for the rest)' : '';
 
   return header + '\\n' + lines.join('\\n') + footer;
 })()`

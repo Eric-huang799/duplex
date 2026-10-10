@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { BrowserDataSnapshot, ChatSendResult, ContentBounds, DownloadRecord, LoadErrorInfo } from '../shared/protocol'
+import type { BrowserDataSnapshot, ChatSendResult, CollaborationState, ContentBounds, DownloadRecord, ExternalSessionState, LoadErrorInfo } from '../shared/protocol'
 
 type TabAction = { type: string; url?: string; tabId?: number; value?: number }
 
@@ -52,8 +52,8 @@ const api = {
     return () => ipcRenderer.removeListener('browser:shortcut', listener)
   },
   getPlatform: (): string => process.platform,
-  onFindResult: (cb: (r: { matches: number; activeMatch: number }) => void): (() => void) => {
-    const listener = (_e: unknown, r: { matches: number; activeMatch: number }): void => cb(r)
+  onFindResult: (cb: (r: { tabId: number; matches: number; activeMatch: number }) => void): (() => void) => {
+    const listener = (_e: unknown, r: { tabId: number; matches: number; activeMatch: number }): void => cb(r)
     ipcRenderer.on('browser:find-result', listener)
     return () => ipcRenderer.removeListener('browser:find-result', listener)
   },
@@ -147,7 +147,7 @@ const api = {
     ipcRenderer.on('agent:event', listener)
     return () => ipcRenderer.removeListener('agent:event', listener)
   },
-  agentSend: (text: string) => ipcRenderer.invoke('agent:send', text) as Promise<unknown>,
+  agentSend: (text: string, options?: { interrupt?: boolean }) => ipcRenderer.invoke('agent:send', text, options) as Promise<unknown>,
   agentAbort: () => ipcRenderer.invoke('agent:abort') as Promise<unknown>,
   agentReset: () => ipcRenderer.invoke('agent:reset') as Promise<unknown>,
   agentNewSession: () => ipcRenderer.invoke('agent:new-session') as Promise<unknown>,
@@ -268,6 +268,19 @@ const api = {
       error?: string
     }>,
   agentsSessionClose: () => ipcRenderer.invoke('agents:session-close') as Promise<{ ok: boolean }>,
+  externalState: () => ipcRenderer.invoke('external:get') as Promise<ExternalSessionState | null>,
+  onExternalState: (cb: (state: ExternalSessionState | null) => void): (() => void) => {
+    const listener = (_e: unknown, state: ExternalSessionState | null): void => cb(state)
+    ipcRenderer.on('external:state', listener)
+    return () => ipcRenderer.removeListener('external:state', listener)
+  },
+  collaborationGet: () => ipcRenderer.invoke('collaboration:get') as Promise<CollaborationState>,
+  collaborationResume: (tabId: number) => ipcRenderer.invoke('collaboration:resume', tabId) as Promise<{ ok: boolean; error?: string }>,
+  onCollaborationState: (cb: (state: CollaborationState) => void): (() => void) => {
+    const listener = (_e: unknown, state: CollaborationState): void => cb(state)
+    ipcRenderer.on('collaboration:state', listener)
+    return () => ipcRenderer.removeListener('collaboration:state', listener)
+  },
   agentsSetMirrorSource: (source: 'opencode' | 'external') =>
     ipcRenderer.invoke('agents:mirror-source', source) as Promise<{ ok: boolean }>,
   agentsStop: (toolId?: string) =>

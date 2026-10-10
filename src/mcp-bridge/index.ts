@@ -11,6 +11,7 @@
  */
 
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -23,7 +24,8 @@ import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
-const VERSION = '0.2.6'
+const VERSION = '0.2.9'
+const CALLER_ID = `bridge:${process.pid}:${crypto.randomUUID()}`
 
 /**
  * When the bridge runs from an installed (packaged) app it lives inside
@@ -215,7 +217,7 @@ async function getClient(): Promise<Client> {
   const info = await ensureEndpoint()
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${info.port}/mcp`),
-    { requestInit: { headers: { Authorization: `Bearer ${info.token}` } } }
+    { requestInit: { headers: { Authorization: `Bearer ${info.token}`, 'duplex-caller-id': CALLER_ID } } }
   )
   const c = new Client({ name: 'duplex-bridge', version: VERSION })
   await c.connect(transport)
@@ -226,7 +228,10 @@ async function getClient(): Promise<Client> {
 
 async function callRemote(name: string, args: Record<string, unknown>): Promise<unknown> {
   let lastErr: unknown = null
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // A disconnected response does not prove that an action was never executed.
+  // Retry reads only; replaying a submit/click can duplicate a real effect.
+  const readOnly = new Set(['list_tabs', 'snapshot', 'query', 'get_html', 'screenshot', 'get_console', 'wait'])
+  for (let attempt = 0; attempt < (readOnly.has(name) ? 2 : 1); attempt++) {
     try {
       const c = await getClient()
       return await c.callTool({ name, arguments: args })

@@ -9,11 +9,11 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 const als = new AsyncLocalStorage<AbortController>()
-const active = new Set<AbortController>()
+const active = new Map<AbortController, { owner?: string; tabId?: number; mutates?: boolean }>()
 
-export function beginOperation(): AbortController {
+export function beginOperation(meta: { owner?: string; tabId?: number; mutates?: boolean } = {}): AbortController {
   const ac = new AbortController()
-  active.add(ac)
+  active.set(ac, meta)
   return ac
 }
 
@@ -26,9 +26,12 @@ export function runInOperation<T>(ac: AbortController, fn: () => Promise<T>): Pr
 }
 
 /** Returns true when at least one in-flight operation was actually aborted. */
-export function abortOperation(): boolean {
+export function abortOperation(filter?: { owner?: string; tabId?: number; writesOnly?: boolean }): boolean {
   let any = false
-  for (const ac of active) {
+  for (const [ac, meta] of active) {
+    if (filter?.owner != null && meta.owner !== filter.owner) continue
+    if (filter?.tabId != null && meta.tabId !== filter.tabId) continue
+    if (filter?.writesOnly && meta.mutates !== true) continue
     if (!ac.signal.aborted) {
       ac.abort()
       any = true

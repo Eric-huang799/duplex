@@ -111,9 +111,15 @@ import { isTrustedImportedHost } from '../shared/trusted-hosts'
 import type { ChatSendResult, ContentBounds } from '../shared/protocol'
 import { isLlmProtocol } from '../shared/llm'
 import { duplexShimEnv, ensureOpenShim, extractHttpUrl } from './open-shim'
+import { CollaborationCoordinator, currentCaller, PAGE_READ_TOOLS, withCaller } from './collaboration'
+import { configurePlaywright, closePlaywright } from './playwright-browser'
+import { BrowserSessionStore } from './browser-session'
+import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
-const VERSION = '0.2.6'
+const VERSION = '0.2.9'
+app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
+app.commandLine.appendSwitch('remote-debugging-port', '0')
 const TOKEN = crypto.randomBytes(24).toString('hex')
 const LOG_FILE = path.join(cobrowseDir(), 'app.log')
 
@@ -137,6 +143,10 @@ let httpServer: RunningHttpServer | null = null
 let annotationSubmitHandler: AnnotationSubmitHandler | null = null
 let browserData: BrowserDataStore
 let downloads: DownloadManager
+let browserSession: BrowserSessionStore
+let restoringBrowserSession = false
+const collaboration = new CollaborationCoordinator()
+collaboration.onChanged = (state) => { if (win && !win.isDestroyed()) win.webContents.send('collaboration:state', state) }
 
 /** Which panel is on screen — decides where annotations are delivered. */
 let currentPanelMode: 'opencode' | 'agent' | 'external' = 'agent'
@@ -180,7 +190,7 @@ function emitBrowserData(): void {
 
 // script-execution confirmation round trip (run_skill_script → renderer dialog);
 // module scope so both the agent wiring and the IPC handlers can reach it
-const pendingConfirms = new Map<number, (ok: boolean) => void>()
+const pendingConfirms = new Map<number, { resolve: (ok: boolean) => void; owner: string }>()
 let confirmSeq = 0
 const confirmScript = (payload: {
   command: string
@@ -192,7 +202,7 @@ const confirmScript = (payload: {
 }): Promise<boolean> =>
   new Promise((resolve) => {
     const id = ++confirmSeq
-    pendingConfirms.set(id, resolve)
+    pendingConfirms.set(id, { resolve, owner: currentCaller() })
     win?.webContents.send('agent:confirm-request', {
       id,
       ...payload,
@@ -214,7 +224,7 @@ const skillHandlers = createSkillToolHandlers(confirmScript)
 const fsHandlers = createFsToolHandlers((payload) =>
   new Promise<boolean>((resolve) => {
     const id = ++confirmSeq
-    pendingConfirms.set(id, resolve)
+    pendingConfirms.set(id, { resolve, owner: currentCaller() })
     win?.webContents.send('agent:confirm-request', {
       id,
       command: payload.kind === 'write' ? `写入文件：${payload.detail}` : payload.detail,
@@ -246,8 +256,15 @@ let externalEvtSeq = 5_000_000
 let mirrorSource: 'opencode' | 'external' = 'opencode'
 
 /** The external transcript currently open in the panel (reply target). */
-let currentExternalSession: { toolId: string; kind: string; sessionId: string; file: string } | null =
+let currentExternalSession: { toolId: string; kind: string; sessionId: string; file: string; title?: string } | null =
   null
+
+function externalState(): { toolId: string; sessionId: string; file: string; title: string } | null {
+  const cur = currentExternalSession
+  return cur ? { toolId: cur.toolId, sessionId: cur.sessionId, file: cur.file, title: cur.title ?? '' } : null
+}
+function emitExternalState(): void { win?.webContents.send('external:state', externalState()) }
+let externalSelectionSeq = 0
 
 /** User message just injected via resume — the CLI transcript will echo it; skip that echo. */
 let pendingUserEcho: { text: string; since: number } | null = null
@@ -416,7 +433,7 @@ function watchTick(state: AgentWatchState): void {
             pendingUserEcho = null
             continue
           }
-          win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, state.sessionID))
+          if (currentPanelMode === 'external') win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, state.sessionID))
         }
         if (state.emitted.size > 5000) {
           state.emitted = new Set(Array.from(state.emitted).slice(-2500))
@@ -489,7 +506,8 @@ function openExternalSession(
     return { ok: false, error: '非法路径' }
   }
   stopAgentWatch()
-  mirrorSource = 'external'
+  externalSelectionSeq++
+  if (currentPanelMode === 'external') mirrorSource = 'external'
   currentExternalSession = { toolId: tool.id, kind: tool.kind, sessionId, file }
   pendingUserEcho = null
   const sid = `${tool.id}:${String(sessionId)}`
@@ -511,7 +529,9 @@ function openExternalSession(
           : readCustomSession(file)
   // real session title from transcript metadata; file basename only as fallback
   const title = externalSessionTitle(tool, String(sessionId), resolvedFile) || path.basename(file)
-  win?.webContents.send(
+  currentExternalSession.title = title
+  emitExternalState()
+  if (currentPanelMode === 'external') win?.webContents.send(
     'mirror:event',
     externalEvent({
       kind: 'session-info',
@@ -521,7 +541,7 @@ function openExternalSession(
       ts: Date.now()
     })
   )
-  for (const m of msgs) {
+  for (const m of currentPanelMode === 'external' ? msgs : []) {
     win?.webContents.send('mirror:event', transcriptToMirrorEvent(m, sid))
   }
   startAgentWatch(tool.kind, file, sid, tool.id, baseline)
@@ -530,6 +550,7 @@ function openExternalSession(
 
 /** A spawned external-agent child plus the state needed to explain failures. */
 interface LiveChild {
+  startup?: StartedSessionTracker
   child: ReturnType<typeof spawn>
   toolId: string
   /** Last ~2KB of stderr (ring buffer). */
@@ -553,7 +574,7 @@ function broadcastChildren(): void {
 }
 
 /** Track a spawned child: stderr ring buffer, exit/error state, set bookkeeping. */
-function trackChild(child: ReturnType<typeof spawn>, toolId: string): LiveChild {
+function trackChild(child: ReturnType<typeof spawn>, toolId: string, kind?: string): LiveChild {
   let markSettled = (): void => {}
   const settled = new Promise<void>((resolve) => {
     markSettled = resolve
@@ -561,6 +582,7 @@ function trackChild(child: ReturnType<typeof spawn>, toolId: string): LiveChild 
   const entry: LiveChild = {
     child,
     toolId,
+    startup: kind ? new StartedSessionTracker(kind) : undefined,
     stderrTail: '',
     exited: false,
     exitCode: null,
@@ -576,6 +598,7 @@ function trackChild(child: ReturnType<typeof spawn>, toolId: string): LiveChild 
   child.stderr?.on('data', (d: Buffer) => {
     entry.stderrTail = (entry.stderrTail + d.toString('utf8')).slice(-2048)
   })
+  child.stdout?.on('data', (d: Buffer) => entry.startup?.feed(d.toString('utf8')))
   child.on('error', (e: Error) => {
     entry.spawnError = e?.message ?? String(e)
     entry.exited = true
@@ -640,6 +663,7 @@ function stopExternalChildren(toolId?: string): number {
 /** A user message (panel / built-in agent / external session) resumes after an emergency stop. */
 function maybeResumeAi(): void {
   if (resumeAi()) {
+    mirror.setInjectionPaused(false)
     saveAiPaused(false)
     try {
       win?.webContents.send('emergency:state', { paused: false })
@@ -651,11 +675,13 @@ function maybeResumeAi(): void {
 }
 
 /** Emergency stop dismisses every confirmation dialog still waiting for an answer. */
-function denyAllPendingConfirms(): number {
+function denyAllPendingConfirms(owner?: string): number {
   let n = 0
-  for (const [id, resolve] of pendingConfirms) {
+  for (const [id, entry] of pendingConfirms) {
+    if (owner && entry.owner !== owner) continue
     pendingConfirms.delete(id)
-    resolve(false)
+    entry.resolve(false)
+    win?.webContents.send('agent:confirm-cancel', { id })
     n++
   }
   return n
@@ -674,13 +700,13 @@ function startExternalSessionSpawn(
     child = spawn(plan.file, plan.args, {
       cwd: plan.cwd,
       windowsHide: true,
-      stdio: ['pipe', 'ignore', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: duplexShimEnv(ensureOpenShim())
     })
   } catch (e) {
     return { ok: false, error: `启动失败：${(e as Error)?.message ?? String(e)}` }
   }
-  const live = trackChild(child, tool.id ?? tool.kind)
+  const live = trackChild(child, tool.id ?? tool.kind, tool.kind)
   // a broken pipe / missing binary must never crash the main process
   child.stdin?.on('error', () => undefined)
   if (plan.useStdin) {
@@ -764,7 +790,8 @@ function resumeExternalSessionSpawn(
  */
 function sendToCurrentExternalSession(
   toolId: string,
-  message: string
+  message: string,
+  opts?: { expectedSessionId?: string; userInitiated?: boolean }
 ): { ok: boolean; error?: string } {
   const tool = findAgentTool(String(toolId))
   if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
@@ -772,12 +799,13 @@ function sendToCurrentExternalSession(
   if (!cur || cur.toolId !== tool.id) {
     return { ok: false, error: '请先从「历史会话」中打开一个会话，再发送续聊消息' }
   }
+  if (opts?.expectedSessionId && cur.sessionId !== opts.expectedSessionId) return { ok: false, error: '标注对应的外部会话已切换，请重新提交' }
   const msg = String(message ?? '').trim()
   if (!msg) return { ok: false, error: '消息不能为空' }
   if (liveChildren.size > 0) {
     return { ok: false, error: '已有任务在运行中，请等待完成，或点「停止」后再发送' }
   }
-  maybeResumeAi()
+  if (opts?.userInitiated !== false) maybeResumeAi()
   const meta = readSessionMeta(tool.kind, cur.file)
   const cliSessionId = meta.cliSessionId ?? path.basename(cur.file, '.jsonl')
   const spawnResult = resumeExternalSessionSpawn(
@@ -785,7 +813,7 @@ function sendToCurrentExternalSession(
     cliSessionId,
     meta.cwd ?? '',
     msg,
-    cur.sessionId,
+    `${cur.toolId}:${cur.sessionId}`,
     getToolModel(tool.id)
   )
   if (!spawnResult.ok) return { ok: false, error: spawnResult.error }
@@ -793,7 +821,7 @@ function sendToCurrentExternalSession(
   pendingUserEcho = { text: msg, since: Date.now() }
   win?.webContents.send(
     'mirror:event',
-    transcriptToMirrorEvent({ role: 'user', text: msg, ts: Date.now() }, cur.sessionId)
+    transcriptToMirrorEvent({ role: 'user', text: msg, ts: Date.now() }, `${cur.toolId}:${cur.sessionId}`)
   )
   return { ok: true }
 }
@@ -841,6 +869,8 @@ if (!gotLock) {
 async function start(): Promise<void> {
   app.setAppUserModelId('Duplex')
   browserData = new BrowserDataStore(cobrowseDir())
+  browserSession = new BrowserSessionStore(cobrowseDir())
+  configurePlaywright(app.getPath('userData'))
   downloads = new DownloadManager(
     session.fromPartition('persist:cobrowse'),
     browserData,
@@ -854,6 +884,7 @@ async function start(): Promise<void> {
   if (settings.aiPaused) {
     // the emergency stop survives restarts until the user explicitly resumes
     pauseAi()
+    mirror.setInjectionPaused(true)
     logLine('[takeover] emergency stop restored from settings')
   }
   logLine(`[duplex] theme source: ${settings.theme}`)
@@ -881,6 +912,7 @@ async function start(): Promise<void> {
     if (isAiPaused()) {
       logLine('[takeover] AI paused (emergency stop); tool call rejected')
       return {
+        isError: true,
         content: [
           {
             type: 'text',
@@ -889,10 +921,29 @@ async function start(): Promise<void> {
         ]
       }
     }
-    if (win && win.isMinimized()) win.restore()
-    const ac = beginOperation()
+    const caller = currentCaller()
+    const tabScoped = !['list_tabs', 'new_tab'].includes(name)
+    let tabId: number | undefined
     try {
-      return await runInOperation(ac, () => execute(name, args))
+      if (tabScoped) {
+        tabId = collaboration.resolveTab(caller, typeof args.tabId === 'number' ? args.tabId : undefined, tabs?.activeId ?? null)
+        if (!tabs?.getTab(tabId)) throw new Error(`任务标签 ${tabId} 已关闭，请明确选择新的标签`)
+      }
+    } catch (e) { return { isError: true, content: [{ type: 'text', text: (e as Error).message }] } }
+    const mutates = !PAGE_READ_TOOLS.has(name)
+    const ac = beginOperation({ owner: caller, tabId, mutates })
+    try {
+      const invoke = () => execute(name, tabId == null ? args : { ...args, tabId })
+      const result = await runInOperation(ac, () => tabId == null ? invoke() : collaboration.run(tabId, caller, mutates, invoke, ac.signal))
+      if (name === 'new_tab' && !result.isError) {
+        const item = result.content.find(c => c.type === 'text')
+        if (item?.type === 'text') {
+          try { const newId = JSON.parse(item.text).tabId; if (typeof newId === 'number') collaboration.bind(caller, newId) } catch { /* result can be a plain explanation */ }
+        }
+      }
+      return result
+    } catch (e) {
+      return { isError: true, content: [{ type: 'text', text: (e as Error)?.message ?? String(e) }] }
     } finally {
       endOperation(ac)
     }
@@ -903,10 +954,11 @@ async function start(): Promise<void> {
   // and run inside an abortable operation context
   const executeWithSkills: ToolExecutor = async (name, args) => {
     const h = skillHandlers[name] ?? fsHandlers[name]
-    if (!h) return executeWithWake(name, args)
+    if (!h) return withCaller('builtin', () => executeWithWake(name, args))
     if (isAiPaused()) {
       logLine('[takeover] AI paused (emergency stop); tool call rejected')
       return {
+        isError: true,
         content: [
           {
             type: 'text',
@@ -915,9 +967,9 @@ async function start(): Promise<void> {
         ]
       }
     }
-    const ac = beginOperation()
+    const ac = beginOperation({ owner: 'builtin', mutates: true })
     try {
-      return await runInOperation(ac, () => h(args))
+      return await withCaller('builtin', () => runInOperation(ac, () => h(args)))
     } finally {
       endOperation(ac)
     }
@@ -936,6 +988,16 @@ async function start(): Promise<void> {
     requireAgentConfig,
     (ev) => {
       win?.webContents.send('agent:event', ev)
+    },
+    undefined,
+    {
+      getActiveTabId: () => tabs?.activeId ?? null,
+      onRunStart: (tabId, opts) => {
+        collaboration.release('builtin')
+        if (tabId != null) { collaboration.bind('builtin', tabId); if (!opts?.fromQueue && !annotationTabState.get(tabId)) collaboration.resume(tabId, false) }
+      },
+      onRunEnd: () => collaboration.release('builtin'),
+      cancelTools: () => { abortOperation({ owner: 'builtin' }); denyAllPendingConfirms('builtin') }
     }
   )
 
@@ -1014,15 +1076,19 @@ async function start(): Promise<void> {
   // Annotation routing: in built-in-agent mode the annotation goes straight
   // into the agent conversation; opencode / external panels get the default
   // queue + side-panel mirror delivery.
-  const deliverAnnotation = (d: AnnotationDelivery): void => {
+  const deliverAnnotation = (d: AnnotationDelivery, recipient: {
+    mode: typeof currentPanelMode; external: typeof currentExternalSession;
+    target: { sessionID: string | null; consumerID?: string }
+    builtinSessionId?: string
+  }): void => {
     if (annotationElementCounts.size > 100) annotationElementCounts.clear()
     annotationElementCounts.set(d.annotationId, d.elementCount)
     // External mode: deliver into the open CLI session (Codex / Claude Code can
     // be resumed from the panel), so annotating "just works" there too.
-    if (currentPanelMode === 'external') {
-      const cur = currentExternalSession
+    if (recipient.mode === 'external') {
+      const cur = recipient.external
       if (cur && (cur.kind === 'codex' || cur.kind === 'claude')) {
-        const r = sendToCurrentExternalSession(cur.toolId, d.text)
+        const r = sendToCurrentExternalSession(cur.toolId, d.text, { expectedSessionId: cur.sessionId, userInitiated: false })
         if (r.ok) return
         throw new Error(`标注发送到外部会话失败：${r.error ?? '未知错误'}`)
       }
@@ -1030,7 +1096,8 @@ async function start(): Promise<void> {
         '外部工具模式下标注不会送达：请先在面板打开 Codex / Claude 会话，或切换到内置模型 / opencode 模式'
       )
     }
-    if (currentPanelMode === 'agent' && agentRuntime) {
+    if (recipient.mode === 'agent' && agentRuntime) {
+      if (recipient.builtinSessionId !== agentRuntime.currentSessionId) throw new Error('标注对应的内置会话已切换，请重新提交')
       try {
         agentRuntime.injectAnnotation(d.text, {
           question: d.question,
@@ -1038,14 +1105,13 @@ async function start(): Promise<void> {
           url: d.url,
           annotationId: d.annotationId,
           tool: d.tool,
-          elementCount: d.elementCount
+          elementCount: d.elementCount,
+          tabId: d.tabId
         })
         return
-      } catch (e) {
-        logLine(`[annotation] agent delivery failed, falling back to the queue: ${String(e)}`)
-      }
+      } catch (e) { throw new Error(`内置模型标注发送失败：${String(e)}`) }
     }
-    mirror.addInjection(d.text, 'annotation')
+    mirror.addInjection(d.text, 'annotation', recipient.target)
     mirror.add({
       kind: 'annotation',
       annotationId: d.annotationId,
@@ -1055,15 +1121,18 @@ async function start(): Promise<void> {
       url: d.url,
       summary: d.summary,
       elementCount: d.elementCount,
-      ...(currentPanelMode === 'agent' ? { source: 'agent' as const } : {})
+      ...(recipient.mode === 'agent' ? { source: 'agent' as const } : {})
     })
   }
-  const annotationSubmit = createAnnotationSubmitHandler(tabs!, mirror, deliverAnnotation)
   annotationSubmitHandler = async (payload) => {
     if (isAiPaused()) {
       return { ok: false, error: 'AI 已急停挂起：请先点「恢复」再提交标注' }
     }
-    return annotationSubmit(payload)
+    const recipient = { mode: currentPanelMode, external: currentExternalSession, builtinSessionId: agentRuntime?.currentSessionId,
+      target: { sessionID: sessionBus.state.activeSessionID, consumerID: sessionBus.state.activeConsumerID ?? undefined } }
+    const ac = beginOperation({ owner: `annotation:${payload.annotationId}`, tabId: payload.tabId, mutates: false })
+    try { return await runInOperation(ac, () => createAnnotationSubmitHandler(tabs!, mirror, (d) => deliverAnnotation(d, recipient), { isAiPaused })(payload)) }
+    finally { endOperation(ac) }
   }
 
   try {
@@ -1192,6 +1261,9 @@ function createWindow(): void {
         if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
         win.webContents.send('tabs:update', tabs!.list(), tabs!.activeId)
         const list = tabs!.list()
+        if (!restoringBrowserSession) browserSession?.update(list, tabs!.activeId)
+        const liveTabIds = new Set(list.map(t => t.id))
+        for (const state of collaboration.snapshot().tabs) if (!liveTabIds.has(state.tabId)) collaboration.forget(state.tabId)
         // drop annotation state for tabs that are gone
         if (annotationTabState.size > 0) {
           const alive = new Set(list.map((t) => t.id))
@@ -1242,7 +1314,15 @@ function createWindow(): void {
     },
     (tab, info) => showPageContextMenu(tab, info)
   )
-  tabs.createTab()
+  restoringBrowserSession = true
+  const savedBrowser = browserSession.read()
+  if (savedBrowser?.tabs.length) {
+    const restored = savedBrowser.tabs.map(t => tabs!.createTab(t.url, { background: true }))
+    tabs.setActive(restored[Math.min(savedBrowser.activeIndex, restored.length - 1)].id)
+  } else tabs.createTab()
+  restoringBrowserSession = false
+  browserSession.update(tabs.list(), tabs.activeId)
+  win.on('close', () => { browserSession.update(tabs?.list() ?? [], tabs?.activeId ?? null); browserSession.flushNow(); browserData.flushNow() })
   tabs.setShortcuts(effectiveShortcuts(loadSettings().shortcuts))
   // FB-001: route CLI-opened pages to Duplex.
   // (a) a URL passed on the command line (Duplex launched as the browser)
@@ -1617,11 +1697,18 @@ function setupIpc(): void {
       if (!tabs) return { ok: false }
       const noTab = { ok: false, error: '没有打开的标签页' }
       try {
+        const targetTab = (): Tab | null => action.tabId != null ? tabs!.getTab(action.tabId) : tabs!.getActive()
+        const humanTab = targetTab()
+        if (humanTab && collaboration.hasTask(humanTab.id) && ['navigate', 'search', 'back', 'forward', 'reload', 'closeTab'].includes(action.type)) {
+          collaboration.humanActivity(humanTab.id, 'navigate')
+          abortOperation({ tabId: humanTab.id, writesOnly: true })
+        }
         switch (action.type) {
           case 'navigate':
           case 'search': {
             // 地址栏/搜索在零标签时也应有去路：先建一个标签页再执行
-            const tab = tabs.getActive() ?? tabs.createTab()
+            const tab = action.tabId != null ? tabs.getTab(action.tabId) : (tabs.getActive() ?? tabs.createTab())
+            if (!tab) return { ok: false, error: '目标标签已关闭' }
             if (action.url) {
               let url: string
               if (action.type === 'search') {
@@ -1636,21 +1723,21 @@ function setupIpc(): void {
             break
           }
           case 'back': {
-            const tab = tabs.getActive()
+            const tab = targetTab()
             if (!tab) return noTab
             const nav = tab.view.webContents.navigationHistory
             if (nav.canGoBack()) nav.goBack()
             break
           }
           case 'forward': {
-            const tab = tabs.getActive()
+            const tab = targetTab()
             if (!tab) return noTab
             const nav = tab.view.webContents.navigationHistory
             if (nav.canGoForward()) nav.goForward()
             break
           }
           case 'reload': {
-            const tab = tabs.getActive()
+            const tab = targetTab()
             if (!tab) return noTab
             tab.view.webContents.reload()
             break
@@ -1689,7 +1776,7 @@ function setupIpc(): void {
             break
           }
           case 'find': {
-            const tab = tabs.getActive()
+            const tab = targetTab()
             if (!tab) return noTab
             if (action.url) tab.view.webContents.findInPage(action.url)
             else tab.view.webContents.stopFindInPage('clearSelection')
@@ -1697,7 +1784,7 @@ function setupIpc(): void {
           }
           case 'findNext':
           case 'findPrev': {
-            const tab = tabs.getActive()
+            const tab = targetTab()
             if (!tab) return noTab
             if (action.url) {
               tab.view.webContents.findInPage(action.url, {
@@ -1708,13 +1795,13 @@ function setupIpc(): void {
             break
           }
           case 'stopLoad': {
-            const tab = tabs.getActive()
+            const tab = targetTab()
             if (!tab) return noTab
             tab.view.webContents.stop()
             break
           }
           case 'zoom': {
-            const tab = tabs.getActive()
+            const tab = targetTab()
             if (!tab) return noTab
             const wc = tab.view.webContents
             const delta =
@@ -1883,6 +1970,7 @@ function setupIpc(): void {
   // The renderer tells us which panel is visible — annotations are routed to
   // the built-in agent only when that panel is the active one.
   ipcMain.handle('ui:panel-mode', (_e, mode: string) => {
+    if (currentPanelMode !== mode) externalSelectionSeq++
     currentPanelMode = mode === 'opencode' || mode === 'external' ? mode : 'agent'
     return { ok: true }
   })
@@ -1890,6 +1978,14 @@ function setupIpc(): void {
   // Toggle annotation mode for the active tab (state is mirrored per tab and
   // echoed back through `annotation:state` when the overlay confirms).
   ipcMain.handle('annotation:toggle', () => toggleAnnotationMode())
+  ipcMain.handle('external:get', () => externalState())
+  ipcMain.handle('collaboration:get', () => collaboration.snapshot())
+  ipcMain.handle('collaboration:resume', (_e, tabId: number) => {
+    if (!tabs?.getTab(tabId)) return { ok: false, error: '标签已关闭' }
+    if (annotationTabState.get(tabId)) return { ok: false, error: '请先结束此页标注再恢复操作' }
+    collaboration.resume(tabId)
+    return { ok: true }
+  })
 
   ipcMain.on(
     'overlay:event',
@@ -1901,8 +1997,20 @@ function setupIpc(): void {
         annotationId?: string
         active?: boolean
         question?: string
+        activity?: string
+        documentURL?: string
+        documentToken?: string
       }
     ) => {
+      if (ev?.kind === 'humanActivity') {
+        const tabId = findTabIdBySender(_e.sender)
+        if (tabId == null) return
+        const activity = ev.activity ?? 'input'
+        const ownsTask = collaboration.hasTask(tabId)
+        if (activity === 'scroll' || ownsTask) collaboration.humanActivity(tabId, activity)
+        if (activity !== 'scroll' && ownsTask) abortOperation({ tabId, writesOnly: true })
+        return
+      }
       if (ev?.kind === 'ready') {
         try {
           _e.sender.send('overlay:cmd', {
@@ -1930,6 +2038,7 @@ function setupIpc(): void {
         const confirms = denyAllPendingConfirms()
         const dropped = mirror.clearInjections()
         const newly = pauseAi()
+        mirror.setInjectionPaused(true)
         if (newly) saveAiPaused(true)
         hideAllVisuals(tabs?.getActive() ?? null)
         try {
@@ -1952,20 +2061,23 @@ function setupIpc(): void {
       if (ev?.kind === 'annotationState') {
         const active = ev.active === true
         const senderTabId = findTabIdBySender(_e.sender)
-        const tabId = senderTabId ?? tabs?.activeId ?? null
-        if (tabId != null) annotationTabState.set(tabId, active)
+        const tabId = senderTabId
+        if (tabId != null) {
+          annotationTabState.set(tabId, active)
+          if (active) { collaboration.humanActivity(tabId, 'annotation'); abortOperation({ tabId, writesOnly: true }) }
+        }
         // only mirror the active tab's state into the chrome UI
         if (tabId == null || tabId === tabs?.activeId) sendAnnotationState(active)
         return
       }
       if (ev?.kind === 'annotationSubmit') {
         if (!annotationSubmitHandler) return
+        const originTabId = findTabIdBySender(_e.sender)
+        if (originTabId == null || !ev.documentToken || !ev.documentURL) return
         const annotationId = String(ev.annotationId ?? '')
         const replyResult = (ok: boolean, error?: string, warning?: string): void => {
           // reply to the tab that submitted (not whichever tab is active now)
-          const senderTabId = findTabIdBySender(_e.sender)
-          const tab =
-            (senderTabId != null ? tabs?.getTab(senderTabId) : undefined) ?? tabs?.getActive()
+          const tab = tabs?.getTab(originTabId)
           if (!tab) return
           const elementCount = annotationElementCounts.get(annotationId)
           annotationElementCounts.delete(annotationId)
@@ -1979,7 +2091,7 @@ function setupIpc(): void {
           })
         }
         try {
-          void annotationSubmitHandler(ev as unknown as AnnotationSubmitPayload).then(
+          void annotationSubmitHandler({ ...ev, tabId: originTabId } as unknown as AnnotationSubmitPayload).then(
             (r) => {
               logLine(
                 `[annotation] submit ${annotationId || '?'} -> ${r.ok ? 'queued' : 'error: ' + (r.error ?? '')}`
@@ -2017,7 +2129,7 @@ function setupIpc(): void {
     const t = String(text ?? '').trim()
     if (!t) return { ok: false }
     maybeResumeAi()
-    const inj = mirror.addInjection(t, 'panel')
+    const inj = mirror.addInjection(t, 'panel', { sessionID: sessionBus.state.activeSessionID, consumerID: sessionBus.state.activeConsumerID ?? undefined })
     if (!mirror.hasConsumer()) {
       return {
         ok: true,
@@ -2080,14 +2192,14 @@ function setupIpc(): void {
     return { ok: true, theme: t }
   })
 
-  ipcMain.handle('agent:send', async (_e, text: string) => {
+  ipcMain.handle('agent:send', async (_e, text: string, opts?: { interrupt?: boolean }) => {
     if (!agentRuntime) return { ok: false, error: 'agent not ready' }
     if (!activeAgentConfig()) {
       return { ok: false, error: '当前模型配置不存在，请在 ⚙ 模型配置里选择或新建' }
     }
     maybeResumeAi()
     try {
-      return await agentRuntime.send(String(text ?? ''))
+      return await agentRuntime.send(String(text ?? ''), { interrupt: opts?.interrupt === true })
     } catch (e) {
       return { ok: false, error: (e as Error)?.message ?? String(e) }
     }
@@ -2095,6 +2207,7 @@ function setupIpc(): void {
 
   ipcMain.on('emergency:resume', () => {
     if (resumeAi()) {
+      mirror.setInjectionPaused(false)
       saveAiPaused(false)
       try {
         win?.webContents.send('emergency:state', { paused: false })
@@ -2297,7 +2410,7 @@ function setupIpc(): void {
     const r = pendingConfirms.get(Number(id))
     if (r) {
       pendingConfirms.delete(Number(id))
-      r(!!ok)
+      r.resolve(!!ok)
     }
     return { ok: true }
   })
@@ -2401,6 +2514,9 @@ function setupIpc(): void {
     if (!tool.sessionsDir) return { ok: false, error: '未找到该工具的会话目录，无法跟随新会话' }
     const msg = String(message ?? '').trim()
     if (!msg) return { ok: false, error: '消息不能为空' }
+    startSessionBusy = true
+    const selectionAtStart = externalSelectionSeq
+    try {
     if (tool.kind === 'custom') {
       // custom commands run whatever the user configured — confirm exact plan
       const approved = await confirmScript({
@@ -2410,12 +2526,6 @@ function setupIpc(): void {
       })
       if (!approved) return { ok: false, error: '用户拒绝了这次启动' }
     }
-    startSessionBusy = true
-    try {
-      const before = Date.now()
-      const spawnResult = startExternalSessionSpawn(tool, msg, getToolModel(tool.id))
-      if (!spawnResult.ok) return spawnResult
-      const live = spawnResult.live
       const listFn =
         tool.kind === 'codex'
           ? listCodexSessions
@@ -2424,6 +2534,11 @@ function setupIpc(): void {
             : tool.kind === 'gemini' || tool.kind === 'qwen'
               ? listGeminiSessions
               : listCustomSessions
+      const existingIds = new Set(listFn(tool.sessionsDir).map(s => s.id))
+      const before = Date.now()
+      const spawnResult = startExternalSessionSpawn(tool, msg, getToolModel(tool.id))
+      if (!spawnResult.ok) return spawnResult
+      const live = spawnResult.live
       // Async polling (never blocks the main process between iterations; the
       // list readers themselves are cached by the transcripts module): starts
       // at 500ms and backs off up to 2s within the 20s window.
@@ -2446,9 +2561,22 @@ function setupIpc(): void {
         if (live.killed) {
           return { ok: false, error: '已停止该进程（用户取消）' }
         }
-        const newest = listFn(tool.sessionsDir)[0]
-        if (newest && newest.updatedAt > before) {
-          return openExternalSession(tool, newest.id, newest.file)
+        const newlyCreated = listFn(tool.sessionsDir).filter(s => !existingIds.has(s.id) && s.updatedAt >= before - 1000)
+        const startupId = live.startup?.sessionId
+        const candidates = startupId
+          ? newlyCreated.filter(s => s.id === startupId || readSessionMeta(tool.kind, s.file).cliSessionId === startupId)
+          : ['codex', 'claude'].includes(tool.kind) ? [] : newlyCreated
+        if (candidates.length > 1) {
+          killChildTree(live.child); live.killed = true
+          return { ok: false, error: '检测到多个同时创建的会话，无法确定本次启动对象；已停止，请从历史会话选择' }
+        }
+        if (candidates.length === 1) {
+          const created = candidates[0]
+          if (externalSelectionSeq !== selectionAtStart) {
+            logLine(`[agents:start] created ${tool.id}:${created.id}; later user selection preserved`)
+            return { ok: true, title: created.title }
+          }
+          return openExternalSession(tool, created.id, created.file)
         }
         if (live.spawnError) {
           return { ok: false, error: `启动失败：${live.spawnError}${stderrSummary(live)}` }
@@ -2478,9 +2606,11 @@ function setupIpc(): void {
   }))
 
   ipcMain.handle('agents:session-close', () => {
+    externalSelectionSeq++
     stopAgentWatch()
     mirrorSource = 'opencode'
     currentExternalSession = null
+    emitExternalState()
     pendingUserEcho = null
     return { ok: true }
   })
@@ -2621,6 +2751,9 @@ app.on('activate', () => {
 })
 
 app.on('will-quit', () => {
+  browserSession?.flushNow()
+  browserData?.flushNow()
+  void closePlaywright()
   for (const entry of liveChildren) {
     killChildTree(entry.child)
   }

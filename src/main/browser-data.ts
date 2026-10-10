@@ -169,7 +169,7 @@ export class BrowserDataStore {
   }
 
   /** Cancel any pending debounce and persist the current snapshot synchronously. */
-  private flushNow(): void {
+  flushNow(): void {
     this.writeSeq++ // invalidate any in-flight async write
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
