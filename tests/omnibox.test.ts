@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildOmniboxSuggestions, groupHistoryByDay } from '../src/shared/omnibox'
+import {
+  buildOmniboxSuggestions,
+  formatVisitTime,
+  groupHistoryByDay,
+  splitHighlight,
+  stripUrlForDisplay
+} from '../src/shared/omnibox'
 import type { BookmarkRecord, HistoryRecord } from '../src/shared/protocol'
 
 const h = (url: string, title: string, visitedAt: number): HistoryRecord => ({ url, title, visitedAt })
@@ -63,6 +69,58 @@ describe('buildOmniboxSuggestions', () => {
     const s = buildOmniboxSuggestions('zzzznothing', [h('https://a.example/', 'A', 1)], [])
     expect(s).toHaveLength(1)
     expect(s[0].kind).toBe('search')
+  })
+})
+
+describe('display helpers', () => {
+  describe('stripUrlForDisplay', () => {
+    it('strips http/https scheme and a leading www.', () => {
+      expect(stripUrlForDisplay('https://www.example.com/a?b=1')).toBe('example.com/a?b=1')
+      expect(stripUrlForDisplay('http://www.example.cn/')).toBe('example.cn')
+      expect(stripUrlForDisplay('https://example.com/')).toBe('example.com')
+    })
+    it('leaves non-http protocols untouched', () => {
+      expect(stripUrlForDisplay('about:blank')).toBe('about:blank')
+      expect(stripUrlForDisplay('file:///C:/x/y.html')).toBe('file:///C:/x/y.html')
+    })
+    it('keeps inner paths and query as-is, only trims a bare root slash', () => {
+      expect(stripUrlForDisplay('https://a.cn/x/y/')).toBe('a.cn/x/y/')
+      expect(stripUrlForDisplay('https://a.cn/?q=1')).toBe('a.cn/?q=1')
+    })
+  })
+
+  describe('splitHighlight', () => {
+    it('marks the first case-insensitive occurrence, preserving original casing', () => {
+      expect(splitHighlight('Git 官网', 'git')).toEqual([
+        { t: 'Git', hit: true },
+        { t: ' 官网', hit: false }
+      ])
+    })
+    it('returns one no-hit segment for empty query or missing match', () => {
+      expect(splitHighlight('abc', '')).toEqual([{ t: 'abc', hit: false }])
+      expect(splitHighlight('abc', 'zz')).toEqual([{ t: 'abc', hit: false }])
+    })
+  })
+
+  describe('formatVisitTime', () => {
+    it('formats zero-padded HH:MM', () => {
+      expect(formatVisitTime(new Date(2026, 9, 10, 8, 5).getTime())).toBe('08:05')
+      expect(formatVisitTime(new Date(2026, 9, 10, 21, 37).getTime())).toBe('21:37')
+    })
+    it('returns empty string for invalid timestamps', () => {
+      expect(formatVisitTime(undefined)).toBe('')
+    })
+  })
+
+  it('suggestions carry favicon and visitedAt for dropdown rendering', () => {
+    const hist: HistoryRecord = { url: 'https://a.example/', title: 'A', visitedAt: 100, favicon: 'data:fav.png' }
+    const bm: BookmarkRecord = { url: 'https://b.example/', title: 'B', addedAt: 1, favicon: 'data:bm.png' }
+    const recents = buildOmniboxSuggestions('', [hist], [])
+    expect(recents[0].favicon).toBe('data:fav.png')
+    expect(recents[0].visitedAt).toBe(100)
+    const s = buildOmniboxSuggestions('a', [hist], [bm])
+    expect(s.find((x) => x.kind === 'bookmark')?.favicon).toBe('data:bm.png')
+    expect(s.find((x) => x.kind === 'history')?.visitedAt).toBe(100)
   })
 })
 

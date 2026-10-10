@@ -13,6 +13,10 @@ export interface OmniboxSuggestion {
   sub: string
   /** Navigation target; search rows carry the raw query for resolveAddress. */
   url: string
+  /** Site favicon for the dropdown row (history/bookmark rows only). */
+  favicon?: string
+  /** Latest visit timestamp (history rows only; powers the popup time column). */
+  visitedAt?: number
 }
 
 export interface OmniboxOptions {
@@ -76,7 +80,14 @@ export function buildOmniboxSuggestions(
   if (!q) {
     return dedupeHistory(history)
       .slice(0, o.recentLimit)
-      .map((r) => ({ kind: 'history' as const, label: r.title || r.url, sub: r.url, url: r.url }))
+      .map((r) => ({
+        kind: 'history' as const,
+        label: r.title || r.url,
+        sub: r.url,
+        url: r.url,
+        favicon: r.favicon,
+        visitedAt: r.visitedAt
+      }))
   }
   const out: OmniboxSuggestion[] = [{ kind: 'search', label: raw, sub: `${o.engineName} 搜索`, url: raw }]
   const used = new Set<string>()
@@ -84,15 +95,54 @@ export function buildOmniboxSuggestions(
     if (out.length > o.bookmarkLimit) break
     if (used.has(bm.url) || matchScore(bm, q) === 0) continue
     used.add(bm.url)
-    out.push({ kind: 'bookmark', label: bm.title || bm.url, sub: bm.url, url: bm.url })
+    out.push({ kind: 'bookmark', label: bm.title || bm.url, sub: bm.url, url: bm.url, favicon: bm.favicon })
   }
   for (const r of rankedMatches(history, q, o.historyLimit + used.size)) {
     if (out.length >= 1 + o.bookmarkLimit + o.historyLimit) break
     if (used.has(r.url)) continue
     used.add(r.url)
-    out.push({ kind: 'history', label: r.title || r.url, sub: r.url, url: r.url })
+    out.push({ kind: 'history', label: r.title || r.url, sub: r.url, url: r.url, favicon: r.favicon, visitedAt: r.visitedAt })
   }
   return out
+}
+
+/**
+ * Chrome-style compact url: drop the http(s):// scheme and a leading www.,
+ * trim a bare root trailing slash; leave every other protocol untouched.
+ */
+export function stripUrlForDisplay(url: string): string {
+  const m = /^https?:\/\/(.*)$/i.exec(url)
+  if (!m) return url
+  const rest = m[1].replace(/^www\./i, '')
+  const slash = rest.indexOf('/')
+  if (slash >= 0 && rest.slice(slash) === '/') return rest.slice(0, slash)
+  return rest
+}
+
+export interface HighlightSegment {
+  t: string
+  hit: boolean
+}
+
+/** Split text so the query's first case-insensitive occurrence can render bold. */
+export function splitHighlight(text: string, query: string): HighlightSegment[] {
+  const t = text ?? ''
+  const q = (query ?? '').trim().toLowerCase()
+  if (!q) return [{ t, hit: false }]
+  const i = t.toLowerCase().indexOf(q)
+  if (i < 0) return [{ t, hit: false }]
+  return [
+    { t: t.slice(0, i), hit: false },
+    { t: t.slice(i, i + q.length), hit: true },
+    { t: t.slice(i + q.length), hit: false }
+  ].filter((s) => s.t.length > 0)
+}
+
+/** Compact HH:MM visit time for the recent-history popup; '' when unknown. */
+export function formatVisitTime(ts?: number): string {
+  if (ts === undefined || !Number.isFinite(ts)) return ''
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
 export interface HistoryDayGroup {

@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TabInfo, BookmarkRecord, HistoryRecord } from '../../../shared/protocol'
-import { buildOmniboxSuggestions, type OmniboxSuggestion } from '../../../shared/omnibox'
+import { buildOmniboxSuggestions, formatVisitTime, splitHighlight, stripUrlForDisplay, type OmniboxSuggestion } from '../../../shared/omnibox'
 import { VirtualKeyboard } from './VirtualKeyboard'
 import { comboFromEvent, displayParts, isModifierKey, normalizeBinding, sameBinding, validateBinding } from '../../../shared/hotkeys'
 import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, validateShortcuts, type ShortcutAction } from '../../../shared/shortcuts'
 
 type ThemeSetting = 'system' | 'light' | 'dark'
+
+/** Render text with the query's first occurrence bolded (Chrome suggestion style). */
+function renderHighlight(text: string, query: string): React.ReactNode[] {
+  return splitHighlight(text, query).map((seg, i) =>
+    seg.hit ? <b key={i}>{seg.t}</b> : <span key={i}>{seg.t}</span>
+  )
+}
 
 interface Props {
   active: TabInfo | null
@@ -48,6 +55,8 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   const editTabRef = useRef<number | undefined>(active?.id)
   const currentTabRef = useRef<number | undefined>(active?.id)
   currentTabRef.current = active?.id
+  /** Text the user actually typed (arrow-key sync + stage-1 Esc restore, Chrome-style). */
+  const typedRef = useRef('')
   const [theme, setTheme] = useState<ThemeSetting>('system')
   const [engine, setEngine] = useState('baidu')
   const [engines, setEngines] = useState<Array<{ key: string; name: string }>>([])
@@ -88,6 +97,14 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
       setInput(url === 'about:blank' ? '' : url)
     }
   }, [active?.url, editing])
+
+  // Switching tabs collapses every chrome overlay and exits address editing (Chrome behavior).
+  useEffect(() => {
+    closeSugs()
+    setHistOpen(false)
+    setEditing(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active?.id])
 
   useEffect(() => {
     void window.cobrowse.getTheme().then((t) => setTheme(t.theme))
@@ -249,6 +266,8 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   }
 
   const recent = buildOmniboxSuggestions('', localHistory, [], { recentLimit: 10 })
+  /** Current trimmed query for match highlighting in the dropdown. */
+  const qNow = input.trim()
 
   const pickSuggestion = (s: OmniboxSuggestion): void => {
     if (s.kind === 'search') submit()
@@ -346,18 +365,27 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           value={input}
           spellCheck={false}
           placeholder="输入网址或搜索内容，回车打开"
-          onFocus={(e) => { editTabRef.current = active?.id; setEditing(true); refreshSugs(input); e.currentTarget.select() }}
+          aria-autocomplete="list"
+          aria-controls="omnibox-list"
+          aria-expanded={editing && sugs.length > 0}
+          aria-activedescendant={hl >= 0 ? `omnibox-opt-${hl}` : undefined}
+          onFocus={(e) => { typedRef.current = input; editTabRef.current = active?.id; setEditing(true); refreshSugs(input); e.currentTarget.select() }}
           onBlur={() => { setEditing(false); closeSugs() }}
-          onChange={(e) => { setInput(e.target.value); refreshSugs(e.target.value) }}
+          onChange={(e) => { typedRef.current = e.target.value; setInput(e.target.value); refreshSugs(e.target.value) }}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown' && sugs.length > 0) {
               e.preventDefault()
-              setHl((i) => Math.min(i + 1, sugs.length - 1))
+              const next = Math.min(hl + 1, sugs.length - 1)
+              setHl(next)
+              // Chrome: moving the selection places the target url into the omnibox.
+              if (sugs[next].kind !== 'search') setInput(sugs[next].url)
               return
             }
             if (e.key === 'ArrowUp' && sugs.length > 0) {
               e.preventDefault()
-              setHl((i) => Math.max(i - 1, -1))
+              const next = Math.max(hl - 1, -1)
+              setHl(next)
+              setInput(next >= 0 && sugs[next].kind !== 'search' ? sugs[next].url : typedRef.current)
               return
             }
             if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
@@ -369,8 +397,9 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
             }
             if (e.key === 'Escape') {
               if (sugs.length > 0) {
-                // 第一段 Esc 只收起下拉（Chrome 交互），再按才退出编辑
+                // 第一段 Esc：收起下拉并还原手打文本（Chrome 交互），再按才退出编辑
                 closeSugs()
+                setInput(typedRef.current)
                 return
               }
               setEditing(false)
@@ -391,19 +420,28 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           </button>
         </div>
         {editing && sugs.length > 0 && (
-          <div className="omnibox-pop">
+          <div className="omnibox-pop" role="listbox" id="omnibox-list">
             {sugs.map((s, i) => (
               <button
                 type="button"
                 key={`${s.kind}-${i}-${s.url}`}
+                id={`omnibox-opt-${i}`}
+                role="option"
+                aria-selected={i === hl}
                 className={`omnibox-item${i === hl ? ' on' : ''}`}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setHl(i)}
                 onClick={() => pickSuggestion(s)}
               >
-                <span className="omnibox-ico">{s.kind === 'search' ? '🔍' : s.kind === 'bookmark' ? '★' : '🕘'}</span>
-                <span className="omnibox-label">{s.label}</span>
-                <span className="omnibox-sub">{s.sub}</span>
+                <span className="omnibox-ico">
+                  {s.kind === 'search'
+                    ? '🔍'
+                    : s.favicon
+                      ? <img className="omnibox-fav" src={s.favicon} alt="" onError={(ev) => { ev.currentTarget.style.visibility = 'hidden' }} />
+                      : '🌐'}
+                </span>
+                <span className="omnibox-label">{renderHighlight(s.label, qNow)}</span>
+                <span className="omnibox-sub">{s.kind === 'search' ? s.sub : renderHighlight(stripUrlForDisplay(s.sub), qNow)}</span>
               </button>
             ))}
           </div>
@@ -436,9 +474,14 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
                     onAction('navigate', s.url, currentTabRef.current)
                   }}
                 >
-                  <span className="omnibox-ico">🕘</span>
+                  <span className="omnibox-ico">
+                    {s.favicon
+                      ? <img className="omnibox-fav" src={s.favicon} alt="" onError={(ev) => { ev.currentTarget.style.visibility = 'hidden' }} />
+                      : '🌐'}
+                  </span>
                   <span className="omnibox-label">{s.label}</span>
-                  <span className="omnibox-sub">{s.sub}</span>
+                  <span className="omnibox-sub">{stripUrlForDisplay(s.sub)}</span>
+                  <span className="omnibox-time">{formatVisitTime(s.visitedAt)}</span>
                 </button>
               ))
             )}

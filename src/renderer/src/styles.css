@@ -2821,3 +2821,38 @@ button.start-engine:hover {
 .library-group-head:hover {
   color: var(--text-strong);
 }
+
+/* ---- omnibox polish (Chrome-style details) ---- */
+.omnibox-pop,
+.hist-pop {
+  animation: omni-in 100ms ease-out;
+}
+
+@keyframes omni-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.omnibox-fav {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.omnibox-label b,
+.omnibox-sub b {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.omnibox-time {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
