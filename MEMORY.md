@@ -50,6 +50,7 @@
 - **测试对象候选（2026-10-09 记）**：后续端到端测试可加 `info.cern.ch`（世界上第一个网站，CERN 托管，极简纯文本、长期稳定）作为第二测试页——example.com 曾因页面改版导致 smoke 断言失效。已在待办登记，**下次迭代纳入 smoke**。
 - **曝光与收录（2026-10-10）**：清单与操作步骤见 `docs/曝光与收录清单.md`；npm 桥包已备好（`npm/duplex-bridge/`，待作者 `npm publish` + `mcp-publisher` 发官方 Registry）；Glama claim 文件（`glama.json`）已加；topics 已补。
 - **awesome 清单 PR 三连（2026-10-10 提交，均 open 待审）**：yzfly/Awesome-MCP-ZH [#705](https://github.com/yzfly/Awesome-MCP-ZH/pull/705)（中文 7.7k 星）、MobinX/awesome-mcp-list [#720](https://github.com/MobinX/awesome-mcp-list/pull/720)、TensorBlock/awesome-mcp-servers [#3444](https://github.com/TensorBlock/awesome-mcp-servers/pull/3444)（合并后获官方 profile + 免费 API）。全部经 `gh api` fork→分支→PUT→PR 流程完成；npm 发布线路因本网络被墙（www.npmjs.com 403、CLI 注册通道关闭）暂停。
+- **UX 细化批次（2026-10-11，FB-002/003/004 已修）**：①模型配置/Skills 面板点外部两段式收起（先取消表单、再点收起）；②DeepSeek 预设默认模型改 `deepseek-v4-flash`；③AI `new_tab` 默认前台展示，仅"当前页 2 秒内有真实人工输入或处于标注模式"时保持后台。commit `6aa1dc3` + `bd2c83a`。验证：303 单测、private-029 冒烟 12/12、dev 实例 UI 自动检查 5/5。smoke.mjs 标注段适配（FB-005）延后。**未发版本**——等用户实机试用后再定是否发补丁版。
 - **社区收录（2026-10-08）**：Duplex 已被 punkpeye/awesome-mcp-servers 正式收录（PR #15385 已 merge，GitHub API 实查）；freemcp.space 自动列出（未验证，claim/opt-out 可选）；README 中英双版已加两枚收录徽章并推送 GitHub master（commit `3d311e3`）。注：本机到 github.com 主站间歇性超时，push 可用 `git -c http.curloptResolve=github.com:443:<IP> -c http.version=HTTP/1.1`（**IP 会变**，先 curl 探测；常用候选 20.27.177.113 / 20.205.243.166 / 140.82.113.4 / 140.82.112.3）。
 - 待办（延后）：命令面板/标签搜索/会话恢复/阅读模式/标签固定/多选批量/书签 HTML 导入导出、token/费用统计 UI、响应式适配、触屏标注。
-- 本机已安装 0.2.5 与开发版可并存：开发版需 `--user-data-dir` 独立目录避开单例锁；**本机安装版已于 2026-10-07 覆盖升级到 0.2.6**。
+- 本机已安装版为 **0.2.9**（2026-10-10 升级）；开发版与安装版可并存：开发版需独立数据目录（`DUPLEX_DATA_DIR`）避开单例锁。2026-10-11 的 UX 细化批次（FB-002/003/004）**尚未进入安装版**。
