@@ -9,6 +9,7 @@ vi.mock('react', async (original) => {
   return {
     ...react,
     useEffect: (effect: () => void | (() => void)) => { hooks.effects.push(effect) },
+    useLayoutEffect: (effect: () => void | (() => void)) => { hooks.effects.push(effect) },
     useRef: (initial: unknown) => {
       const index = hooks.cursor++
       hooks.cells[index] ??= { current: initial }

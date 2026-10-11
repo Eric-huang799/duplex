@@ -163,6 +163,7 @@ export class AgentRuntime {
     // restored events keep their ids; continue numbering after them so React
     // keys never collide between the restored log and this run's new events
     this.bumpNextId()
+    this.bumpSeq()
     this.noticeTruncation(first)
   }
 
@@ -176,6 +177,26 @@ export class AgentRuntime {
       }
     }
     this.nextId = max + 1
+  }
+
+  /**
+   * Continue partID numbering after every restored event log. seq restarts at
+   * 0 on launch; without this, new events reuse u1/a2/... and the (kind,
+   * partID) collapse in pushUiEvent overwrites restored entries in place.
+   */
+  private bumpSeq(): void {
+    let max = 0
+    for (const s of this.sessions) {
+      for (const e of s.uiEvents) {
+        const pid = (e as { partID?: unknown }).partID
+        if (typeof pid !== 'string') continue
+        const m = /^[a-z]+(\d+)$/.exec(pid)
+        if (!m) continue
+        const n = Number(m[1])
+        if (Number.isFinite(n) && n > max) max = n
+      }
+    }
+    if (max >= this.seq) this.seq = max + 1
   }
 
   /**
@@ -306,6 +327,7 @@ export class AgentRuntime {
     this.currentId = s.id
     this.messages = s.messages
     this.uiLog = s.uiEvents
+    this.bumpSeq()
     this.noticeTruncation(s)
     const ev = {
       kind: 'session',

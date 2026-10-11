@@ -363,6 +363,40 @@ describe('built-in agent mode', () => {
     expect(events.some((e) => e.kind === 'text' && e.role === 'user')).toBe(true)
   })
 
+  it('continues partIDs after a restored log instead of overwriting it', async () => {
+    const persisted = [
+      {
+        id: 'restored',
+        title: '旧会话',
+        createdAt: 1,
+        updatedAt: 2,
+        messages: [
+          { role: 'user', content: '旧问题' },
+          { role: 'assistant', content: '旧回答' }
+        ],
+        uiEvents: [
+          { kind: 'text', role: 'user', partID: 'u1', text: '旧问题', id: 1, ts: 1 },
+          { kind: 'text', role: 'assistant', partID: 'a2', text: '旧回答', id: 2, ts: 2 }
+        ]
+      }
+    ]
+    const rt = new AgentRuntime(
+      (async () => ({ content: [] })) as never,
+      () => ({ baseUrl: 'https://x/v1', apiKey: 'k', model: 'm', protocol: 'openai-chat', authType: 'key', providerName: 't' }),
+      () => undefined,
+      (async () => ({ text: '新回答', toolCalls: [] })) as never,
+      { load: () => persisted, save: () => undefined } as never
+    )
+    await rt.send('新问题')
+    const evs = rt.events()
+    expect(evs.filter((e) => e.text === '旧问题')).toHaveLength(1)
+    expect(evs.filter((e) => e.text === '旧回答')).toHaveLength(1)
+    expect(evs.some((e) => e.text === '新问题')).toBe(true)
+    expect(evs.some((e) => e.text === '新回答')).toBe(true)
+    const newUser = evs.find((e) => e.text === '新问题') as { partID?: string }
+    expect(newUser.partID).not.toBe('u1')
+  })
+
   it('reports missing configuration without dropping the input', async () => {
     const events: Array<Record<string, unknown>> = []
     const rt = new AgentRuntime(
