@@ -144,10 +144,10 @@ try {
   await A.read('navigate', { tabId: tabA, url: `${base}/a` })
   let tabB
   if (!scrollOnly) {
-  await check('MCP new_tab stays background and binds its caller', async () => {
+  await check('MCP new_tab becomes the visible tab and binds its caller', async () => {
     tabB = JSON.parse(await B.read('new_tab', { url: `${base}/b` })).tabId
     const tabs = JSON.parse(await A.read('list_tabs'))
-    assert.equal(tabs.find((tab) => tab.active).id, tabA)
+    assert.equal(tabs.find((tab) => tab.active).id, tabB)
     assert.match(await B.read('snapshot'), /Fixture \/b/)
   })
   await panel(`window.cobrowse.tabAction({type:'switchTab',tabId:${tabB}})`)
@@ -165,6 +165,13 @@ try {
     const state = await panel('window.cobrowse.collaborationGet()')
     const page = state.tabs.find((tab) => tab.tabId === tabA)
     assert.equal(page.scrolling, true); assert.equal(page.paused, false)
+  })
+  await check('new_tab stays in the background while the human is scrolling', async () => {
+    await until(async () => await command('eval', `${base}/a`, 'window.trustedWheels > 0'))
+    const bgTab = JSON.parse(await B.read('new_tab', { url: `${base}/bg` })).tabId
+    const tabs = JSON.parse(await A.read('list_tabs'))
+    assert.equal(tabs.find((tab) => tab.active).id, tabA)
+    assert.equal(tabs.find((tab) => tab.id === bgTab).url, `${base}/bg`)
   })
   await check('AI element click and standard input preserve human focus and scroll', async () => {
     const before = await command('eval', `${base}/a`, '({y:scrollY,focus:document.activeElement.id})')

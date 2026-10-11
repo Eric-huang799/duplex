@@ -22,7 +22,8 @@ export const toolDefs: ToolDef[] = [
   },
   {
     name: 'new_tab',
-    description: 'Open a new tab in the browser, optionally navigating to a URL.',
+    description:
+      'Open a new tab in the browser, optionally navigating to a URL. The new tab becomes the visible tab unless the user is actively using the current page.',
     input: { url: z.string().optional().describe('URL to open; omit for a blank page') }
   },
   {

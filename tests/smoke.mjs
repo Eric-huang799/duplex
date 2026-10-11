@@ -190,11 +190,21 @@ async function main() {
 
   // navigate treats free text as a search query (network)
   const navSearch = await client.callTool({ name: 'navigate', arguments: { url: 'python 教程' } })
-  ok('navigate auto-searches free text', firstText(navSearch).includes('baidu.com'), firstText(navSearch).replace(/\s+/g, ' ').slice(0, 110))
+  const navSearchJson = JSON.parse(firstText(navSearch))
+  ok(
+    'navigate auto-searches free text',
+    /(baidu|bing|google)\.com/i.test(navSearchJson.url) &&
+      decodeURIComponent(navSearchJson.url).includes('python 教程'),
+    String(navSearchJson.url).replace(/\s+/g, ' ').slice(0, 110)
+  )
 
   const searchRes = await client.callTool({ name: 'search', arguments: { query: 'Duplex 测试' } })
-  const st2 = firstText(searchRes)
-  ok('search tool opens baidu', st2.includes('baidu.com'), st2.replace(/\s+/g, ' ').slice(0, 110))
+  const st2 = JSON.parse(firstText(searchRes))
+  ok(
+    'search tool opens the configured engine',
+    /(baidu|bing|google)\.com/i.test(st2.url) && decodeURIComponent(st2.url).includes('Duplex 测试'),
+    String(st2.url).replace(/\s+/g, ' ').slice(0, 110)
+  )
 
   // ---------- P1b: human annotation flow ----------
   console.log('smoke: annotation flow (draw -> question -> injection queue -> undo -> exit)')

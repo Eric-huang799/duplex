@@ -38,11 +38,11 @@ const interruptedText = (): ToolResult =>
 
 export function createToolExecutor(
   tabs: TabManager,
-  opts?: { getSearchEngine?: () => string | undefined }
+  opts?: { getSearchEngine?: () => string | undefined; isHumanBusy?: () => boolean }
 ): ToolExecutor {
   return async (name, args) => {
     try {
-      return await dispatch(tabs, name, args ?? {}, opts?.getSearchEngine)
+      return await dispatch(tabs, name, args ?? {}, opts?.getSearchEngine, opts?.isHumanBusy)
     } catch (e) {
       return errorText(`Error in ${name}: ${(e as Error)?.message ?? String(e)}`)
     }
@@ -53,7 +53,8 @@ async function dispatch(
   tabs: TabManager,
   name: string,
   args: Record<string, unknown>,
-  getEngine?: () => string | undefined
+  getEngine?: () => string | undefined,
+  isHumanBusy?: () => boolean
 ): Promise<ToolResult> {
   if (PAGE_TOOLS.has(name)) {
     const tab = tabs.requireTab(args.tabId as number | undefined)
@@ -80,16 +81,22 @@ async function dispatch(
           ? addr.url
           : searchUrl(addr.query, getEngine?.())
         : undefined
-      const tab = tabs.createTab(url, { background: true })
+      // Show the new page to the human unless they are actively using the
+      // current page (recent trusted input or an open annotation there).
+      const background = isHumanBusy?.() === true
+      const tab = tabs.createTab(url, background ? { background: true } : {})
       let loadTimedOut = false
       if (url) loadTimedOut = (await cdp.waitForLoad(tab)) === 'timeout'
       const wc = tab.view.webContents
+      const notes: string[] = []
+      if (background) notes.push('新标签已在后台打开（用户正在操作当前页面）；需要展示时可用 switch_tab')
+      if (loadTimedOut) notes.push('加载超时（15 秒），页面可能未加载完')
       return text(
         json({
           tabId: tab.id,
           url: wc.getURL(),
           title: wc.getTitle(),
-          ...(loadTimedOut ? { note: '加载超时（15 秒），页面可能未加载完' } : {})
+          ...(notes.length ? { note: notes.join('；') } : {})
         })
       )
     }

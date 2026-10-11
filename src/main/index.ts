@@ -152,6 +152,9 @@ collaboration.onChanged = (state) => { if (win && !win.isDestroyed()) win.webCon
 let currentPanelMode: 'opencode' | 'agent' | 'external' = 'agent'
 /** Per-tab annotation-mode state (mirrors each page overlay's own toggle). */
 const annotationTabState = new Map<number, boolean>()
+/** Last trusted human input per tab (timestamps only; drives the new_tab guard). */
+const lastHumanActivityAt = new Map<number, number>()
+const HUMAN_BUSY_MS = 2000
 /** elementCount by annotationId, attached to the submit-result ack. */
 const annotationElementCounts = new Map<string, number>()
 let lastActiveTabId: number | null = null
@@ -906,7 +909,16 @@ async function start(): Promise<void> {
   }
 
   const execute = createToolExecutor(tabs!, {
-    getSearchEngine: () => loadSettings().searchEngine
+    getSearchEngine: () => loadSettings().searchEngine,
+    // A new tab is shown to the human unless they are actively using the
+    // current page (fresh trusted input) or are annotating on it.
+    isHumanBusy: () => {
+      const active = tabs?.activeId
+      if (active == null) return false
+      if (annotationTabState.get(active)) return true
+      const last = lastHumanActivityAt.get(active) ?? 0
+      return Date.now() - last < HUMAN_BUSY_MS
+    }
   })
   const executeWithWake: ToolExecutor = async (name, args) => {
     if (isAiPaused()) {
@@ -1264,6 +1276,12 @@ function createWindow(): void {
         if (!restoringBrowserSession) browserSession?.update(list, tabs!.activeId)
         const liveTabIds = new Set(list.map(t => t.id))
         for (const state of collaboration.snapshot().tabs) if (!liveTabIds.has(state.tabId)) collaboration.forget(state.tabId)
+        // drop per-tab human-activity timestamps for tabs that are gone
+        if (lastHumanActivityAt.size > 0) {
+          for (const id of [...lastHumanActivityAt.keys()]) {
+            if (!liveTabIds.has(id)) lastHumanActivityAt.delete(id)
+          }
+        }
         // drop annotation state for tabs that are gone
         if (annotationTabState.size > 0) {
           const alive = new Set(list.map((t) => t.id))
@@ -2006,6 +2024,7 @@ function setupIpc(): void {
         const tabId = findTabIdBySender(_e.sender)
         if (tabId == null) return
         const activity = ev.activity ?? 'input'
+        lastHumanActivityAt.set(tabId, Date.now())
         const ownsTask = collaboration.hasTask(tabId)
         if (activity === 'scroll' || ownsTask) collaboration.humanActivity(tabId, activity)
         if (activity !== 'scroll' && ownsTask) abortOperation({ tabId, writesOnly: true })
