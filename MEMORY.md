@@ -53,4 +53,4 @@
 - **UX 细化批次（2026-10-11，FB-002/003/004 已修）**：①模型配置/Skills 面板点外部两段式收起（先取消表单、再点收起）；②DeepSeek 预设默认模型改 `deepseek-v4-flash`；③AI `new_tab` 默认前台展示，仅"当前页 2 秒内有真实人工输入或处于标注模式"时保持后台。commit `6aa1dc3` + `bd2c83a`。验证：303 单测、private-029 冒烟 12/12、dev 实例 UI 自动检查 5/5。smoke.mjs 标注段适配（FB-005）延后。**未发版本**——等用户实机试用后再定是否发补丁版。
 - **社区收录（2026-10-08）**：Duplex 已被 punkpeye/awesome-mcp-servers 正式收录（PR #15385 已 merge，GitHub API 实查）；freemcp.space 自动列出（未验证，claim/opt-out 可选）；README 中英双版已加两枚收录徽章并推送 GitHub master（commit `3d311e3`）。注：本机到 github.com 主站间歇性超时，push 可用 `git -c http.curloptResolve=github.com:443:<IP> -c http.version=HTTP/1.1`（**IP 会变**，先 curl 探测；常用候选 20.27.177.113 / 20.205.243.166 / 140.82.113.4 / 140.82.112.3）。
 - 待办（延后）：命令面板/标签搜索/会话恢复/阅读模式/标签固定/多选批量/书签 HTML 导入导出、token/费用统计 UI、响应式适配、触屏标注。
-- 本机已安装版为 **0.2.9**（2026-10-10 升级）；开发版与安装版可并存：开发版需独立数据目录（`DUPLEX_DATA_DIR`）避开单例锁。2026-10-11 的 UX 细化批次（FB-002/003/004）**尚未进入安装版**。
+- 本机已安装版为 **0.2.9 覆盖版**（2026-10-11 15:42 静默覆盖安装，内含 FB-002/003/004 修复）；开发版与安装版可并存：开发版需独立数据目录（`DUPLEX_DATA_DIR`）避开单例锁。本地打包遇 GitHub 下载超时时用 `ELECTRON_MIRROR`/`ELECTRON_BUILDER_BINARIES_MIRROR` 指向 npmmirror 可解。
