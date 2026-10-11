@@ -83,6 +83,7 @@ export default function App(): React.JSX.Element {
   const [platform] = useState(() => window.cobrowse.getPlatform())
   const [stopToast, setStopToast] = useState('')
   const [toast, setToast] = useState('')
+  const [toastLeaving, setToastLeaving] = useState(false)
   const [findResult, setFindResult] = useState<{ tabId: number; matches: number; activeMatch: number } | null>(null)
   const [loadError, setLoadError] = useState<LoadErrorInfo | null>(null)
   const [annotationActive, setAnnotationActive] = useState(false)
@@ -95,6 +96,7 @@ export default function App(): React.JSX.Element {
   const downloadsRef = useRef<DownloadRecord[]>([])
   const downloadsLoadedRef = useRef(false)
   const toastTimerRef = useRef<number | null>(null)
+  const toastLeaveTimerRef = useRef<number | null>(null)
   const stopToastTimerRef = useRef<number | null>(null)
   const loadErrTimerRef = useRef<number | null>(null)
   const pausedRef = useRef(false)
@@ -131,10 +133,17 @@ export default function App(): React.JSX.Element {
 
   const showToast = useCallback((text: string, ms = 3600): void => {
     setToast(text)
+    setToastLeaving(false)
     if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current)
+    if (toastLeaveTimerRef.current != null) window.clearTimeout(toastLeaveTimerRef.current)
+    toastLeaveTimerRef.current = window.setTimeout(() => {
+      toastLeaveTimerRef.current = null
+      setToastLeaving(true)
+    }, Math.max(0, ms - 160))
     toastTimerRef.current = window.setTimeout(() => {
       toastTimerRef.current = null
       setToast('')
+      setToastLeaving(false)
     }, ms)
   }, [])
 
@@ -696,6 +705,12 @@ export default function App(): React.JSX.Element {
               onNavigate={navigate}
               bookmarks={browserData.bookmarks}
               history={browserData.history}
+              onRemoveBookmark={(url) => {
+                void window.cobrowse.bookmarkRemove(url).then(() => window.cobrowse.browserData()).then(setBrowserData)
+              }}
+              onRemoveHistory={(url, visitedAt) => {
+                void window.cobrowse.historyRemove(url, visitedAt).then(() => window.cobrowse.browserData()).then(setBrowserData)
+              }}
             />
           )}
         </div>
@@ -743,7 +758,7 @@ export default function App(): React.JSX.Element {
       {(stopToast || toast || loadError) && (
         <div className="toast-stack">
           {stopToast && <div className="stop-toast">{stopToast}</div>}
-          {toast && <div className="stop-toast">{toast}</div>}
+          {toast && <div className={`stop-toast${toastLeaving ? ' leaving' : ''}`}>{toast}</div>}
           {loadError && (
             <div className="stop-toast" style={{ pointerEvents: 'auto' }}>
               页面加载失败：{loadError.desc}（{loadError.url}）

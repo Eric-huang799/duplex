@@ -371,6 +371,22 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: var(--shadow-pop);
+  transform-origin: top right;
+  animation: engine-menu-in 140ms cubic-bezier(0.2, 0.72, 0.25, 1) both;
+}
+
+.start-engine-menu.closing {
+  animation: engine-menu-out 110ms ease-in both;
+}
+
+@keyframes engine-menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes engine-menu-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-4px) scale(0.96); }
 }
 
 .start-engine-menu button {
@@ -446,7 +462,11 @@ body {
 .download-progress { height: 3px; margin-top: 5px; overflow: hidden; border-radius: 4px; background: var(--line); }
 .download-progress i { display: block; height: 100%; background: var(--accent); transition: width .2s linear; }
 .library-row-actions { display: flex; gap: 3px; }
-.findbar { position: absolute; z-index: 90; right: 16px; top: 92px; display: flex; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--menu-bg); box-shadow: var(--shadow-pop); }
+.findbar { position: absolute; z-index: 90; right: 16px; top: 92px; display: flex; gap: 6px; padding: 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--menu-bg); box-shadow: var(--shadow-pop); animation: findbar-arrive 140ms cubic-bezier(0.2, 0.72, 0.25, 1) both; }
+
+@keyframes findbar-arrive {
+  from { opacity: 0; transform: translateY(-6px); }
+}
 .findbar input { width: 220px; border: 0; outline: 0; background: transparent; color: var(--text-strong); user-select: text; }
 .findbar button { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; }
 
@@ -666,6 +686,8 @@ body {
 @keyframes brand-color-flow { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
 
 .start-search {
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -733,16 +755,22 @@ body {
   to { transform: translate3d(18%, 0, 0) rotate(-4deg); opacity: 0.42; }
 }
 
-.start-shortcuts { display: flex; justify-content: center; gap: 10px; width: min(670px, 86vw); margin-top: 4px; flex-wrap: wrap; }
-.start-shortcuts button { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 10px 6px; border: 1px solid transparent; border-radius: 12px; background: rgba(20, 26, 34, .25); color: var(--text-dim); font: inherit; cursor: pointer; }
-.start-shortcuts button:hover { border-color: var(--line); background: var(--bg-btn-hover); color: var(--text-strong); }
-.start-shortcuts button { transition: transform 180ms ease, border-color 180ms ease, background 180ms ease, color 180ms ease; }
-.start-shortcuts button:hover { transform: translateY(-3px); }
-.start-shortcuts button:hover .shortcut-icon { transform: rotate(-5deg) scale(1.06); }
-.shortcut-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--bg-btn); color: var(--accent); }
-.shortcut-icon { transition: transform 180ms ease; }
+.start-shortcuts { display: flex; justify-content: center; gap: 10px; width: min(670px, 86vw); margin-top: 4px; flex-wrap: wrap; position: relative; z-index: 10; }
+.shortcut { position: relative; animation: shortcut-arrive 380ms cubic-bezier(0.2, 0.72, 0.25, 1) both; }
+.shortcut-main { width: 96px; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 10px 6px; border: 1px solid transparent; border-radius: 12px; background: rgba(20, 26, 34, .25); color: var(--text-dim); font: inherit; cursor: pointer; transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1), border-color 180ms ease, background 180ms ease, color 180ms ease; }
+.shortcut:hover .shortcut-main { border-color: var(--line); background: var(--bg-btn-hover); color: var(--text-strong); transform: translateY(-3px) scale(1.06); }
+.shortcut:hover .shortcut-main:active { transform: translateY(-1px) scale(0.97); transition-duration: 100ms, 100ms, 100ms, 100ms; }
+.shortcut:hover .shortcut-icon { transform: rotate(-5deg) scale(1.06); }
+.shortcut-main > span:last-child { max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.shortcut-del { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: none; border-radius: 50%; background: var(--err); color: #fff; font-size: 12px; line-height: 1; cursor: pointer; opacity: 0; pointer-events: none; transform: scale(.85) rotate(-90deg); transition: opacity 140ms ease, transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.shortcut:hover .shortcut-del { opacity: 1; pointer-events: auto; transform: scale(1) rotate(0deg); }
+.shortcut-del:hover { filter: brightness(1.12); }
+.shortcut-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; background: var(--bg-btn); color: var(--accent); transition: transform 180ms ease; }
 .shortcut-icon img { width: 17px; height: 17px; object-fit: contain; }
-.start-shortcuts button > span:last-child { max-width: 82px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+
+@keyframes shortcut-arrive {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+}
 
 .start-engine {
   flex-shrink: 0;
@@ -752,6 +780,11 @@ body {
   border-radius: 7px;
   padding: 3px 9px;
   background: var(--bg-tab);
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 120ms ease;
+}
+
+.start-engine:active {
+  transform: scale(0.96);
 }
 
 /* ---------- right panel ---------- */
@@ -814,11 +847,16 @@ body {
   border-radius: 7px;
   cursor: pointer;
   flex-shrink: 0;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 120ms ease;
 }
 
 .session-btn:hover {
   background: var(--bg-btn-hover);
   color: var(--text-strong);
+}
+
+.session-btn:active {
+  transform: scale(0.95);
 }
 
 .session-btn-label {
@@ -978,6 +1016,18 @@ body {
   font-size: 12px;
 }
 
+.panel-list .msg,
+.panel-list .toolcard,
+.panel-list .reasoning,
+.panel-list .session-line,
+.panel-list .annot-card {
+  animation: item-arrive 170ms cubic-bezier(0.2, 0.72, 0.25, 1) both;
+}
+
+@keyframes item-arrive {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
 .panel-collapse {
   border: none;
   background: transparent;
@@ -986,11 +1036,16 @@ body {
   cursor: pointer;
   padding: 4px 6px;
   border-radius: 6px;
+  transition: background 140ms ease, color 140ms ease, transform 120ms ease;
 }
 
 .panel-collapse:hover {
   background: var(--bg-btn);
   color: var(--text-strong);
+}
+
+.panel-collapse:active {
+  transform: scale(0.92);
 }
 
 .panel-list {
@@ -1228,6 +1283,7 @@ body {
   background: var(--bg-elev);
   overflow: hidden;
   font-size: 12px;
+  transition: border-color 180ms ease, background 180ms ease;
 }
 
 .toolcard.error {
@@ -1247,6 +1303,7 @@ body {
   text-align: center;
   flex-shrink: 0;
   color: var(--text-dim);
+  transition: color 160ms ease;
 }
 
 .toolcard.running .tool-status {
@@ -1667,6 +1724,19 @@ body {
   padding: 0 16px;
   cursor: pointer;
   font-size: 13px;
+  transition: background 160ms ease, transform 120ms ease;
+}
+
+.send-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.import-btn {
+  transition: background 140ms ease, transform 120ms ease;
+}
+
+.import-btn:active {
+  transform: scale(0.96);
 }
 
 .send-btn:hover:not(:disabled) {
@@ -1913,6 +1983,11 @@ body {
   border-radius: 6px;
   cursor: pointer;
   flex-shrink: 0;
+  transition: background 140ms ease, color 140ms ease, transform 120ms ease;
+}
+
+.provider-mini:active {
+  transform: scale(0.94);
 }
 
 .provider-mini:hover {
@@ -2260,6 +2335,19 @@ button.start-engine:hover {
 .toast-stack .stop-toast {
   position: static;
   transform: none;
+  animation: toast-in 170ms cubic-bezier(0.2, 0.72, 0.25, 1) both;
+}
+
+.toast-stack .stop-toast.leaving {
+  animation: toast-out 150ms ease-in both;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+}
+
+@keyframes toast-out {
+  to { opacity: 0; transform: translateY(-6px); }
 }
 
 /* ---- emergency-stop latched banner ("neutral gear") ---- */
