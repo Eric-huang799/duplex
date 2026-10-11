@@ -33,12 +33,33 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
   const [copyMsg, setCopyMsg] = useState('')
   const delTimerRef = useRef<number | null>(null)
   const copyTimerRef = useRef<number | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const codexAskRef = useRef(false)
+  const onCloseRef = useRef(onClose)
+  codexAskRef.current = codexAsk
+  onCloseRef.current = onClose
 
   useEffect(() => {
     return () => {
       if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
       if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current)
     }
+  }, [])
+
+  // Clicking outside collapses the panel; a pending Codex confirmation is
+  // dismissed on the first outside click instead of losing both at once.
+  useEffect(() => {
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target instanceof Element ? event.target : null
+      if (target && (rootRef.current?.contains(target) || target.closest('[data-panel-toggle="skills"]'))) return
+      if (codexAskRef.current) {
+        setCodexAsk(false)
+        return
+      }
+      onCloseRef.current()
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
   }, [])
 
   useEffect(() => {
@@ -167,7 +188,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
   const claudeCount = skills.filter((s) => s.source === 'claude').length
 
   return (
-    <div className="providers-panel skills-panel">
+    <div className="providers-panel skills-panel" ref={rootRef}>
       <div className="providers-head">
         <span>Skills</span>
         <span className="dim">

@@ -614,10 +614,10 @@ export function SidePanel({
                 ? '内置模型就绪'
                 : '未配置模型'}
           </span>
-          <button className="session-btn" onClick={() => setShowProviders((v) => !v)} title="模型配置">
+          <button className="session-btn" data-panel-toggle="providers" onClick={() => setShowProviders((v) => !v)} title="模型配置">
             ⚙
           </button>
-          <button className="session-btn" onClick={() => setShowSkills((v) => !v)} title="Skills 与 CLI 接入">
+          <button className="session-btn" data-panel-toggle="skills" onClick={() => setShowSkills((v) => !v)} title="Skills 与 CLI 接入">
             ✦
           </button>
           <button className="session-btn" onClick={toggleAgentSessions} title="历史对话">

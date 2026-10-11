@@ -53,7 +53,7 @@ const PRESETS: Preset[] = [
     label: 'DeepSeek',
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
-    model: 'deepseek-chat'
+    model: 'deepseek-v4-flash'
   },
   {
     label: 'OpenAI',
@@ -109,11 +109,32 @@ export function ProvidersPanel({
     error?: string
   } | null>(null)
   const delTimerRef = useRef<number | null>(null)
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const editingRef = useRef<EditingState | null>(null)
+  const onCloseRef = useRef(onClose)
+  editingRef.current = editing
+  onCloseRef.current = onClose
 
   useEffect(() => {
     return () => {
       if (delTimerRef.current != null) window.clearTimeout(delTimerRef.current)
     }
+  }, [])
+
+  // Clicking outside collapses the panel. An open edit form is dismissed
+  // first, so a stray click cannot silently discard typed values in one step.
+  useEffect(() => {
+    const onDown = (event: MouseEvent): void => {
+      const target = event.target instanceof Element ? event.target : null
+      if (target && (rootRef.current?.contains(target) || target.closest('[data-panel-toggle="providers"]'))) return
+      if (editingRef.current) {
+        setEditing(null)
+        return
+      }
+      onCloseRef.current()
+    }
+    window.addEventListener('mousedown', onDown)
+    return () => window.removeEventListener('mousedown', onDown)
   }, [])
 
   const applyPreset = (preset: Preset): void => {
@@ -291,7 +312,7 @@ export function ProvidersPanel({
   const isNewForm = !!editing && !editing.id
 
   return (
-    <div className="providers-panel">
+    <div className="providers-panel" ref={rootRef}>
       <div className="providers-head">
         <span>模型配置</span>
         <span className="dim">{providers.length} 个</span>
@@ -437,7 +458,7 @@ export function ProvidersPanel({
             <input
               value={editing.model}
               spellCheck={false}
-              placeholder="deepseek-chat"
+              placeholder="deepseek-v4-flash"
               onChange={(e) => setEditing({ ...editing, model: e.target.value })}
             />
           </label>
