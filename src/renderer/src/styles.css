@@ -5,14 +5,16 @@
   /* surfaces (semi-transparent so the window acrylic shows through) */
   --bg-app: #0f1216;
   --bg-content: #0b0e12;
-  --bg-chrome: rgba(13, 16, 20, 0.66);
-  --bg-tab: rgba(255, 255, 255, 0.055);
-  --bg-tab-active: rgba(255, 255, 255, 0.14);
+  --bg-chrome: rgba(32, 34, 38, 0.94);
+  --bg-tab: rgba(255, 255, 255, 0.05);
+  --bg-tab-active: rgba(255, 255, 255, 0.13);
   --bg-tab-close-hover: rgba(120, 140, 160, 0.45);
   --bg-btn: rgba(255, 255, 255, 0.07);
   --bg-btn-hover: rgba(255, 255, 255, 0.13);
   --bg-input: rgba(13, 18, 23, 0.55);
   --bg-input-focus: rgba(17, 23, 30, 0.72);
+  --bg-omnibox: rgba(255, 255, 255, 0.07);
+  --bg-omnibox-focus: rgba(255, 255, 255, 0.11);
   --bg-panel: rgba(17, 21, 26, 0.66);
   --bg-elev: rgba(24, 30, 38, 0.82);
   --bg-elev-2: rgba(16, 21, 27, 0.75);
@@ -53,14 +55,16 @@
     color-scheme: light;
     --bg-app: #eef1f5;
     --bg-content: #eef1f5;
-    --bg-chrome: rgba(249, 250, 252, 0.70);
-    --bg-tab: rgba(30, 40, 55, 0.055);
-    --bg-tab-active: rgba(255, 255, 255, 0.95);
+    --bg-chrome: rgba(243, 245, 248, 0.94);
+    --bg-tab: rgba(30, 40, 55, 0.05);
+    --bg-tab-active: rgba(255, 255, 255, 0.98);
     --bg-tab-close-hover: rgba(120, 140, 160, 0.3);
     --bg-btn: rgba(30, 40, 55, 0.06);
     --bg-btn-hover: rgba(30, 40, 55, 0.12);
     --bg-input: rgba(255, 255, 255, 0.65);
     --bg-input-focus: rgba(255, 255, 255, 0.92);
+    --bg-omnibox: rgba(30, 40, 55, 0.06);
+    --bg-omnibox-focus: rgba(255, 255, 255, 0.92);
     --bg-panel: rgba(248, 250, 252, 0.70);
     --bg-elev: rgba(255, 255, 255, 0.88);
     --bg-elev-2: rgba(255, 255, 255, 0.72);
@@ -158,9 +162,9 @@ body {
 /* ---------- tab bar ---------- */
 
 .tabbar {
-  height: 40px;
+  height: 38px;
   display: flex;
-  align-items: center;
+  align-items: flex-end; /* Edge: tabs sit flush on the toolbar row */
   gap: 4px;
   padding: 0 8px;
   background: var(--bg-chrome);
@@ -181,14 +185,19 @@ body {
   flex: 0 0 auto;
   min-width: 92px;
   max-width: 220px;
-  height: 30px;
+  height: 32px;
   padding: 0 8px 0 10px;
-  border-radius: 8px;
-  background: var(--bg-tab);
+  border-radius: 9px 9px 0 0;
+  background: transparent; /* Edge: inactive tabs appear on hover only */
+  position: relative;
   cursor: default;
   color: var(--text-dim);
   white-space: nowrap;
   transition: background 140ms ease;
+}
+
+.tab:hover:not(.active) {
+  background: var(--bg-tab);
 }
 
 .tab-new {
@@ -215,7 +224,27 @@ body {
 .tab.active {
   background: var(--bg-tab-active);
   color: var(--text-strong);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* Edge-style flare: the active tab melts into the toolbar below */
+.tab.active::before,
+.tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  width: 9px;
+  height: 9px;
+  pointer-events: none;
+}
+
+.tab.active::before {
+  left: -9px;
+  background: radial-gradient(circle 9px at 0 0, transparent 8.5px, var(--bg-tab-active) 9px);
+}
+
+.tab.active::after {
+  right: -9px;
+  background: radial-gradient(circle 9px at 100% 0, transparent 8.5px, var(--bg-tab-active) 9px);
 }
 
 .tab-title {
@@ -262,34 +291,35 @@ body {
   color: var(--text-dim);
   font-size: 18px;
   cursor: pointer;
-  padding: 0 10px;
-  height: 30px;
-  border-radius: 8px;
+  padding: 0 9px;
+  height: 28px;
+  margin-bottom: 2px;
+  border-radius: 7px;
 }
 
 .tab-new:hover {
-  background: var(--bg-btn);
+  background: var(--bg-btn-hover);
   color: var(--text-strong);
 }
 
 /* ---------- toolbar ---------- */
 
 .toolbar {
-  height: 44px;
+  height: 46px;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px 6px;
+  padding: 4px 10px 8px;
   background: var(--bg-chrome);
   flex-shrink: 0;
 }
 
 .tb-btn {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border: none;
   border-radius: 8px;
-  background: var(--bg-btn);
+  background: transparent; /* Edge: icon buttons appear on hover only */
   color: var(--text);
   font-size: 14px;
   cursor: pointer;
@@ -307,25 +337,30 @@ body {
 
 .urlbar {
   flex: 1;
-  height: 32px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg-input);
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: 17px;
+  background: var(--bg-omnibox);
   color: var(--text-strong);
   padding: 0 12px;
   font-size: 13px;
   outline: none;
   user-select: text;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.urlbar:hover:not(:focus) {
+  background: var(--bg-btn-hover);
 }
 
 .urlbar:focus {
   border-color: var(--accent-border);
-  background: var(--bg-input-focus);
+  background: var(--bg-omnibox-focus);
 }
 
 .address-engine { margin-left: -92px; z-index: 2; flex: 0 0 86px; }
-.address-engine .engine-trigger { width: 86px; padding: 0 4px; overflow: hidden; background: transparent; color: var(--text-faint); font-size: 10px; white-space: nowrap; }
-.urlbar { padding-right: 96px; }
+.address-engine .engine-trigger { width: 82px; height: 26px; margin-left: 2px; padding: 0 4px; overflow: hidden; background: transparent; color: var(--text-faint); font-size: 10px; white-space: nowrap; border-radius: 13px; }
+.urlbar { padding-right: 92px; }
 .bookmark-button { color: var(--text-dim); font-size: 19px; }
 .bookmark-button.is-bookmarked { color: #e6b84e; }
 .tools-trigger { font-weight: 700; letter-spacing: 1px; }
@@ -726,6 +761,25 @@ body {
 
 .start-search input::placeholder {
   color: var(--text-faint);
+}
+
+.start-search .omnibox-pop {
+  top: calc(100% + 10px);
+  border-radius: 14px;
+  background: var(--menu-bg);
+}
+
+.month-chips.year-chips {
+  margin: 0 auto 6px;
+}
+
+.month-chips.year-chips button {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.month-chips.year-chips button.on {
+  color: var(--accent);
 }
 
 .startpage::after {
@@ -2821,6 +2875,38 @@ button.start-engine:hover {
 .library-group-head:hover {
   color: var(--text-strong);
 }
+/* ---- year/month filter chips (history) ---- */
+.month-chips {
+  width: min(850px, 100%);
+  margin: 0 auto 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.month-chips button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.month-chips button:hover {
+  color: var(--text-strong);
+}
+
+.month-chips button.on {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+
 
 /* ---- omnibox polish (Chrome-style details) ---- */
 .omnibox-pop,
