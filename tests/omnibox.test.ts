@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildOmniboxSuggestions,
+  filterHistoryByMonth,
   formatVisitTime,
   groupHistoryByDay,
+  listHistoryMonths,
   splitHighlight,
   stripUrlForDisplay
 } from '../src/shared/omnibox'
@@ -156,5 +158,49 @@ describe('groupHistoryByDay', () => {
     const groups = groupHistoryByDay(all, now)
     const total = groups.reduce((n, g) => n + g.records.length, 0)
     expect(total).toBe(2)
+  })
+})
+
+describe('history month filter', () => {
+  const day = (y: number, m: number, d: number): number => new Date(y, m - 1, d, 12).getTime()
+  const rows = [
+    h('https://oct.example/', 'oct', day(2026, 10, 9)),
+    h('https://sep.example/', 'sep', day(2026, 9, 21)),
+    h('https://sep2.example/', 'sep2', day(2026, 9, 2)),
+    h('https://may.example/', 'may', day(2025, 5, 14))
+  ]
+
+  it('lists distinct months newest-first with explicit year labels', () => {
+    expect(listHistoryMonths(rows)).toEqual([
+      { key: '2026-10', label: '2026年10月' },
+      { key: '2026-09', label: '2026年9月' },
+      { key: '2025-05', label: '2025年5月' }
+    ])
+  })
+
+  it('deduplicates repeated months and tolerates invalid timestamps', () => {
+    const mixed = [
+      ...rows,
+      h('https://x.example/', 'x', day(2026, 10, 1)),
+      h('https://bad.example/', 'bad', Number.NaN)
+    ]
+    expect(listHistoryMonths(mixed).map((m) => m.key)).toEqual(['2026-10', '2026-09', '2025-05'])
+  })
+
+  it('empty history offers no month options', () => {
+    expect(listHistoryMonths([])).toEqual([])
+  })
+
+  it('filters one month preserving order; "all" passes the list through', () => {
+    expect(filterHistoryByMonth(rows, '2026-09').map((r) => r.url)).toEqual([
+      'https://sep.example/',
+      'https://sep2.example/'
+    ])
+    expect(filterHistoryByMonth(rows, 'all')).toBe(rows)
+  })
+
+  it('keeps only records whose month matches the key', () => {
+    expect(filterHistoryByMonth(rows, '2025-05').map((r) => r.title)).toEqual(['may'])
+    expect(filterHistoryByMonth(rows, '2026-10')).toHaveLength(1)
   })
 })

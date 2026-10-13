@@ -193,3 +193,35 @@ export function groupHistoryByDay(history: HistoryRecord[], now = new Date()): H
   }
   return [...groups.values()].sort((a, b) => b.records[0].visitedAt - a.records[0].visitedAt)
 }
+
+export interface HistoryMonth {
+  /** Bucket key in 'YYYY-MM' form. */
+  key: string
+  /** Chip label, always year-qualified: 'YYYY年M月'. */
+  label: string
+}
+
+function monthKeyOf(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/** Distinct months that contain visits, newest first; labels always carry the year. */
+export function listHistoryMonths(history: HistoryRecord[]): HistoryMonth[] {
+  const seen = new Set<string>()
+  for (const r of history) {
+    if (Number.isFinite(r.visitedAt)) seen.add(monthKeyOf(r.visitedAt))
+  }
+  return [...seen]
+    .sort((a, b) => (a < b ? 1 : -1))
+    .map((key) => {
+      const [y, m] = key.split('-')
+      return { key, label: `${y}年${Number(m)}月` }
+    })
+}
+
+/** Keep only the visits of one month bucket; 'all' passes the list through untouched. */
+export function filterHistoryByMonth(history: HistoryRecord[], key: string): HistoryRecord[] {
+  if (key === 'all') return history
+  return history.filter((r) => Number.isFinite(r.visitedAt) && monthKeyOf(r.visitedAt) === key)
+}
