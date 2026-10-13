@@ -234,7 +234,7 @@ export default function App(): React.JSX.Element {
       if (action === 'togglePanel') toggleAI()
       if (action === 'annotationToggle') void window.cobrowse.annotationToggle()
       if (action === 'menu:library-bookmarks') setLibrary('bookmarks')
-      if (action === 'menu:library-history') setLibrary('history')
+      if (action === 'menu:library-history') window.dispatchEvent(new Event('duplex:open-recent-history'))
       if (action === 'menu:library-downloads') setLibrary('downloads')
       if (action === 'menu:stopkeys') window.dispatchEvent(new Event('duplex:open-stopkeys'))
       if (action === 'menu:shortcuts') window.dispatchEvent(new Event('duplex:open-shortcuts'))
@@ -650,7 +650,10 @@ export default function App(): React.JSX.Element {
           active={activeTab}
           onAction={(a, url, tabId) => {
             if (a === 'navigate' && url) navigate(url, tabId)
-            else if (a === 'home') navigate('about:blank', tabId)
+            else if (a === 'home') {
+              setLibrary(null)
+              navigate('about:blank', tabId)
+            }
             else void window.cobrowse.tabAction({ type: a, url, tabId: activeTabId ?? undefined })
           }}
           onStopKeysChanged={(keys) => setStopKeys(keys)}

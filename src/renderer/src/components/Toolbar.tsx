@@ -300,6 +300,13 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     }
   }, [histOpen])
 
+  // Menu "浏览记录" opens the small recent-history popup (Chrome/Edge flow), never the full page directly.
+  useEffect(() => {
+    const onOpenRecent = (): void => setHistOpen(true)
+    window.addEventListener('duplex:open-recent-history', onOpenRecent)
+    return () => window.removeEventListener('duplex:open-recent-history', onOpenRecent)
+  }, [])
+
   const submit = (): void => {
     const v = input.trim()
     if (v) onAction('navigate', v, editTabRef.current)
@@ -358,7 +365,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
       <button className="tb-btn" disabled={!active?.canGoBack} onClick={() => onAction('back')} title="后退"><Icon name="back" /></button>
       <button className="tb-btn" disabled={!active?.canGoForward} onClick={() => onAction('forward')} title="前进"><Icon name="forward" /></button>
       <button className="tb-btn" disabled={noPage} onClick={() => onAction(active?.loading ? 'stopLoad' : 'reload')} title={active?.loading ? '停止加载' : '刷新'}><Icon name={active?.loading ? 'stop' : 'reload'} /></button>
-      <button className="tb-btn tb-home" disabled={noPage} onClick={() => onAction('home')} title="回到主页（起始页）"><Icon name="home" /></button>
+      <button className="tb-btn tb-home" onClick={() => onAction('home')} title="回到主页（起始页）"><Icon name="home" /></button>
       <div className="urlbar-wrap">
         <input
           className="urlbar"
