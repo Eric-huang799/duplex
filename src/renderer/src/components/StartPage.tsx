@@ -1,5 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BookmarkRecord, HistoryRecord } from '../../../shared/protocol'
+import { buildOmniboxSuggestions, splitHighlight, stripUrlForDisplay, type OmniboxSuggestion } from '../../../shared/omnibox'
+
+/** Render text with the query's first occurrence bolded (Chrome suggestion style). */
+function renderHighlight(text: string, query: string): React.ReactNode[] {
+  return splitHighlight(text, query).map((seg, i) =>
+    seg.hit ? <b key={i}>{seg.t}</b> : <span key={i}>{seg.t}</span>
+  )
+}
 
 interface Props {
   onNavigate: (value: string) => void
@@ -33,6 +41,8 @@ export function StartPage({
   const deletingRef = useRef(false)
   const initialMountRef = useRef(true)
   const menuTimerRef = useRef<number | null>(null)
+  const [sugs, setSugs] = useState<OmniboxSuggestion[]>([])
+  const [hl, setHl] = useState(-1)
 
   useEffect(() => {
     void window.cobrowse.searchEngineGet().then((s) => {
@@ -172,6 +182,32 @@ export function StartPage({
 
   const historyBase = ENTER_BASE_MS + Math.min(bookmarks.length, 6) * ENTER_STAGGER_MS
 
+  const refreshSugs = (v: string): void => {
+    const q = v.trim()
+    if (!q) {
+      setSugs([])
+      setHl(-1)
+      return
+    }
+    const base = buildOmniboxSuggestions(v, history, bookmarks, { engineName })
+    if (base.length === 1) {
+      setSugs([...base, ...buildOmniboxSuggestions('', history, [], { recentLimit: 4 })])
+    } else {
+      setSugs(base)
+    }
+    setHl(-1)
+  }
+
+  const closeSugs = (): void => {
+    setSugs([])
+    setHl(-1)
+  }
+
+  const pickSug = (s: OmniboxSuggestion): void => {
+    onNavigate(s.kind === 'search' ? value.trim() : s.url)
+    closeSugs()
+  }
+
   const hh = String(now.getHours()).padStart(2, '0')
   const mm = String(now.getMinutes()).padStart(2, '0')
   const dateStr = now.toLocaleDateString('zh-CN', {
@@ -223,9 +259,34 @@ export function StartPage({
             value={value}
             spellCheck={false}
             placeholder="搜索或输入网址"
-            onChange={(e) => setValue(e.target.value)}
+            aria-autocomplete="list"
+            onChange={(e) => {
+              setValue(e.target.value)
+              refreshSugs(e.target.value)
+            }}
+            onFocus={() => refreshSugs(value)}
+            onBlur={() => closeSugs()}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) submit()
+              if (e.key === 'ArrowDown' && sugs.length > 0) {
+                e.preventDefault()
+                setHl((h) => Math.min(h + 1, sugs.length - 1))
+                return
+              }
+              if (e.key === 'ArrowUp' && sugs.length > 0) {
+                e.preventDefault()
+                setHl((h) => Math.max(h - 1, -1))
+                return
+              }
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+                const pick = hl >= 0 ? sugs[hl] : null
+                if (pick && pick.kind !== 'search') {
+                  onNavigate(pick.url)
+                  closeSugs()
+                  ;(e.target as HTMLInputElement).blur()
+                } else submit()
+                return
+              }
+              if (e.key === 'Escape' && sugs.length > 0) closeSugs()
             }}
           />
           <div className="start-engine-wrap">
@@ -256,6 +317,32 @@ export function StartPage({
               </div>
             )}
           </div>
+          {sugs.length > 0 && (
+            <div className="omnibox-pop start-search-pop" role="listbox">
+              {sugs.map((s, i) => (
+                <button
+                  type="button"
+                  key={`${s.kind}-${i}-${s.url}`}
+                  role="option"
+                  aria-selected={i === hl}
+                  className={`omnibox-item${i === hl ? ' on' : ''}`}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseEnter={() => setHl(i)}
+                  onClick={() => pickSug(s)}
+                >
+                  <span className="omnibox-ico">
+                    {s.kind === 'search'
+                      ? '🔍'
+                      : s.favicon
+                        ? <img className="omnibox-fav" src={s.favicon} alt="" onError={(ev) => { ev.currentTarget.style.visibility = 'hidden' }} />
+                        : '🌐'}
+                  </span>
+                  <span className="omnibox-label">{renderHighlight(s.label, value.trim())}</span>
+                  <span className="omnibox-sub">{s.kind === 'search' ? s.sub : renderHighlight(stripUrlForDisplay(s.sub), value.trim())}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {bookmarks.length > 0 && (
           <div className="start-shortcuts">
