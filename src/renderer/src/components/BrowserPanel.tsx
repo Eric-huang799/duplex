@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { BrowserDataSnapshot, DownloadRecord, HistoryRecord } from '../../../shared/protocol'
-import { groupHistoryByDay } from '../../../shared/omnibox'
+import { filterHistoryByMonth, groupHistoryByDay, listHistoryMonths } from '../../../shared/omnibox'
 
 type Section = 'bookmarks' | 'history' | 'downloads'
 type Bookmark = BrowserDataSnapshot['bookmarks'][number]
@@ -113,6 +113,8 @@ export function BrowserPanel(props: Props): React.JSX.Element {
   const [clearStage, setClearStage] = useState(0)
   const [sort, setSort] = useState<BookmarkSort>('recent')
   const [folderFilter, setFolderFilter] = useState<string | null>(null)
+  const [monthFilter, setMonthFilter] = useState('all')
+  const [yearFilter, setYearFilter] = useState('all')
   const [hovered, setHovered] = useState<string | null>(null)
   const [newOpen, setNewOpen] = useState(false)
   const [newTitle, setNewTitle] = useState('')
@@ -133,17 +135,30 @@ export function BrowserPanel(props: Props): React.JSX.Element {
 
   const items = useMemo(() => {
     if (props.section === 'history')
-      return props.data.history.slice().reverse().filter((x) => `${x.title} ${x.url}`.toLowerCase().includes(q))
+      return filterHistoryByMonth(props.data.history.slice().reverse(), monthFilter).filter((x) =>
+        `${x.title} ${x.url}`.toLowerCase().includes(q)
+      )
     if (props.section === 'downloads')
       return props.downloads.filter((x) => `${x.filename} ${x.url}`.toLowerCase().includes(q))
     return []
-  }, [props.section, props.data, props.downloads, q])
+  }, [props.section, props.data, props.downloads, q, monthFilter])
 
   // Chrome-style day/month grouping for the full history page.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const historyGroups = useMemo(
     () => (props.section === 'history' ? groupHistoryByDay(items as HistoryRecord[]) : []),
     [props.section, items]
+  )
+
+  // Year/month chips come from the full history so text search never reshuffles them.
+  const historyMonths = useMemo(
+    () => (props.section === 'history' ? listHistoryMonths(props.data.history) : []),
+    [props.section, props.data.history]
+  )
+
+  const historyYears = useMemo(
+    () => [...new Set(historyMonths.map((m) => m.key.slice(0, 4)))].sort((a, b) => (a < b ? 1 : -1)),
+    [historyMonths]
   )
 
   const renderHistoryRow = (row: HistoryRecord): React.JSX.Element => {
@@ -188,6 +203,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     setDeleteFolderConfirm(null)
     setEditUrl(null)
     setNewOpen(false)
+    setMonthFilter('all')
   }, [props.section])
 
   useEffect(() => {
@@ -753,6 +769,49 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             </button>
           )}
         </div>
+        {props.section === 'history' && historyYears.length > 1 && (
+          <div className="month-chips year-chips">
+            <button
+              type="button"
+              className={yearFilter === 'all' ? 'on' : ''}
+              onClick={() => setYearFilter('all')}
+            >
+              全部年份
+            </button>
+            {historyYears.map((y) => (
+              <button
+                key={y}
+                type="button"
+                className={yearFilter === y ? 'on' : ''}
+                onClick={() => {
+                  setYearFilter(y)
+                  setMonthFilter((cur) => (cur !== 'all' && cur.startsWith(y) ? cur : 'all'))
+                }}
+              >
+                {y}年
+              </button>
+            ))}
+          </div>
+        )}
+        {props.section === 'history' && historyMonths.length > 0 && (
+          <div className="month-chips">
+            <button type="button" className={monthFilter === 'all' ? 'on' : ''} onClick={() => setMonthFilter('all')}>
+              全部
+            </button>
+            {historyMonths
+              .filter((m) => yearFilter === 'all' || m.key.startsWith(yearFilter))
+              .map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  className={monthFilter === m.key ? 'on' : ''}
+                  onClick={() => setMonthFilter(monthFilter === m.key ? 'all' : m.key)}
+                >
+                  {m.label}
+                </button>
+              ))}
+          </div>
+        )}
         <div className="library-list">
           {items.length === 0 ? emptyState : props.section === 'history' ? (
             historyGroups.map((g) => (
