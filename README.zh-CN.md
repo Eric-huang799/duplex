@@ -3,9 +3,11 @@
 [![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
 [![Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex/badges/score.svg)](https://glama.ai/mcp/servers/Eric-huang799/duplex)
 [![awesome-mcp-servers](https://img.shields.io/badge/awesome--mcp--servers-listed-blue)](https://github.com/punkpeye/awesome-mcp-servers)
+[![TensorBlock](https://img.shields.io/badge/TensorBlock-listed-green)](https://github.com/TensorBlock/awesome-mcp-servers)
+[![Awesome-MCP-ZH](https://img.shields.io/badge/Awesome--MCP--ZH-listed-red)](https://github.com/yzfly/Awesome-MCP-ZH)
 [![freemcp.space](https://img.shields.io/badge/freemcp.space-listed-orange)](https://freemcp.space/featured/duplex)
 
-> **收录与展示**：[awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) · [freemcp.space](https://freemcp.space/featured/duplex) · [Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex)
+> **收录与展示**：[awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) · [TensorBlock](https://github.com/TensorBlock/awesome-mcp-servers) · [Awesome-MCP-ZH](https://github.com/yzfly/Awesome-MCP-ZH) · [freemcp.space](https://freemcp.space/featured/duplex) · [Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex)
 
 <p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex 吉祥物"></p>
 
