@@ -34,7 +34,7 @@
 
 ![Controlling Excel for the web with Duplex](docs/screenshots/excel-web-demo.png)
 
-*Controlling Microsoft Excel for the web — no dedicated spreadsheet-editing skill installed; only the stock API and a few simple automation skills* 😅
+*Controlling Microsoft Excel for the web — no dedicated spreadsheet-editing skill installed; only the stock API and a few simple automation skills* 
 
 > **A feasibility demo, not a recommended workflow.** With no task-specific skill to lean on, Duplex worked with the stock API plus a few simple automation skills alone — improvising clipboard read/write channels, DOM probing and the like to push a whole grade sheet into Excel for the web. It got there, but the process wasted a lot of time and tokens. 😅
 
