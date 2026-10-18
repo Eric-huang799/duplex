@@ -1,6 +1,7 @@
 import { app, shell, type DownloadItem, type Session } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
+import { mt } from './i18n'
 import type { BrowserDataStore, DownloadRecord } from './browser-data'
 
 /** Structured result shared by downloadsOpen / downloadsReveal (surfaced over IPC). */
@@ -101,9 +102,9 @@ export class DownloadManager {
 
   async open(id: string): Promise<DownloadActionResult> {
     const row = this.rows.find((item) => item.id === id && item.state === 'completed')
-    if (!row) return { ok: false, error: '未找到该下载记录（可能尚未完成）' }
+    if (!row) return { ok: false, error: mt('dl.notFoundPending') }
     if (!row.path || !fs.existsSync(row.path)) {
-      return { ok: false, error: '文件已被移动或删除：' + (row.path || row.filename) }
+      return { ok: false, error: mt('dl.fileMoved', { path: row.path || row.filename }) }
     }
     try {
       // openPath resolves to '' on success, or a human-readable error string.
@@ -111,21 +112,21 @@ export class DownloadManager {
       if (message) return { ok: false, error: message }
       return { ok: true }
     } catch (e) {
-      return { ok: false, error: (e as Error)?.message ?? '打开文件失败' }
+      return { ok: false, error: (e as Error)?.message ?? mt('dl.openFailed') }
     }
   }
 
   reveal(id: string): DownloadActionResult {
     const row = this.rows.find((item) => item.id === id)
-    if (!row) return { ok: false, error: '未找到该下载记录' }
+    if (!row) return { ok: false, error: mt('dl.notFound') }
     if (!row.path || !fs.existsSync(row.path)) {
-      return { ok: false, error: '文件已被移动或删除：' + (row.path || row.filename) }
+      return { ok: false, error: mt('dl.fileMoved', { path: row.path || row.filename }) }
     }
     try {
       shell.showItemInFolder(row.path)
       return { ok: true }
     } catch (e) {
-      return { ok: false, error: (e as Error)?.message ?? '定位文件失败' }
+      return { ok: false, error: (e as Error)?.message ?? mt('dl.revealFailed') }
     }
   }
 }

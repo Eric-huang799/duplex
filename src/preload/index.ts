@@ -350,6 +350,15 @@ const api = {
       engine: string
       engines: Array<{ key: string; name: string }>
     }>,
+  languageGet: () =>
+    ipcRenderer.invoke('app:language-get') as Promise<{ language: string; systemLocale: string }>,
+  languageSet: (language: string) =>
+    ipcRenderer.invoke('app:language-set', language) as Promise<{ ok: boolean; error?: string }>,
+  onLanguageChanged: (cb: (language: string) => void): (() => void) => {
+    const listener = (_e: unknown, language: string): void => cb(language)
+    ipcRenderer.on('app:language-changed', listener)
+    return () => ipcRenderer.removeListener('app:language-changed', listener)
+  },
   searchEngineSet: (engine: string) =>
     ipcRenderer.invoke('search:engine-set', engine) as Promise<{ ok: boolean; error?: string }>,
   agentsStartSession: (toolId: string, message: string) =>

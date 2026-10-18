@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../i18n'
+import type { I18nKey } from '../../../shared/i18n'
+
+type TFn = (key: I18nKey, vars?: Record<string, string | number>) => string
 
 export type PermissionState = 'pending' | 'allowed' | 'denied' | 'expired' | 'stopped'
 
@@ -35,29 +39,29 @@ export function ShieldIcon({ className }: { className?: string }): React.JSX.Ele
   )
 }
 
-const KIND_LABEL: Record<NonNullable<PermissionRequest['kind']>, string> = {
-  write: '写入文件',
-  command: '执行命令',
-  script: '运行脚本'
+function kindLabel(t: TFn, kind: NonNullable<PermissionRequest['kind']>): string {
+  if (kind === 'write') return t('permission.kindWrite')
+  if (kind === 'script') return t('permission.kindScript')
+  return t('permission.kindCommand')
 }
 
-function pendingTitle(tool: string | undefined, kind: PermissionRequest['kind']): string {
-  if (kind === 'write') return 'AI 请求写入文件'
-  if (kind === 'script') return 'AI 请求运行脚本'
-  if (kind === 'command') return 'AI 请求执行命令'
-  if (tool === 'write_file') return 'AI 请求写入文件'
-  if (tool === 'run_skill_script') return 'AI 请求运行脚本'
-  return 'AI 请求执行命令'
+function pendingTitle(t: TFn, tool: string | undefined, kind: PermissionRequest['kind']): string {
+  if (kind === 'write') return t('permission.requestWrite')
+  if (kind === 'script') return t('permission.requestScript')
+  if (kind === 'command') return t('permission.requestCommand')
+  if (tool === 'write_file') return t('permission.requestWrite')
+  if (tool === 'run_skill_script') return t('permission.requestScript')
+  return t('permission.requestCommand')
 }
 
-const RESOLVED: Record<
-  Exclude<PermissionState, 'pending'>,
-  { cls: string; text: string }
-> = {
-  allowed: { cls: 'ok', text: '已允许执行' },
-  denied: { cls: 'dim', text: '已拒绝' },
-  expired: { cls: 'dim', text: '超时未确认 · 已自动拒绝' },
-  stopped: { cls: 'warn', text: '已急停 · 自动拒绝' }
+function resolvedMeta(
+  t: TFn,
+  state: Exclude<PermissionState, 'pending'>
+): { cls: string; text: string } {
+  if (state === 'allowed') return { cls: 'ok', text: t('permission.allowed') }
+  if (state === 'denied') return { cls: 'dim', text: t('permission.denied') }
+  if (state === 'expired') return { cls: 'dim', text: t('permission.expired') }
+  return { cls: 'warn', text: t('permission.stopped') }
 }
 
 function firstLine(text: string): string {
@@ -72,6 +76,7 @@ export function PermissionCard({
   req: PermissionRequest
   onRespond: (id: number, ok: boolean) => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   const ref = useRef<HTMLDivElement>(null)
   const [cmdExpanded, setCmdExpanded] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
@@ -94,7 +99,7 @@ export function PermissionCard({
   }, [isPending, expiresAt])
 
   if (req.state !== 'pending') {
-    const meta = RESOLVED[req.state]
+    const meta = resolvedMeta(t, req.state)
     return (
       <div className={`permission-card resolved ${meta.cls}`}>
         <ShieldIcon className="permission-shield" />
@@ -111,7 +116,7 @@ export function PermissionCard({
     <div
       className="permission-card pending"
       role="group"
-      aria-label={`权限请求：${pendingTitle(req.tool, req.kind)}，等待你的许可`}
+      aria-label={t('permission.aria', { title: pendingTitle(t, req.tool, req.kind) })}
       tabIndex={0}
       ref={ref}
       onKeyDown={(e) => {
@@ -124,8 +129,8 @@ export function PermissionCard({
     >
       <div className="permission-head">
         <ShieldIcon className="permission-shield" />
-        <span className="permission-title">{pendingTitle(req.tool, req.kind)}</span>
-        {req.kind && <span className="permission-chip kind">{KIND_LABEL[req.kind]}</span>}
+        <span className="permission-title">{pendingTitle(t, req.tool, req.kind)}</span>
+        {req.kind && <span className="permission-chip kind">{kindLabel(t, req.kind)}</span>}
         {req.tool && <span className="permission-chip">{req.tool}</span>}
       </div>
       <div className="permission-cmd-wrap">
@@ -136,7 +141,7 @@ export function PermissionCard({
             className="permission-more"
             onClick={() => setCmdExpanded((v) => !v)}
           >
-            {cmdExpanded ? '收起全文' : '展开全文'}
+            {cmdExpanded ? t('permission.collapseCmd') : t('permission.expandCmd')}
           </button>
         )}
       </div>
@@ -147,27 +152,27 @@ export function PermissionCard({
             className="permission-more"
             onClick={() => setShowPreview((v) => !v)}
           >
-            {showPreview ? '收起内容' : '查看内容'}
+            {showPreview ? t('permission.collapseContent') : t('permission.showContent')}
           </button>
           {showPreview && <pre className="permission-preview">{req.preview}</pre>}
         </div>
       )}
-      {req.cwd && <div className="permission-cwd">工作目录 · {req.cwd}</div>}
+      {req.cwd && <div className="permission-cwd">{t('permission.cwd', { cwd: req.cwd })}</div>}
       <div className="permission-actions">
         <span className="permission-hint">
           {remaining != null
-            ? `剩余 ${remaining} 秒自动拒绝 · 按 Esc 快速拒绝`
-            : '按 Esc 快速拒绝'}
+            ? t('permission.autoReject', { n: remaining })
+            : t('permission.escReject')}
         </span>
         <button type="button" className="permission-btn" onClick={() => onRespond(req.id, false)}>
-          拒绝
+          {t('permission.deny')}
         </button>
         <button
           type="button"
           className="permission-btn primary"
           onClick={() => onRespond(req.id, true)}
         >
-          允许执行
+          {t('permission.allow')}
         </button>
       </div>
     </div>

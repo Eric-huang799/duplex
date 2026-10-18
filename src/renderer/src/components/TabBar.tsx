@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import type { TabInfo } from '../../../shared/protocol'
+import { useI18n } from '../i18n'
 
 interface Props {
   tabs: TabInfo[]
@@ -10,14 +11,15 @@ interface Props {
   onNewIncognito: () => void
 }
 
-function shortTitle(t: TabInfo): string {
-  if (!t.url || t.url === 'about:blank') return '新标签页'
-  const s = t.title || t.url || '新标签页'
+function shortTitle(tab: TabInfo, fallback: string): string {
+  if (!tab.url || tab.url === 'about:blank') return fallback
+  const s = tab.title || tab.url || fallback
   const clean = s.replace(/^https?:\/\/(www\.)?/, '')
   return clean.length > 22 ? clean.slice(0, 22) + '…' : clean
 }
 
 export function TabBar({ tabs, activeTabId, onSwitch, onClose, onNew, onNewIncognito }: Props): React.JSX.Element {
+  const { t } = useI18n()
   const barRef = useRef<HTMLDivElement>(null)
 
   // keep the active tab visible when tabs overflow
@@ -36,67 +38,67 @@ export function TabBar({ tabs, activeTabId, onSwitch, onClose, onNew, onNewIncog
         if (el && Math.abs(e.deltaY) > Math.abs(e.deltaX)) el.scrollLeft += e.deltaY
       }}
     >
-      {tabs.map((t) => (
+      {tabs.map((tab) => (
         <div
-          key={t.id}
-          className={`tab ${t.id === activeTabId ? 'active' : ''}`}
-          onClick={() => onSwitch(t.id)}
+          key={tab.id}
+          className={`tab ${tab.id === activeTabId ? 'active' : ''}`}
+          onClick={() => onSwitch(tab.id)}
           onDoubleClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => {
             if (e.button === 1) {
               e.preventDefault()
-              onClose(t.id)
+              onClose(tab.id)
             }
           }}
-          title={t.url}
+          title={tab.url}
           onContextMenu={(e) => {
             e.preventDefault()
             e.stopPropagation()
-            window.cobrowse.showTabContextMenu(t.id, e.clientX, e.clientY)
+            window.cobrowse.showTabContextMenu(tab.id, e.clientX, e.clientY)
           }}
         >
-          {t.loading && <span className="tab-loading" />}
-          {t.favicon && <img className="tab-favicon" src={t.favicon} onError={(e) => { e.currentTarget.style.display = 'none' }} />}
-          {(t.audioMuted || t.audioPlaying) && (
+          {tab.loading && <span className="tab-loading" />}
+          {tab.favicon && <img className="tab-favicon" src={tab.favicon} onError={(e) => { e.currentTarget.style.display = 'none' }} />}
+          {(tab.audioMuted || tab.audioPlaying) && (
             <button
               className="tab-audio"
-              title={t.audioMuted ? '取消静音' : '静音标签页'}
+              title={tab.audioMuted ? t('tab.unmute') : t('tab.mute')}
               onClick={(e) => {
                 e.stopPropagation()
-                void window.cobrowse.tabAction({ type: 'toggleMute', tabId: t.id })
+                void window.cobrowse.tabAction({ type: 'toggleMute', tabId: tab.id })
               }}
             >
-              {t.audioMuted ? '🔇' : '🔊'}
+              {tab.audioMuted ? '🔇' : '🔊'}
             </button>
           )}
           <span className="tab-title">
-            {t.incognito && (
-              <span style={{ fontSize: 10, marginRight: 3 }} title="无痕标签页（不记录历史）">
+            {tab.incognito && (
+              <span style={{ fontSize: 10, marginRight: 3 }} title={t('tab.incognitoTitle')}>
                 🕶
               </span>
             )}
-            {shortTitle(t)}
+            {shortTitle(tab, t('tab.new'))}
           </span>
           <button
             className="tab-close"
-            title="关闭标签"
+            title={t('tab.close')}
             onClick={(e) => {
               e.stopPropagation()
-              onClose(t.id)
+              onClose(tab.id)
             }}
           >
             ×
           </button>
         </div>
       ))}
-      <button className="tab-new" onClick={onNew} onDoubleClick={(e) => e.stopPropagation()} title="新建标签页">
+      <button className="tab-new" onClick={onNew} onDoubleClick={(e) => e.stopPropagation()} title={t('tab.new')}>
         +
       </button>
       <button
         className="tab-new"
         onClick={onNewIncognito}
         onDoubleClick={(e) => e.stopPropagation()}
-        title="新建无痕标签页（Ctrl+Shift+N）"
+        title={t('tab.newIncognito')}
       >
         🕶
       </button>

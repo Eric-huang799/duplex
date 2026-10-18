@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { LLM_PROTOCOLS, PROTOCOL_LABELS, type LlmProtocol } from '../../../shared/llm'
 import { hostOfUrl, isTrustedImportedHost } from '../../../shared/trusted-hosts'
+import { useI18n } from '../i18n'
 
 type AuthType = 'key' | 'import'
 type AuthSource = 'codex' | 'opencode'
@@ -94,6 +95,11 @@ export function ProvidersPanel({
   onClose: () => void
   onChanged: () => void
 }): React.JSX.Element {
+  const { t } = useI18n()
+  const protocolShort = (p: LlmProtocol): string =>
+    p === 'openai-chat' ? t('providers.protocolOpenAI') : PROTOCOL_SHORT[p]
+  const presetLabel = (preset: Preset): string =>
+    preset.label === '本地 Ollama' ? t('providers.localOllamaLabel') : preset.label
   const [providers, setProviders] = useState<MaskedProvider[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [editing, setEditing] = useState<EditingState | null>(null)
@@ -257,10 +263,10 @@ export function ProvidersPanel({
         setEditing(null)
         await refresh()
       } else {
-        setError(res.error ?? '保存失败')
+        setError(res.error ?? t('providers.saveFailed'))
       }
     } catch (e) {
-      setError((e as Error)?.message ?? '保存失败')
+      setError((e as Error)?.message ?? t('providers.saveFailed'))
     } finally {
       setBusy(false)
     }
@@ -274,13 +280,13 @@ export function ProvidersPanel({
     try {
       const res = await window.cobrowse.agentProviderSave({ id: editing.id, clearApiKey: true })
       if (!res.ok) {
-        setError(res.error ?? '清除失败')
+        setError(res.error ?? t('providers.clearFailed'))
         return
       }
       setEditing((cur) => (cur ? { ...cur, hasKey: false, apiKey: '' } : cur))
       await refresh()
     } catch (e) {
-      setError((e as Error)?.message ?? '清除失败')
+      setError((e as Error)?.message ?? t('providers.clearFailed'))
     } finally {
       setBusy(false)
     }
@@ -296,10 +302,10 @@ export function ProvidersPanel({
     setError('')
     try {
       const res = await window.cobrowse.agentImportOpencode()
-      if (!res.ok) setError(res.error ?? '导入失败')
+      if (!res.ok) setError(res.error ?? t('providers.importFailed'))
       await refresh()
     } catch (e) {
-      setError((e as Error)?.message ?? '导入失败')
+      setError((e as Error)?.message ?? t('providers.importFailed'))
     }
   }
 
@@ -314,27 +320,28 @@ export function ProvidersPanel({
   return (
     <div className="providers-panel" ref={rootRef}>
       <div className="providers-head">
-        <span>模型配置</span>
-        <span className="dim">{providers.length} 个</span>
-        <button className="panel-collapse" title="关闭配置" onClick={onClose}>
-          »
+        <span>{t('providers.title')}</span>
+        <span className="dim">{t('providers.count', { n: providers.length })}</span>
+        <button className="panel-collapse" title={t('providers.close')} onClick={onClose}>
+          ✕
         </button>
       </div>
 
       <div className="providers-list">
+
         {providers.length === 0 && (
           <>
-            <div className="providers-empty">还没有配置 — 可以「从 opencode 导入」或「新建」</div>
+            <div className="providers-empty">{t('providers.empty')}</div>
             {!editing && (
               <div className="provider-actions">
                 {PRESETS.map((preset) => (
                   <button
-                    key={preset.label}
+                    key={presetLabel(preset)}
                     type="button"
-                    title={`填入 ${preset.baseUrl} · ${preset.model}`}
+                    title={t('providers.fillPreset', { url: preset.baseUrl, model: preset.model })}
                     onClick={() => applyPreset(preset)}
                   >
-                    {preset.label}
+                    {presetLabel(preset)}
                   </button>
                 ))}
               </div>
@@ -350,30 +357,30 @@ export function ProvidersPanel({
             }}
             title={
               activeId === p.id
-                ? '当前使用中'
+                ? t('providers.inUse')
                 : confirmSwitch?.id === p.id
-                  ? '再次点击确认切换'
-                  : '点击切换使用（需二次确认）'
+                  ? t('providers.confirmSwitch')
+                  : t('providers.switchHint')
             }
           >
             <div className="provider-info">
               <div className="provider-name">
                 {p.name}
-                {activeId === p.id && <span className="provider-tag">使用中</span>}
+                {activeId === p.id && <span className="provider-tag">{t('providers.inUseTag')}</span>}
               </div>
               <div className={`provider-sub ${confirmSwitch?.id === p.id ? 'confirm' : ''}`}>
                 {confirmSwitch?.id === p.id
-                  ? '再次点击确认切换'
+                  ? t('providers.confirmSwitch')
                   : <>
-                      {p.model || '未填模型'} · {hostOfUrl(p.baseUrl) || p.baseUrl}
-                      {p.protocol !== 'openai-chat' && ` · ${PROTOCOL_SHORT[p.protocol]}`}
-                      {p.authType === 'import' && ` · 导入:${p.authSource ?? '?'}`}
+                      {p.model || t('providers.noModel')} · {hostOfUrl(p.baseUrl) || p.baseUrl}
+                      {p.protocol !== 'openai-chat' && ` · ${protocolShort(p.protocol)}`}
+                      {p.authType === 'import' && t('providers.importSuffix', { src: p.authSource ?? '?' })}
                     </>}
               </div>
             </div>
             <button
               className="provider-mini"
-              title="编辑"
+              title={t('lib.edit')}
               onClick={(e) => {
                 e.stopPropagation()
                 setEditing({
@@ -395,13 +402,13 @@ export function ProvidersPanel({
             </button>
             <button
               className={`provider-mini ${confirmDel?.id === p.id ? 'danger' : ''}`}
-              title="删除（需连续确认三次）"
+              title={t('providers.deleteConfirm')}
               onClick={(e) => {
                 e.stopPropagation()
                 void remove(p.id)
               }}
             >
-              {confirmDel?.id === p.id ? (confirmDel.stage === 1 ? '确认?' : '再确认!') : '✕'}
+              {confirmDel?.id === p.id ? (confirmDel.stage === 1 ? t('panel.confirmOne') : t('panel.confirmAgain')) : '✕'}
             </button>
           </div>
         ))}
@@ -413,18 +420,18 @@ export function ProvidersPanel({
             <div className="provider-actions">
               {PRESETS.map((preset) => (
                 <button
-                  key={preset.label}
+                  key={presetLabel(preset)}
                   type="button"
-                  title={`填入 ${preset.baseUrl} · ${preset.model}`}
+                  title={t('providers.fillPreset', { url: preset.baseUrl, model: preset.model })}
                   onClick={() => applyPreset(preset)}
                 >
-                  {preset.label}
+                  {presetLabel(preset)}
                 </button>
               ))}
             </div>
           )}
           <label>
-            <span>名称</span>
+            <span>{t('providers.name')}</span>
             <input
               value={editing.name}
               placeholder="DeepSeek"
@@ -432,7 +439,7 @@ export function ProvidersPanel({
             />
           </label>
           <label>
-            <span>协议</span>
+            <span>{t('providers.protocol')}</span>
             <select
               value={editing.protocol}
               onChange={(e) => setEditing({ ...editing, protocol: e.target.value as LlmProtocol })}
@@ -454,7 +461,7 @@ export function ProvidersPanel({
             />
           </label>
           <label>
-            <span>模型名</span>
+            <span>{t('providers.modelName')}</span>
             <input
               value={editing.model}
               spellCheck={false}
@@ -463,7 +470,7 @@ export function ProvidersPanel({
             />
           </label>
           <label>
-            <span>认证方式</span>
+            <span>{t('providers.authType')}</span>
             <select
               value={editing.authType}
               onChange={(e) => {
@@ -475,12 +482,12 @@ export function ProvidersPanel({
               }}
             >
               <option value="key">API Key</option>
-              <option value="import">从本机 CLI 导入凭据</option>
+              <option value="import">{t('providers.importFromCli')}</option>
             </select>
           </label>
           {editing.authType === 'import' ? (
             <label>
-              <span>凭据来源</span>
+              <span>{t('providers.credSource')}</span>
               <select
                 value={editing.authSource ?? 'codex'}
                 onChange={(e) => {
@@ -489,8 +496,8 @@ export function ProvidersPanel({
                   void checkImport(v)
                 }}
               >
-                <option value="codex">Codex（ChatGPT 订阅登录）</option>
-                <option value="opencode">opencode 登录凭据</option>
+                <option value="codex">{t('providers.codexLogin')}</option>
+                <option value="opencode">{t('providers.opencodeCred')}</option>
               </select>
             </label>
           ) : (
@@ -500,7 +507,7 @@ export function ProvidersPanel({
                 type="password"
                 value={editing.apiKey}
                 spellCheck={false}
-                placeholder={editing.id ? '已保存 · 留空保持不变' : '本地服务（如 Ollama）可留空'}
+                placeholder={editing.id ? t('providers.keyPlaceholderSaved') : t('providers.keyPlaceholderEmpty')}
                 onChange={(e) => setEditing({ ...editing, apiKey: e.target.value })}
               />
               {editing.id && editing.hasKey && (
@@ -508,10 +515,10 @@ export function ProvidersPanel({
                   type="button"
                   className="key-clear-btn"
                   disabled={busy}
-                  title="删除本机已保存的 API Key（提供商配置保留）"
+                  title={t('providers.clearKeyTitle')}
                   onClick={() => void clearKey()}
                 >
-                  清除已保存的 Key
+                  {t('providers.clearKey')}
                 </button>
               )}
             </label>
@@ -524,8 +531,7 @@ export function ProvidersPanel({
                 onChange={(e) => setEditing({ ...editing, allowCustomHost: e.target.checked })}
               />
               <span>
-                我信任此网关：允许把导入的凭据发送到当前主机{' '}
-                {hostOfUrl(editing.baseUrl) || editing.baseUrl.trim() || '（Base URL 未填写）'}
+                {t('providers.trustGateway', { host: hostOfUrl(editing.baseUrl) || editing.baseUrl.trim() || t('providers.baseUrlMissing') })}
               </span>
             </label>
           )}
@@ -534,30 +540,30 @@ export function ProvidersPanel({
               {importInfo.error
                 ? importInfo.error
                 : importInfo.found
-                  ? `已找到：${importInfo.providers.join('、') || '（无可用条目）'}${
+                  ? t('providers.importFound', { list: importInfo.providers.join(', ') || t('providers.importNoEntries') }) + `${
                       importInfo.expiresAt
-                        ? ` · 有效期至 ${new Date(importInfo.expiresAt).toLocaleString()}`
+                        ? t('providers.importExpiry', { date: new Date(importInfo.expiresAt).toLocaleString() })
                         : ''
                     }`
-                  : '未找到本机凭据文件'}
+                  : t('providers.importNotFound')}
             </div>
           )}
           <label>
-            <span>空闲超时（秒，留空使用默认）</span>
+            <span>{t('providers.idleTimeoutLabel')}</span>
             <input
               value={editing.idleTimeoutSec}
               spellCheck={false}
               inputMode="numeric"
-              placeholder="例如：120"
+              placeholder={t('providers.idleExample')}
               onChange={(e) => setEditing({ ...editing, idleTimeoutSec: e.target.value })}
             />
           </label>
           <div className="agent-form-row">
             <button className="import-btn" onClick={() => setEditing(null)}>
-              取消
+              {t('common.cancel')}
             </button>
             <button className="send-btn" disabled={!canSave || busy} onClick={() => void saveEdit()}>
-              {busy ? '保存中…' : '保存'}
+              {busy ? t('providers.saving') : t('common.save')}
             </button>
           </div>
         </div>
@@ -565,18 +571,18 @@ export function ProvidersPanel({
 
       {editing && (
         <div className="providers-empty">
-          本地 Ollama 无需 API Key：先运行 ollama serve，Base URL 填 http://localhost:11434/v1
+          {t('providers.ollamaHint')}
         </div>
       )}
 
       {!editing && (
         <div className="provider-actions">
-          <button onClick={() => setEditing(newEditing())}>＋ 新建</button>
+          <button onClick={() => setEditing(newEditing())}>{t('providers.newProvider')}</button>
           <button
             className={importStage > 0 ? 'danger' : ''}
             onClick={() => void importAll()}
           >
-            {importStage > 0 ? '确认导入？' : '↓ 从 opencode 导入'}
+            {importStage > 0 ? t('providers.confirmImport') : t('providers.importOpencode')}
           </button>
         </div>
       )}

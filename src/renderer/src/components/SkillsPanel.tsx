@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../i18n'
 
 interface SkillInfo {
   id: string
@@ -21,6 +22,7 @@ interface CodexStatus {
  * up the MCP connection for Codex / Claude Code.
  */
 export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
+  const { t } = useI18n()
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [codex, setCodex] = useState<CodexStatus | null>(null)
   const [claudeCmd, setClaudeCmd] = useState<{ command: string; hint: string; bridgeFound: boolean } | null>(null)
@@ -77,7 +79,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
       setSkills(Array.isArray(s) ? s : [])
       setCodex((await window.cobrowse.setupCodexStatus()) as CodexStatus)
     } catch (e) {
-      setError((e as Error)?.message ?? '读取失败')
+      setError((e as Error)?.message ?? t('skills.readFailed'))
     }
   }
 
@@ -94,7 +96,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
       await window.cobrowse.skillsToggle(id, enabled)
       await refresh()
     } catch (e) {
-      setError((e as Error)?.message ?? '切换失败')
+      setError((e as Error)?.message ?? t('skills.toggleFailed'))
     } finally {
       setTogglingId(null)
     }
@@ -127,7 +129,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     setDelStage(null)
     setError('')
     const r = await window.cobrowse.skillsRemove(id)
-    if (!r.ok) setError(r.error ?? '删除失败')
+    if (!r.ok) setError(r.error ?? t('skills.deleteFailed'))
     await refresh()
   }
 
@@ -136,7 +138,7 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     setError('')
     const r = await window.cobrowse.skillsImportFolder()
     setBusy(false)
-    if (!r.ok && r.error !== '已取消') setError(r.error ?? '导入失败')
+    if (!r.ok && r.error !== '已取消' && r.error !== 'Canceled') setError(r.error ?? t('skills.importFailed'))
     await refresh()
   }
 
@@ -152,11 +154,11 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     setError('')
     const r = await window.cobrowse.setupCodexInstall()
     if (!r.ok) {
-      setError(r.error ?? '写入失败')
+      setError(r.error ?? t('skills.writeFailed'))
     } else if (r.backupPath) {
-      setCodexMsg(`已写入配置。原文件备份：${r.backupPath}`)
+      setCodexMsg(t('skills.codexBackup', { path: r.backupPath }))
     } else {
-      setCodexMsg('已写入配置（原文件不存在，已新建）。')
+      setCodexMsg(t('skills.codexFresh'))
     }
     await refresh()
   }
@@ -176,9 +178,9 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
     if (!claudeCmd) return
     try {
       await navigator.clipboard.writeText(claudeCmd.command)
-      setCopyMsg('已复制到剪贴板')
+      setCopyMsg(t('skills.copied'))
     } catch {
-      setCopyMsg('复制失败：请手动选中命令复制')
+      setCopyMsg(t('skills.copyFailed'))
     }
     if (copyTimerRef.current != null) window.clearTimeout(copyTimerRef.current)
     copyTimerRef.current = window.setTimeout(() => setCopyMsg(''), 3000)
@@ -192,29 +194,29 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
       <div className="providers-head">
         <span>Skills</span>
         <span className="dim">
-          {skills.length} 个（专用 {duplexCount} / Claude {claudeCount}）
+          {t('skills.count', { n: skills.length, duplex: duplexCount, claude: claudeCount })}
         </span>
-        <button className="panel-collapse" title="关闭" onClick={onClose}>
+        <button className="panel-collapse" title={t('common.close')} onClick={onClose}>
           »
         </button>
       </div>
 
       <div className="providers-list">
         {skills.length === 0 && (
-          <div className="providers-empty">未发现 skill — 可导入文件夹（需含 SKILL.md），或先用 Claude Code 装一些</div>
+          <div className="providers-empty">{t('skills.empty')}</div>
         )}
         {skills.map((s) => (
           <div key={s.id} className="provider-item skill-item" title={s.dir}>
             <div className="provider-info">
               <div className="provider-name">
                 {s.name}
-                <span className="provider-tag">{s.source === 'duplex' ? '专用' : 'Claude'}</span>
+                <span className="provider-tag">{s.source === 'duplex' ? t('skills.sourceDuplex') : 'Claude'}</span>
               </div>
-              <div className="provider-sub skill-desc">{s.description || '（无描述）'}</div>
+              <div className="provider-sub skill-desc">{s.description || t('skills.noDesc')}</div>
             </div>
             <label
               className="skill-switch"
-              title={s.enabled ? '已启用（点击停用）' : '已停用（点击启用）'}
+              title={s.enabled ? t('skills.enabled') : t('skills.disabled')}
               onClick={(e) => e.stopPropagation()}
             >
               <input
@@ -227,13 +229,13 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
             {s.source === 'duplex' ? (
               <button
                 className={`provider-mini ${delStage?.id === s.id ? 'danger' : ''}`}
-                title="删除（需连续确认三次）"
+                title={t('skills.deleteConfirm')}
                 onClick={() => void remove(s.id)}
               >
-                {delStage?.id === s.id ? (delStage.stage === 1 ? '确认?' : '再确认!') : '✕'}
+                {delStage?.id === s.id ? (delStage.stage === 1 ? t('panel.confirmOne') : t('panel.confirmAgain')) : '✕'}
               </button>
             ) : (
-              <span className="provider-mini skill-lock" title="Claude 来源（只读）">
+              <span className="provider-mini skill-lock" title={t('skills.claudeSource')}>
                 ·
               </span>
             )}
@@ -243,78 +245,23 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
 
       <div className="provider-actions">
         <button disabled={busy} onClick={() => void importFolder()}>
-          ＋ 导入文件夹
+          {t('skills.importFolder')}
         </button>
       </div>
 
       <div className="providers-head skills-subhead">
-        <span>CLI 接入</span>
+        <span>{t('skills.cli')}</span>
       </div>
       <div className="skills-integration">
-        {codex && (
-          <div className="integration-row">
-            <div className="provider-sub">
-              Codex：{codex.found ? (codex.configured ? '已接入 ✓' : '未接入') : '未找到 config.toml'}
-            </div>
-            <button className="import-btn" onClick={askInstallCodex}>
-              接入 Codex
-            </button>
-          </div>
-        )}
-        {codexMsg && <div className="import-status">{codexMsg}</div>}
-        <div className="integration-row">
-          <div className="provider-sub">Claude Code：复制命令后到终端执行</div>
-          <span style={{ display: 'inline-flex', gap: 6, flexShrink: 0 }}>
-            {claudeCmd && (
-              <button className="import-btn" onClick={() => void copyClaudeCommand()}>
-                复制
-              </button>
-            )}
-            <button className="import-btn" onClick={() => void toggleClaude()}>
-              {claudeCmd ? '隐藏命令' : '显示命令'}
-            </button>
-          </span>
+        <div className="provider-sub" style={{ whiteSpace: 'normal' }}>
+          {t('skills.injectedNote')}
         </div>
-        {claudeCmd && <pre className="integration-cmd">{claudeCmd.command}</pre>}
-        {copyMsg && <div className="import-status">{copyMsg}</div>}
-        {claudeCmd && claudeCmd.hint && <div className="import-status">{claudeCmd.hint}</div>}
-        {claudeCmd && !claudeCmd.bridgeFound && (
-          <div className="import-status">
-            注意：未找到 dist-bridge/index.cjs——请先在项目根运行 npm run build:bridge
-          </div>
-        )}
       </div>
-
-      {codexAsk && codex && (
-        <div
-          className="confirm-overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setCodexAsk(false)
-          }}
-        >
-          <div className="confirm-box">
-            <div className="confirm-title">接入 Codex</div>
-            <div className="provider-sub" style={{ whiteSpace: 'normal' }}>
-              将把 Duplex 的 MCP 配置写入：{codex.path}
-              <br />
-              （会自动备份原文件）确定继续？
-            </div>
-            <div className="confirm-row">
-              <button className="import-btn" onClick={() => setCodexAsk(false)}>
-                取消
-              </button>
-              <button className="send-btn" onClick={() => void confirmInstallCodex()}>
-                确定写入
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {error && (
         <div className="agent-form-err providers-err skill-err">
           <span>{error}</span>
-          <button type="button" title="清除错误提示" onClick={() => setError('')}>×</button>
+          <button type="button" title={t('panel.clearError')} onClick={() => setError('')}>×</button>
         </div>
       )}
     </div>

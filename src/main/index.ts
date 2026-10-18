@@ -52,6 +52,7 @@ import {
   saveAiPaused,
   saveConfirmBeforeDownload,
   saveEmergencyStopKeys,
+  saveLanguage,
   saveProviders,
   saveSearchEngine,
   saveSession,
@@ -60,6 +61,8 @@ import {
   type AgentConfig,
   type ThemeSetting
 } from './settings'
+import { isValidLangSetting, resolveLang, translate } from '../shared/i18n'
+import { currentLang, mt, setMainLanguage } from './i18n'
 import {
   deriveName,
   maskProviders,
@@ -84,6 +87,7 @@ import {
   addCustomAgent,
   buildResumePlan,
   buildStartPlan,
+  ensureClaudeMcpConfig,
   findAgentTool,
   getToolModel,
   listAgentTools,
@@ -119,7 +123,7 @@ import { BrowserSessionStore } from './browser-session'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
-const VERSION = '0.2.9'
+const VERSION = '0.2.10'
 app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
 app.commandLine.appendSwitch('remote-debugging-port', '0')
 const TOKEN = crypto.randomBytes(24).toString('hex')
@@ -232,9 +236,9 @@ const fsHandlers = createFsToolHandlers((payload) =>
     pendingConfirms.set(id, { resolve, owner: currentCaller() })
     win?.webContents.send('agent:confirm-request', {
       id,
-      command: payload.kind === 'write' ? `写入文件：${payload.detail}` : payload.detail,
+      command: payload.kind === 'write' ? mt('app.permDetailWrite', { detail: payload.detail }) : payload.detail,
       cwd: payload.cwd,
-      skill: payload.kind === 'write' ? 'write_file（写文件）' : 'run_command（执行命令）',
+      skill: payload.kind === 'write' ? mt('app.permSkillWrite') : mt('app.permSkillRun'),
       tool: payload.kind === 'write' ? 'write_file' : 'run_command',
       kind: payload.kind,
       ...(payload.preview ? { preview: payload.preview } : {}),
@@ -391,7 +395,7 @@ function watchTick(state: AgentWatchState): void {
     if (state.statMisses > STAT_RETRY_DELAYS.length) {
       emitWatchError(
         state.toolId,
-        `无法读取会话文件（${(e as Error)?.message ?? String(e)}）：${state.file}`
+        mt('app.readSessionFailed', { err: (e as Error)?.message ?? String(e), file: state.file })
       )
       stopAgentWatch()
       return
@@ -460,7 +464,7 @@ function watchTick(state: AgentWatchState): void {
       }
       emitWatchError(
         state.toolId,
-        `会话文件跟踪连续出错，已停止监听（${(e as Error)?.message ?? String(e)}）：${state.file}`
+        mt('app.sessionWatchStopped', { err: (e as Error)?.message ?? String(e), file: state.file })
       )
       stopAgentWatch()
       return
@@ -508,7 +512,7 @@ function openExternalSession(
   const resolvedRoot = path.resolve(root)
   const rootWithSep = resolvedRoot.endsWith(path.sep) ? resolvedRoot : resolvedRoot + path.sep
   if (resolvedFile !== resolvedRoot && !resolvedFile.startsWith(rootWithSep)) {
-    return { ok: false, error: '非法路径' }
+    return { ok: false, error: mt('app.invalidPath') }
   }
   stopAgentWatch()
   externalSelectionSeq++
@@ -626,7 +630,7 @@ function stderrSummary(entry: LiveChild): string {
     .map((l) => l.trim())
     .filter(Boolean)
   const last = lines[lines.length - 1]
-  return last ? `；最近输出：${last.slice(0, 300)}` : ''
+  return last ? mt('app.lastOutput', { text: last.slice(0, 300) }) : ''
 }
 
 /** Kill a child and its whole process tree (Windows grandchildren included). */
@@ -692,13 +696,33 @@ function denyAllPendingConfirms(owner?: string): number {
   return n
 }
 
+/**
+ * Per-invocation Duplex wiring. Nothing is installed globally: Codex receives
+ * the MCP server through -c flags and Claude Code through a temporary
+ * --mcp-config file, so standalone sessions cannot discover Duplex at all.
+ */
+function duplexLaunchOptions(kind: string): {
+  bridgePath: string
+  dataDir?: string
+  claudeMcpConfigPath?: string
+} {
+  const bridgePath = bridgeCjsPath()
+  const dataDir = process.env['DUPLEX_DATA_DIR'] || undefined
+  return {
+    bridgePath,
+    dataDir,
+    claudeMcpConfigPath:
+      kind === 'claude' ? ensureClaudeMcpConfig(bridgePath, dataDir) : undefined
+  }
+}
+
 /** Spawn a headless CLI run that starts a brand-new session (generalized). */
 function startExternalSessionSpawn(
   tool: { id?: string; kind: string; command?: string },
   message: string,
   model?: string
 ): { ok: true; live: LiveChild } | { ok: false; error: string } {
-  const plan = buildStartPlan(tool as never, message, model)
+  const plan = buildStartPlan(tool as never, message, model, duplexLaunchOptions(tool.kind))
   if ('error' in plan) return { ok: false, error: plan.error }
   let child: ReturnType<typeof spawn>
   try {
@@ -734,7 +758,13 @@ function resumeExternalSessionSpawn(
   sessionID: string,
   model?: string
 ): { ok: true; live: LiveChild } | { ok: false; error: string } {
-  const plan = buildResumePlan(tool as never, cliSessionId, cwdHint, model)
+  const plan = buildResumePlan(
+    tool as never,
+    cliSessionId,
+    cwdHint,
+    model,
+    duplexLaunchOptions(tool.kind)
+  )
   if ('error' in plan) return { ok: false, error: plan.error }
   let child: ReturnType<typeof spawn>
   try {
@@ -759,7 +789,7 @@ function resumeExternalSessionSpawn(
         kind: 'session',
         status: 'error',
         sessionID,
-        error: `发送失败：无法启动 ${toolLabel}（${e?.message ?? String(e)}）`,
+        error: mt('app.sendFailedNoTool', { tool: toolLabel, err: e?.message ?? String(e) }),
         ts: Date.now()
       })
     )
@@ -799,16 +829,16 @@ function sendToCurrentExternalSession(
   opts?: { expectedSessionId?: string; userInitiated?: boolean }
 ): { ok: boolean; error?: string } {
   const tool = findAgentTool(String(toolId))
-  if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+  if (!tool) return { ok: false, error: mt('app.toolMissing') }
   const cur = currentExternalSession
   if (!cur || cur.toolId !== tool.id) {
-    return { ok: false, error: '请先从「历史会话」中打开一个会话，再发送续聊消息' }
+    return { ok: false, error: mt('app.openSessionFirst') }
   }
-  if (opts?.expectedSessionId && cur.sessionId !== opts.expectedSessionId) return { ok: false, error: '标注对应的外部会话已切换，请重新提交' }
+  if (opts?.expectedSessionId && cur.sessionId !== opts.expectedSessionId) return { ok: false, error: mt('app.annotationSessionSwitched') }
   const msg = String(message ?? '').trim()
-  if (!msg) return { ok: false, error: '消息不能为空' }
+  if (!msg) return { ok: false, error: mt('app.messageEmpty') }
   if (liveChildren.size > 0) {
-    return { ok: false, error: '已有任务在运行中，请等待完成，或点「停止」后再发送' }
+    return { ok: false, error: mt('app.taskRunning') }
   }
   if (opts?.userInitiated !== false) maybeResumeAi()
   const meta = readSessionMeta(tool.kind, cur.file)
@@ -835,6 +865,10 @@ let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
 
 /** Absolute path of the MCP bridge entry point external CLIs (node) will execute. */
+function tUnknown(): string {
+  return mt('common.error')
+}
+
 function bridgeCjsPath(): string {
   const root = app.isPackaged
     ? app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked')
@@ -872,6 +906,7 @@ if (!gotLock) {
 }
 
 async function start(): Promise<void> {
+  setMainLanguage(resolveLang(loadSettings().language, app.getLocale()))
   app.setAppUserModelId('Duplex')
   browserData = new BrowserDataStore(cobrowseDir())
   browserSession = new BrowserSessionStore(cobrowseDir())
@@ -993,7 +1028,7 @@ async function start(): Promise<void> {
   const requireAgentConfig = (): AgentConfig => {
     const cfg = activeAgentConfig()
     if (!cfg) {
-      throw new Error('当前模型配置不存在，请在 ⚙ 模型配置里选择或新建')
+      throw new Error(mt('app.modelMissing'))
     }
     return cfg
   }
@@ -1105,14 +1140,14 @@ async function start(): Promise<void> {
       if (cur && (cur.kind === 'codex' || cur.kind === 'claude')) {
         const r = sendToCurrentExternalSession(cur.toolId, d.text, { expectedSessionId: cur.sessionId, userInitiated: false })
         if (r.ok) return
-        throw new Error(`标注发送到外部会话失败：${r.error ?? '未知错误'}`)
+        throw new Error(mt('app.annotationToExternalFailed', { err: r.error ?? tUnknown() }))
       }
       throw new Error(
-        '外部工具模式下标注不会送达：请先在面板打开 Codex / Claude 会话，或切换到内置模型 / opencode 模式'
+        mt('app.annotationExternalUnavailable')
       )
     }
     if (recipient.mode === 'agent' && agentRuntime) {
-      if (recipient.builtinSessionId !== agentRuntime.currentSessionId) throw new Error('标注对应的内置会话已切换，请重新提交')
+      if (recipient.builtinSessionId !== agentRuntime.currentSessionId) throw new Error(mt('app.annotationBuiltinSwitched'))
       try {
         agentRuntime.injectAnnotation(d.text, {
           question: d.question,
@@ -1124,7 +1159,7 @@ async function start(): Promise<void> {
           tabId: d.tabId
         })
         return
-      } catch (e) { throw new Error(`内置模型标注发送失败：${String(e)}`) }
+      } catch (e) { throw new Error(mt('app.annotationBuiltinFailed', { err: String(e) })) }
     }
     mirror.addInjection(d.text, 'annotation', recipient.target)
     mirror.add({
@@ -1141,7 +1176,7 @@ async function start(): Promise<void> {
   }
   annotationSubmitHandler = async (payload) => {
     if (isAiPaused()) {
-      return { ok: false, error: 'AI 已急停挂起：请先点「恢复」再提交标注' }
+      return { ok: false, error: mt('app.annotationAiPaused') }
     }
     const recipient = { mode: currentPanelMode, external: currentExternalSession, builtinSessionId: agentRuntime?.currentSessionId,
       target: { sessionID: sessionBus.state.activeSessionID, consumerID: sessionBus.state.activeConsumerID ?? undefined } }
@@ -1394,14 +1429,14 @@ function toggleAnnotationMode(): { ok: boolean; active: boolean } {
   if (!tab) return { ok: false, active: false }
   const next = !(annotationTabState.get(tab.id) ?? false)
   annotationTabState.set(tab.id, next)
-  overlaySend(tab, { kind: 'annotationMode', active: next })
+  overlaySend(tab, { kind: 'annotationMode', active: next, lang: currentLang() })
   return { ok: true, active: next }
 }
 
 /** Persist + apply a theme setting (shared by IPC and the tools menu). */
 function applyThemeSetting(theme: ThemeSetting): { ok: boolean; error?: string } {
   const saved = saveTheme(theme)
-  if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+  if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
   nativeTheme.themeSource = theme
   applyWindowBackground()
   logLine(`[theme] set to ${theme}`)
@@ -1411,10 +1446,10 @@ function applyThemeSetting(theme: ThemeSetting): { ok: boolean; error?: string }
 /** Validate + persist a search engine (shared by IPC and the engine menu). */
 function applySearchEngine(engine: string): { ok: boolean; error?: string } {
   if (typeof engine !== 'string' || !(engine in SEARCH_ENGINES)) {
-    return { ok: false, error: '未知搜索引擎' }
+    return { ok: false, error: mt('app.unknownEngine') }
   }
   const saved = saveSearchEngine(engine as SearchEngine)
-  if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+  if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
   return { ok: true }
 }
 
@@ -1529,18 +1564,18 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
   }
   if (info.linkURL) {
     template.push(
-      { label: '在新标签页打开链接', click: () => tabs?.createTab(info.linkURL) },
-      { label: '复制链接地址', click: () => copyText(info.linkURL, 'menu:copied-link') },
+      { label: mt('menu.openLinkNewTab'), click: () => tabs?.createTab(info.linkURL) },
+      { label: mt('menu.copyLink'), click: () => copyText(info.linkURL, 'menu:copied-link') },
       { type: 'separator' }
     )
   }
   if (info.mediaType === 'image' && info.srcURL) {
     const srcURL = info.srcURL
     template.push(
-      { label: '在新标签页打开图片', click: () => tabs?.createTab(srcURL) },
-      { label: '复制图片地址', click: () => copyText(srcURL, 'menu:copied-image') },
+      { label: mt('menu.openImageNewTab'), click: () => tabs?.createTab(srcURL) },
+      { label: mt('menu.copyImage'), click: () => copyText(srcURL, 'menu:copied-image') },
       {
-        label: '图片另存为',
+        label: mt('menu.saveImageAs'),
         click: () => {
           try {
             const wc = tab.view.webContents
@@ -1558,9 +1593,9 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
     const engine = loadSettings().searchEngine
     const engineName = SEARCH_ENGINES[engine]?.name ?? SEARCH_ENGINES.baidu.name
     template.push(
-      { label: '复制', role: 'copy' },
+      { label: mt('menu.copy'), role: 'copy' },
       {
-        label: `使用${engineName}搜索 "${truncateMenuLabel(selectionText, 30)}"`,
+        label: mt('menu.searchWith', { engine: engineName, text: truncateMenuLabel(selectionText, 30) }),
         click: () => tabs?.createTab(searchUrl(selectionText, engine))
       },
       { type: 'separator' }
@@ -1568,10 +1603,10 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
   }
   if (info.isEditable) {
     template.push(
-      { label: '剪切', role: 'cut', enabled: info.editFlags.canCut },
-      { label: '复制', role: 'copy', enabled: info.editFlags.canCopy },
-      { label: '粘贴', role: 'paste', enabled: info.editFlags.canPaste },
-      { label: '全选', role: 'selectAll', enabled: info.editFlags.canSelectAll },
+      { label: mt('menu.cut'), role: 'cut', enabled: info.editFlags.canCut },
+      { label: mt('menu.copy'), role: 'copy', enabled: info.editFlags.canCopy },
+      { label: mt('menu.paste'), role: 'paste', enabled: info.editFlags.canPaste },
+      { label: mt('menu.selectAll'), role: 'selectAll', enabled: info.editFlags.canSelectAll },
       { type: 'separator' }
     )
   }
@@ -1601,7 +1636,7 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
   }
   template.push(
     {
-      label: '后退',
+      label: mt('menu.back'),
       enabled: canGoBack,
       click: () => {
         const wc = wcAtClick()
@@ -1611,7 +1646,7 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
       }
     },
     {
-      label: '前进',
+      label: mt('menu.forward'),
       enabled: canGoForward,
       click: () => {
         const wc = wcAtClick()
@@ -1621,7 +1656,7 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
       }
     },
     {
-      label: '刷新',
+      label: mt('menu.reload'),
       enabled: pageUrl !== '',
       click: () => {
         const wc = wcAtClick()
@@ -1629,8 +1664,8 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
       }
     },
     { type: 'separator' },
-    { label: '复制页面地址', enabled: pageUrl !== '', click: () => copyText(pageUrl, 'menu:copied-url') },
-    { label: '复制为 Markdown', enabled: pageUrl !== '', click: () => copyPageAsMarkdown(wcAtClick()) }
+    { label: mt('menu.copyPageUrl'), enabled: pageUrl !== '', click: () => copyText(pageUrl, 'menu:copied-url') },
+    { label: mt('menu.copyPageMarkdown'), enabled: pageUrl !== '', click: () => copyPageAsMarkdown(wcAtClick()) }
   )
   popupAppMenu(template, info.x, info.y)
 }
@@ -1702,8 +1737,8 @@ function setupIpc(): void {
   })
   ipcMain.handle('browser:bookmark-import', async () => {
     const picked = await dialog.showOpenDialog(win!, {
-      title: '导入书签（Chrome / Edge 导出的 HTML）',
-      filters: [{ name: '书签 HTML', extensions: ['html', 'htm'] }],
+      title: mt('menu.importBookmarksTitle'),
+      filters: [{ name: mt('menu.importBookmarksFilter'), extensions: ['html', 'htm'] }],
       properties: ['openFile']
     })
     if (picked.canceled || picked.filePaths.length === 0) {
@@ -1712,11 +1747,11 @@ function setupIpc(): void {
     try {
       const file = picked.filePaths[0]!
       if (fs.statSync(file).size > 30 * 1024 * 1024) {
-        return { ok: false, error: '文件超过 30MB，不太像书签导出文件' }
+        return { ok: false, error: mt('app.bookmarkHtmlTooBig') }
       }
       const records = parseNetscapeBookmarks(fs.readFileSync(file, 'utf8'))
       if (records.length === 0) {
-        return { ok: false, error: '没有找到书签（请确认是浏览器导出的书签 HTML 文件）' }
+        return { ok: false, error: mt('app.noBookmarksInHtml') }
       }
       const result = browserData.importBookmarks(records)
       emitBrowserData()
@@ -1728,10 +1763,10 @@ function setupIpc(): void {
   ipcMain.handle('browser:bookmark-import-local', () => {
     try {
       const local = process.env.LOCALAPPDATA
-      if (!local) return { ok: false, error: '找不到本机应用数据目录（LOCALAPPDATA）' }
+      if (!local) return { ok: false, error: mt('app.noLocalAppData') }
       const scan = scanLocalBrowserBookmarks(local)
       if (scan.records.length === 0) {
-        return { ok: false, error: '没有找到 Chrome / Edge 的书签（未安装，或书签为空）' }
+        return { ok: false, error: mt('app.noLocalBookmarks') }
       }
       const result = browserData.importBookmarks(scan.records)
       emitBrowserData()
@@ -1759,7 +1794,7 @@ function setupIpc(): void {
   ipcMain.handle('downloads:confirm-get', () => ({ enabled: loadSettings().confirmBeforeDownload }))
   ipcMain.handle('downloads:confirm-set', (_e, enabled: boolean) => {
     const saved = saveConfirmBeforeDownload(enabled === true)
-    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+    if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
     return { ok: true }
   })
 
@@ -1775,7 +1810,7 @@ function setupIpc(): void {
     'tabs:action',
     (_e, action: { type: string; url?: string; tabId?: number; value?: number }) => {
       if (!tabs) return { ok: false }
-      const noTab = { ok: false, error: '没有打开的标签页' }
+      const noTab = { ok: false, error: mt('app.noTabs') }
       try {
         const targetTab = (): Tab | null => action.tabId != null ? tabs!.getTab(action.tabId) : tabs!.getActive()
         const humanTab = targetTab()
@@ -1788,7 +1823,7 @@ function setupIpc(): void {
           case 'search': {
             // 地址栏/搜索在零标签时也应有去路：先建一个标签页再执行
             const tab = action.tabId != null ? tabs.getTab(action.tabId) : (tabs.getActive() ?? tabs.createTab())
-            if (!tab) return { ok: false, error: '目标标签已关闭' }
+            if (!tab) return { ok: false, error: mt('app.tabClosed') }
             if (action.url) {
               let url: string
               if (action.type === 'search') {
@@ -1855,7 +1890,7 @@ function setupIpc(): void {
             break
           case 'toggleMute': {
             if (action.tabId == null) return noTab
-            if (!tabs.toggleMute(action.tabId)) return { ok: false, error: '标签页不存在' }
+            if (!tabs.toggleMute(action.tabId)) return { ok: false, error: mt('app.tabMissing') }
             break
           }
           case 'find': {
@@ -1929,34 +1964,34 @@ function setupIpc(): void {
               click: () => tabs?.reopenClosed(closed.length - 1 - i)
             }
           })
-        : [{ label: '(空)', enabled: false }]
+        : [{ label: mt('menu.empty'), enabled: false }]
     popupAppMenu(
       [
-        { label: '复制标签页', enabled: tab != null, click: () => tabs?.duplicateTab(id) },
+        { label: mt('menu.tabCopy'), enabled: tab != null, click: () => tabs?.duplicateTab(id) },
         {
-          label: info?.audioMuted ? '取消静音' : '静音标签页',
+          label: info?.audioMuted ? mt('menu.tabUnmute') : mt('menu.tabMute'),
           enabled: tab != null,
           click: () => tabs?.toggleMute(id)
         },
         {
-          label: '关闭其他标签页',
+          label: mt('menu.closeOtherTabs'),
           enabled: tab != null && infos.length > 1,
           click: () => tabs?.closeOthers(id)
         },
         {
-          label: '关闭右侧标签页',
+          label: mt('menu.closeRightTabs'),
           enabled: tab != null && index >= 0 && index < infos.length - 1,
           click: () => tabs?.closeToRight(id)
         },
         {
-          label: '所有标签页加入书签',
+          label: mt('menu.bookmarkAllTabs'),
           enabled: infos.some((t) => /^https?:\/\//i.test(t.url)),
           click: () => bookmarkAllTabs()
         },
         { type: 'separator' },
-        { label: '最近关闭的标签页', submenu: recentClosed },
+        { label: mt('menu.recentClosed'), submenu: recentClosed },
         {
-          label: '重新打开关闭的标签页',
+          label: mt('menu.reopenClosed'),
           enabled: tabs.canReopenClosed(),
           click: () => tabs?.reopenClosed()
         }
@@ -2002,14 +2037,14 @@ function setupIpc(): void {
           ? (annotationTabState.get(tabs.activeId) ?? false)
           : state?.annotationActive === true
       const template: MenuItemConstructorOptions[] = [
-        { label: '书签', click: () => sendBrowserShortcut('menu:library-bookmarks') },
-        { label: '浏览记录', click: () => sendBrowserShortcut('menu:library-history') },
-        { label: '下载内容', click: () => sendBrowserShortcut('menu:library-downloads') },
-        { label: '新建无痕标签页', click: () => tabs?.createTab(undefined, { incognito: true }) },
+        { label: mt('menu.libraryBookmarks'), click: () => sendBrowserShortcut('menu:library-bookmarks') },
+        { label: mt('menu.libraryHistory'), click: () => sendBrowserShortcut('menu:library-history') },
+        { label: mt('menu.libraryDownloads'), click: () => sendBrowserShortcut('menu:library-downloads') },
+        { label: mt('menu.newIncognitoTab'), click: () => tabs?.createTab(undefined, { incognito: true }) },
         {
-          label: '60 步上限后自动续接',
+          label: mt('menu.autoContinue'),
           submenu: ([0, 1, 2, 3, 5] as const).map((n) => ({
-            label: n === 0 ? '关闭（默认）' : `自动续接 ${n} 轮`,
+            label: n === 0 ? mt('menu.autoContinueOff') : mt('menu.autoContinueN', { n }),
             type: 'radio' as const,
             checked: (loadSettings().agentAutoContinueRounds ?? 0) === n,
             click: () => {
@@ -2018,17 +2053,45 @@ function setupIpc(): void {
             }
           }))
         },
-        { label: '复制本页为 Markdown', click: () => copyPageAsMarkdown(activePageWebContents()) },
+        { label: mt('menu.copyPageMarkdownShort'), click: () => copyPageAsMarkdown(activePageWebContents()) },
         { type: 'separator' },
         {
-          label: '页面标注',
+          label: mt('menu.annotation'),
           type: 'checkbox',
           checked: annotationActive,
           click: () => sendAnnotationState(toggleAnnotationMode().active)
         },
-        { label: '设置急停键', click: () => sendBrowserShortcut('menu:stopkeys') },
-        { label: '快捷键设置', click: () => sendBrowserShortcut('menu:shortcuts') },
-        { label: '设为默认浏览器…', click: () => openDefaultAppsSettings() },
+        { label: mt('menu.stopKeys'), click: () => sendBrowserShortcut('menu:stopkeys') },
+        { label: mt('menu.shortcuts'), click: () => sendBrowserShortcut('menu:shortcuts') },
+        {
+          label: mt('menu.language'),
+          submenu: (['system', 'zh', 'en'] as const).map(
+            (lang): MenuItemConstructorOptions => ({
+              label:
+                lang === 'system'
+                  ? mt('menu.languageSystem')
+                  : lang === 'zh'
+                    ? mt('menu.languageZh')
+                    : mt('menu.languageEn'),
+              type: 'radio',
+              checked: loadSettings().language === lang,
+              click: () => {
+                const r = saveLanguage(lang)
+                if (!r.ok) {
+                  logLine(`[settings] language save failed: ${r.error ?? ''}`)
+                  return
+                }
+                setMainLanguage(resolveLang(lang, app.getLocale()))
+                try {
+                  win?.webContents.send('app:language-changed', lang)
+                } catch {
+                  /* window is going away */
+                }
+              }
+            })
+          )
+        },
+        { label: mt('menu.defaultBrowser'), click: () => openDefaultAppsSettings() },
         { type: 'separator' },
         ...(['system', 'light', 'dark'] as const).map(
           (t): MenuItemConstructorOptions => ({
@@ -2050,7 +2113,7 @@ function setupIpc(): void {
           })
         ),
         {
-          label: '下载前询问保存位置',
+          label: mt('menu.askDownloadLocation'),
           type: 'checkbox',
           checked: loadSettings().confirmBeforeDownload,
           click: (item) => {
@@ -2077,8 +2140,8 @@ function setupIpc(): void {
   ipcMain.handle('external:get', () => externalState())
   ipcMain.handle('collaboration:get', () => collaboration.snapshot())
   ipcMain.handle('collaboration:resume', (_e, tabId: number) => {
-    if (!tabs?.getTab(tabId)) return { ok: false, error: '标签已关闭' }
-    if (annotationTabState.get(tabId)) return { ok: false, error: '请先结束此页标注再恢复操作' }
+    if (!tabs?.getTab(tabId)) return { ok: false, error: mt('app.tabClosed') }
+    if (annotationTabState.get(tabId)) return { ok: false, error: mt('app.annotationAiPaused') }
     collaboration.resume(tabId)
     return { ok: true }
   })
@@ -2196,9 +2259,9 @@ function setupIpc(): void {
               let warning: string | undefined
               if (r.ok) {
                 if (currentPanelMode === 'opencode' && !mirror.hasConsumer()) {
-                  warning = 'opencode 未连接：标注已排队，连接后自动送达'
+                  warning = mt('app.annotateQueued')
                 } else if (currentPanelMode === 'agent' && !(ev.question ?? '').trim()) {
-                  warning = '已记录标注（未提问：AI 不会单独回应）'
+                  warning = mt('app.annotateRecordedNoAsk')
                 }
               }
               replyResult(r.ok, r.error, warning)
@@ -2231,7 +2294,7 @@ function setupIpc(): void {
       return {
         ok: true,
         id: inj.id,
-        warning: 'opencode 未连接：消息已排队，连接后自动送达'
+        warning: mt('app.messageQueued')
       }
     }
     return { ok: true, id: inj.id }
@@ -2268,7 +2331,7 @@ function setupIpc(): void {
         } else {
           saved = saveSession(null)
         }
-        if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+        if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
         return { ok: true }
       }
       sessionBus.push({
@@ -2289,10 +2352,28 @@ function setupIpc(): void {
     return { ok: true, theme: t }
   })
 
+  ipcMain.handle('app:language-get', () => ({
+    language: loadSettings().language,
+    systemLocale: app.getLocale()
+  }))
+
+  ipcMain.handle('app:language-set', (_e, language: string) => {
+    if (!isValidLangSetting(language)) return { ok: false, error: 'bad language' }
+    const r = saveLanguage(language)
+    if (!r.ok) return r
+    setMainLanguage(resolveLang(language, app.getLocale()))
+    try {
+      win?.webContents.send('app:language-changed', language)
+    } catch {
+      /* window is going away */
+    }
+    return { ok: true, language }
+  })
+
   ipcMain.handle('agent:send', async (_e, text: string, opts?: { interrupt?: boolean }) => {
     if (!agentRuntime) return { ok: false, error: 'agent not ready' }
     if (!activeAgentConfig()) {
-      return { ok: false, error: '当前模型配置不存在，请在 ⚙ 模型配置里选择或新建' }
+      return { ok: false, error: mt('app.modelMissing') }
     }
     maybeResumeAi()
     try {
@@ -2371,16 +2452,16 @@ function setupIpc(): void {
       // path is what makes clearing possible at all.
       if (input?.clearApiKey === true) {
         const idx = input?.id ? s.agentProviders.findIndex((p) => p.id === input.id) : -1
-        if (idx < 0) return { ok: false, error: '未找到该模型配置' }
+        if (idx < 0) return { ok: false, error: mt('app.noModelConfig') }
         const list = s.agentProviders.slice()
         list[idx] = { ...list[idx], apiKey: '' }
         const saved = saveProviders(list, s.activeProviderId)
-        if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+        if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
         logLine(`[agent] provider key cleared: ${list[idx].name}`)
         return { ok: true }
       }
       const baseUrl = String(input?.baseUrl ?? '').trim()
-      if (!baseUrl) return { ok: false, error: 'Base URL 不能为空' }
+      if (!baseUrl) return { ok: false, error: mt('app.baseUrlEmpty') }
       const list = s.agentProviders.slice()
       const idx = input?.id ? list.findIndex((p) => p.id === input.id) : -1
       const apiKeyInput = typeof input?.apiKey === 'string' ? input.apiKey.trim() : ''
@@ -2429,7 +2510,7 @@ function setupIpc(): void {
               : prev.idleTimeoutMs
         }
         const saved = saveProviders(list, s.activeProviderId)
-        if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+        if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
         logLine(`[agent] provider updated: ${deriveName(baseUrl)}`)
         return { ok: true }
       }
@@ -2455,7 +2536,7 @@ function setupIpc(): void {
       })
       const active = s.activeProviderId ?? id
       const saved = saveProviders(list, active)
-      if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+      if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
       logLine(`[agent] provider added: ${deriveName(baseUrl)} (active=${active === id})`)
       return { ok: true, id }
     }
@@ -2466,7 +2547,7 @@ function setupIpc(): void {
     const list = s.agentProviders.filter((p) => p.id !== id)
     const active = s.activeProviderId === id ? (list[0]?.id ?? null) : s.activeProviderId
     const saved = saveProviders(list, active)
-    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+    if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
     logLine(`[agent] provider removed: ${String(id)}`)
     return { ok: true }
   })
@@ -2476,7 +2557,7 @@ function setupIpc(): void {
     const target = s.agentProviders.find((p) => p.id === id)
     if (!target) return { ok: false, error: 'provider not found' }
     const saved = saveProviders(s.agentProviders, id)
-    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+    if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
     logLine(`[agent] provider activated: ${target.name}`)
     return { ok: true }
   })
@@ -2489,17 +2570,17 @@ function setupIpc(): void {
       if (imported.length === 0) {
         return {
           ok: false,
-          error: '未在 opencode 配置中找到可用 provider：至少需要 Base URL；本地服务（如 Ollama）可不填 API Key'
+          error: mt('app.modelNotInOpencode')
         }
       }
       const s = loadSettings()
       const { providers, added } = mergeProviders(s.agentProviders, imported)
       const saved = saveProviders(providers, s.activeProviderId ?? providers[0]?.id ?? null)
-      if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+      if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
       logLine(`[agent] imported ${added} provider(s) from opencode (total ${providers.length})`)
       return { ok: true, added }
     } catch (e) {
-      return { ok: false, error: `读取 opencode 配置失败：${(e as Error)?.message ?? String(e)}` }
+      return { ok: false, error: mt('app.readOpencodeFailed', { err: (e as Error)?.message ?? String(e) }) }
     }
   })
 
@@ -2523,12 +2604,12 @@ function setupIpc(): void {
   })
   ipcMain.handle('skills:remove', (_e, id: string) => removeSkill(String(id)))
   ipcMain.handle('skills:import-folder', async () => {
-    if (!win) return { ok: false, error: '窗口未就绪' }
+    if (!win) return { ok: false, error: mt('app.windowNotReady') }
     const r = await dialog.showOpenDialog(win, {
-      title: '选择要导入的 Skill 文件夹（需包含 SKILL.md）',
+      title: mt('app.skillFolderPickTitle'),
       properties: ['openDirectory']
     })
-    if (r.canceled || r.filePaths.length === 0) return { ok: false, error: '已取消' }
+    if (r.canceled || r.filePaths.length === 0) return { ok: false, error: mt('app.cancelled') }
     return importSkillFromFolder(r.filePaths[0])
   })
 
@@ -2568,7 +2649,7 @@ function setupIpc(): void {
 
   ipcMain.handle('agents:session-open', (_e, toolId: string, sessionId: string, filePath: string) => {
     const tool = findAgentTool(String(toolId))
-    if (!tool?.sessionsDir) return { ok: false, error: '工具不可用（未找到会话目录）' }
+    if (!tool?.sessionsDir) return { ok: false, error: mt('app.noSessionsDir') }
     return openExternalSession(tool, String(sessionId), String(filePath ?? ''))
   })
 
@@ -2584,33 +2665,33 @@ function setupIpc(): void {
 
   ipcMain.handle('agents:model-set', (_e, toolId: string, model: string) => {
     const tool = findAgentTool(String(toolId))
-    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+    if (!tool) return { ok: false, error: mt('app.toolMissing') }
     return setToolModel(tool.id, String(model ?? ''))
   })
 
   ipcMain.handle('agents:model-sync-global', (_e, toolId: string) => {
     const tool = findAgentTool(String(toolId))
-    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
+    if (!tool) return { ok: false, error: mt('app.toolMissing') }
     const model = getToolModel(tool.id)
-    if (!model) return { ok: false, error: '请先在面板中选择一个模型，再同步到全局' }
+    if (!model) return { ok: false, error: mt('app.pickModelFirst') }
     return syncModelToGlobal(tool, model)
   })
 
   let startSessionBusy = false
   ipcMain.handle('agents:start-session', async (_e, toolId: string, message: string) => {
     if (startSessionBusy || liveChildren.size > 0) {
-      return { ok: false, error: '已有任务在运行中，请等待完成，或点「停止」后再发送' }
+      return { ok: false, error: mt('app.taskRunning') }
     }
     maybeResumeAi()
     startSessionCancelled = false
     const tool = findAgentTool(String(toolId))
-    if (!tool) return { ok: false, error: '工具不存在（列表可能已刷新）' }
-    if (!tool.available) return { ok: false, error: `未检测到「${tool.name}」（命令或配置目录不存在）` }
+    if (!tool) return { ok: false, error: mt('app.toolMissing') }
+    if (!tool.available) return { ok: false, error: mt('app.toolUnavailable', { name: tool.name }) }
     const probe = buildStartPlan(tool, '')
     if ('error' in probe) return { ok: false, error: probe.error }
-    if (!tool.sessionsDir) return { ok: false, error: '未找到该工具的会话目录，无法跟随新会话' }
+    if (!tool.sessionsDir) return { ok: false, error: mt('app.sessionDirMissing') }
     const msg = String(message ?? '').trim()
-    if (!msg) return { ok: false, error: '消息不能为空' }
+    if (!msg) return { ok: false, error: mt('app.messageEmpty') }
     startSessionBusy = true
     const selectionAtStart = externalSelectionSeq
     try {
@@ -2619,9 +2700,9 @@ function setupIpc(): void {
       const approved = await confirmScript({
         command: `${probe.file} ${probe.args.join(' ')}`,
         cwd: probe.cwd,
-        skill: '启动自定义工具'
+        skill: mt('app.startCustomTool')
       })
-      if (!approved) return { ok: false, error: '用户拒绝了这次启动' }
+      if (!approved) return { ok: false, error: mt('app.userRejected') }
     }
       const listFn =
         tool.kind === 'codex'
@@ -2653,10 +2734,10 @@ function setupIpc(): void {
           startSessionCancelled = false
           killChildTree(live.child)
           live.killed = true
-          return { ok: false, error: '已取消（用户急停）' }
+          return { ok: false, error: mt('app.cancelledStop') }
         }
         if (live.killed) {
-          return { ok: false, error: '已停止该进程（用户取消）' }
+          return { ok: false, error: mt('app.processStopped') }
         }
         const newlyCreated = listFn(tool.sessionsDir).filter(s => !existingIds.has(s.id) && s.updatedAt >= before - 1000)
         const startupId = live.startup?.sessionId
@@ -2665,7 +2746,7 @@ function setupIpc(): void {
           : ['codex', 'claude'].includes(tool.kind) ? [] : newlyCreated
         if (candidates.length > 1) {
           killChildTree(live.child); live.killed = true
-          return { ok: false, error: '检测到多个同时创建的会话，无法确定本次启动对象；已停止，请从历史会话选择' }
+          return { ok: false, error: mt('app.ambiguousSessions') }
         }
         if (candidates.length === 1) {
           const created = candidates[0]
@@ -2676,12 +2757,12 @@ function setupIpc(): void {
           return openExternalSession(tool, created.id, created.file)
         }
         if (live.spawnError) {
-          return { ok: false, error: `启动失败：${live.spawnError}${stderrSummary(live)}` }
+          return { ok: false, error: mt('app.startFailed', { err: live.spawnError + stderrSummary(live) }) }
         }
         if (live.exited) {
           return {
             ok: false,
-            error: `进程提前退出（exit ${live.exitCode ?? '?'}），未检测到新的会话文件${stderrSummary(live)}`
+            error: mt('app.processExited', { code: live.exitCode ?? '?', stderr: stderrSummary(live) })
           }
         }
       }
@@ -2690,7 +2771,7 @@ function setupIpc(): void {
       live.killed = true
       return {
         ok: false,
-        error: `启动超时（20 秒），未检测到会话文件；已终止该进程${stderrSummary(live)}`
+        error: mt('app.startTimeout', { stderr: stderrSummary(live) })
       }
     } finally {
       startSessionBusy = false
@@ -2737,7 +2818,7 @@ function setupIpc(): void {
 
   ipcMain.handle('shortcuts:set', (_e, partial: unknown) => {
     if (!partial || typeof partial !== 'object' || Array.isArray(partial)) {
-      return { ok: false, error: '无效的快捷键设置' }
+      return { ok: false, error: mt('app.invalidShortcuts') }
     }
     const overrides: Record<string, string> = { ...loadSettings().shortcuts }
     for (const [action, value] of Object.entries(partial as Record<string, unknown>)) {
@@ -2747,10 +2828,10 @@ function setupIpc(): void {
         continue
       }
       if (typeof value !== 'string') {
-        return { ok: false, error: `「${shortcutLabel(action)}」的按键无效` }
+        return { ok: false, error: mt('app.invalidBinding', { label: shortcutLabel(action, currentLang()) }) }
       }
       const norm = normalizeBinding(value)
-      if (!norm) return { ok: false, error: `「${shortcutLabel(action)}」的按键无法识别` }
+      if (!norm) return { ok: false, error: mt('app.bindingUnrecognized', { label: shortcutLabel(action, currentLang()) }) }
       overrides[action] = norm
     }
     const effective = effectiveShortcuts(overrides)
@@ -2760,7 +2841,7 @@ function setupIpc(): void {
     })
     if (!check.ok) return { ok: false, error: check.error }
     const saved = saveShortcuts(overrides)
-    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+    if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
     tabs?.setShortcuts(effective)
     try {
       win?.webContents.send('shortcuts:changed', effective)
@@ -2781,7 +2862,7 @@ function setupIpc(): void {
       if (v.ok) {
         const conflict = bindingConflicts(v.combo, shortcutsMap, { platform: process.platform })
         if (conflict) {
-          return { ok: false, error: `该组合已被快捷键「${conflict.label}」使用` }
+          return { ok: false, error: mt('app.comboUsed', { label: translate(currentLang(), `shortcut.${conflict.action}`) }) }
         }
         list.push(v.combo)
       }
@@ -2791,11 +2872,11 @@ function setupIpc(): void {
     if (unique.length === 0) {
       return {
         ok: false,
-        error: '请设置至少一个有效按键（F1–F12、Esc 或带 Ctrl/Alt/Shift 的组合）'
+        error: mt('app.emergencyKeyNeeded')
       }
     }
     const saved = saveEmergencyStopKeys(unique)
-    if (!saved.ok) return { ok: false, error: saved.error ?? '设置保存失败' }
+    if (!saved.ok) return { ok: false, error: saved.error ?? mt('settings.saveFailed') }
     tabs?.broadcastOverlay({ kind: 'hotkeys', keys: unique })
     return { ok: true, keys: unique }
   })

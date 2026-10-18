@@ -360,6 +360,48 @@ body {
 
 .address-engine { margin-left: -92px; z-index: 2; flex: 0 0 86px; }
 .address-engine .engine-trigger { width: 82px; height: 26px; margin-left: 2px; padding: 0 4px; overflow: hidden; background: transparent; color: var(--text-faint); font-size: 10px; white-space: nowrap; border-radius: 13px; }
+/* ---- address-bar engine dropdown (in-app, replaces the native menu) ---- */
+.engine-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px;
+  min-width: 110px;
+  background: var(--menu-bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-pop);
+  transform-origin: top right;
+  animation: engine-menu-in 140ms cubic-bezier(0.2, 0.72, 0.25, 1) both;
+}
+.engine-menu.closing {
+  animation: engine-menu-out 110ms ease-in both;
+}
+.engine-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.engine-menu button:hover {
+  background: var(--bg-btn-hover);
+}
+.engine-menu button.on {
+  background: var(--accent-soft);
+  color: var(--text-strong);
+}
 .urlbar { padding-right: 92px; }
 .bookmark-button { color: var(--text-dim); font-size: 19px; }
 .bookmark-button.is-bookmarked { color: #e6b84e; }

@@ -4,6 +4,7 @@
  * the library panel and the unit tests (Chrome-style interaction patterns).
  */
 import type { BookmarkRecord, HistoryRecord } from './protocol'
+import { translate, type Lang } from './i18n'
 
 export interface OmniboxSuggestion {
   kind: 'search' | 'history' | 'bookmark'
@@ -21,14 +22,15 @@ export interface OmniboxSuggestion {
 
 export interface OmniboxOptions {
   engineName?: string
+  lang?: Lang
   historyLimit?: number
   bookmarkLimit?: number
   /** Max rows for the empty-input "recent history" view. */
   recentLimit?: number
 }
 
-const DEFAULTS: Required<OmniboxOptions> = {
-  engineName: '百度',
+const DEFAULTS: Required<Omit<OmniboxOptions, 'engineName' | 'lang'>> & { engineName: string } = {
+  engineName: '',
   historyLimit: 5,
   bookmarkLimit: 3,
   recentLimit: 8
@@ -75,6 +77,8 @@ export function buildOmniboxSuggestions(
   opts: OmniboxOptions = {}
 ): OmniboxSuggestion[] {
   const o = { ...DEFAULTS, ...opts }
+  const lang = opts.lang ?? 'zh'
+  const engineName = o.engineName || translate(lang, 'engine.baidu')
   const raw = (input ?? '').trim()
   const q = raw.toLowerCase()
   if (!q) {
@@ -89,7 +93,9 @@ export function buildOmniboxSuggestions(
         visitedAt: r.visitedAt
       }))
   }
-  const out: OmniboxSuggestion[] = [{ kind: 'search', label: raw, sub: `${o.engineName} 搜索`, url: raw }]
+  const out: OmniboxSuggestion[] = [
+    { kind: 'search', label: raw, sub: translate(lang, 'omnibox.searchSub', { engine: engineName }), url: raw }
+  ]
   const used = new Set<string>()
   for (const bm of bookmarks) {
     if (out.length > o.bookmarkLimit) break
@@ -152,14 +158,14 @@ export interface HistoryDayGroup {
   records: HistoryRecord[]
 }
 
-const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
 const DAY_MS = 86_400_000
 
 /**
  * Group history into collapsible day/month buckets:
  * 今天 / 昨天 / 星期X（近7天）/ M月（今年更早）/ YYYY年M月（往年）。
  */
-export function groupHistoryByDay(history: HistoryRecord[], now = new Date()): HistoryDayGroup[] {
+export function groupHistoryByDay(history: HistoryRecord[], now = new Date(), lang: Lang = 'zh'): HistoryDayGroup[] {
+  const weekdays = translate(lang, 'omnibox.weekdays').split(',')
   const startOfDay = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
   const today = startOfDay(now)
   const sorted = [...history].filter((r) => Number.isFinite(r.visitedAt)).sort((a, b) => b.visitedAt - a.visitedAt)
@@ -173,19 +179,19 @@ export function groupHistoryByDay(history: HistoryRecord[], now = new Date()): H
     let label: string
     if (diff === 0) {
       key = 'today'
-      label = '今天'
+      label = translate(lang, 'omnibox.today')
     } else if (diff === 1) {
       key = 'yesterday'
-      label = '昨天'
+      label = translate(lang, 'omnibox.yesterday')
     } else if (diff <= 6) {
       key = `dow-${day}`
-      label = WEEKDAYS[new Date(day).getDay()]
+      label = weekdays[new Date(day).getDay()]
     } else if (d.getFullYear() === now.getFullYear()) {
       key = `m-${d.getFullYear()}-${d.getMonth() + 1}`
-      label = `${d.getMonth() + 1}月`
+      label = translate(lang, 'omnibox.monthLabel', { m: d.getMonth() + 1 })
     } else {
       key = `my-${d.getFullYear()}-${d.getMonth() + 1}`
-      label = `${d.getFullYear()}年${d.getMonth() + 1}月`
+      label = translate(lang, 'omnibox.yearMonthLabel', { y: d.getFullYear(), m: d.getMonth() + 1 })
     }
     const g = groups.get(key) ?? { key, label, records: [] }
     g.records.push(r)
@@ -207,7 +213,7 @@ function monthKeyOf(ts: number): string {
 }
 
 /** Distinct months that contain visits, newest first; labels always carry the year. */
-export function listHistoryMonths(history: HistoryRecord[]): HistoryMonth[] {
+export function listHistoryMonths(history: HistoryRecord[], lang: Lang = 'zh'): HistoryMonth[] {
   const seen = new Set<string>()
   for (const r of history) {
     if (Number.isFinite(r.visitedAt)) seen.add(monthKeyOf(r.visitedAt))
@@ -216,7 +222,7 @@ export function listHistoryMonths(history: HistoryRecord[]): HistoryMonth[] {
     .sort((a, b) => (a < b ? 1 : -1))
     .map((key) => {
       const [y, m] = key.split('-')
-      return { key, label: `${y}年${Number(m)}月` }
+      return { key, label: translate(lang, 'omnibox.yearMonthChip', { y, m: Number(m) }) }
     })
 }
 

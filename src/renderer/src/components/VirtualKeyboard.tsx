@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { buildCombo } from '../../../shared/hotkeys'
+import { useI18n } from '../i18n'
 
 interface Props {
   onPick: (combo: string) => void
@@ -102,6 +103,7 @@ const ROWS: KeyDef[][] = [
 ]
 
 export function VirtualKeyboard({ onPick }: Props): React.JSX.Element {
+  const { t } = useI18n()
   const [mods, setMods] = useState<ModState>({ ctrl: false, alt: false, shift: false })
 
   const activeLabels = [
@@ -124,7 +126,9 @@ export function VirtualKeyboard({ onPick }: Props): React.JSX.Element {
   return (
     <div className="virtual-kb">
       <div className="vk-status">
-        {activeLabels.length > 0 ? `已选修饰键：${activeLabels.join(' + ')}` : '点击 Ctrl / Alt / Shift 后再点一个按键'}
+        {activeLabels.length > 0
+          ? t('vk.selectedModifiers', { mods: activeLabels.join(' + ') })
+          : t('vk.clickModifier')}
       </div>
       {ROWS.map((row, i) => (
         <div className="vk-row" key={i}>
@@ -136,7 +140,7 @@ export function VirtualKeyboard({ onPick }: Props): React.JSX.Element {
               disabled={k.disabled}
               onClick={() => press(k)}
             >
-              {k.label}
+              {k.label === '空格' ? t('vk.space') : k.label}
             </button>
           ))}
         </div>

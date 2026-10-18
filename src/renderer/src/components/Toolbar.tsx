@@ -4,8 +4,13 @@ import { buildOmniboxSuggestions, formatVisitTime, splitHighlight, stripUrlForDi
 import { VirtualKeyboard } from './VirtualKeyboard'
 import { comboFromEvent, displayParts, isModifierKey, normalizeBinding, sameBinding, validateBinding } from '../../../shared/hotkeys'
 import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, validateShortcuts, type ShortcutAction } from '../../../shared/shortcuts'
+import { useI18n } from '../i18n'
+import type { I18nKey } from '../../../shared/i18n'
 
 type ThemeSetting = 'system' | 'light' | 'dark'
+type EngineMenuState = 'closed' | 'open' | 'closing'
+const ENGINE_MENU_CLOSE_MS = 110
+
 
 /** Render text with the query's first occurrence bolded (Chrome suggestion style). */
 function renderHighlight(text: string, query: string): React.ReactNode[] {
@@ -47,6 +52,7 @@ function Icon({ name, filled = false }: { name: 'back' | 'forward' | 'reload' | 
 }
 
 export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = false, onBookmark, onToggleAI, aiOpen = false, annotationActive = false, onToggleAnnotation, onChromeOverlayChange, bookmarks = [], history = [], onOpenHistory }: Props): React.JSX.Element {
+  const { t, lang } = useI18n()
   const [input, setInput] = useState('')
   const [editing, setEditing] = useState(false)
   const [sugs, setSugs] = useState<OmniboxSuggestion[]>([])
@@ -60,6 +66,8 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   const [theme, setTheme] = useState<ThemeSetting>('system')
   const [engine, setEngine] = useState('baidu')
   const [engines, setEngines] = useState<Array<{ key: string; name: string }>>([])
+  const [engineMenu, setEngineMenu] = useState<EngineMenuState>('closed')
+  const engineMenuTimerRef = useRef<number | null>(null)
   const [platform] = useState(() => window.cobrowse.getPlatform())
   const [stopKeys, setStopKeys] = useState<string[]>([])
   const [stopKeysOpen, setStopKeysOpen] = useState(false)
@@ -103,8 +111,62 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     closeSugs()
     setHistOpen(false)
     setEditing(false)
+    setEngineMenu('closed')
+    if (engineMenuTimerRef.current != null) {
+      window.clearTimeout(engineMenuTimerRef.current)
+      engineMenuTimerRef.current = null
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active?.id])
+
+  useEffect(() => {
+    return () => {
+      if (engineMenuTimerRef.current != null) window.clearTimeout(engineMenuTimerRef.current)
+    }
+  }, [])
+
+  const closeEngineMenu = (): void => {
+    if (engineMenu !== 'open') return
+    setEngineMenu('closing')
+    if (engineMenuTimerRef.current != null) window.clearTimeout(engineMenuTimerRef.current)
+    engineMenuTimerRef.current = window.setTimeout(() => {
+      engineMenuTimerRef.current = null
+      setEngineMenu('closed')
+    }, ENGINE_MENU_CLOSE_MS)
+  }
+
+  const toggleEngineMenu = (): void => {
+    if (engineMenu === 'open') {
+      closeEngineMenu()
+      return
+    }
+    if (engineMenuTimerRef.current != null) {
+      window.clearTimeout(engineMenuTimerRef.current)
+      engineMenuTimerRef.current = null
+    }
+    setEngineMenu('open')
+  }
+
+  useEffect(() => {
+    if (engineMenu === 'closed') return
+    const close = (): void => closeEngineMenu()
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') closeEngineMenu()
+    }
+    window.addEventListener('click', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('keydown', onKey)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engineMenu])
+
+  const applyEngine = (k: string): void => {
+    setEngine(k)
+    void window.cobrowse.searchEngineSet(k)
+    closeEngineMenu()
+  }
 
   useEffect(() => {
     void window.cobrowse.getTheme().then((t) => setTheme(t.theme))
@@ -222,14 +284,14 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   const saveShortcuts = (): void => {
     const effective: Record<string, string> = {}
     for (const def of SHORTCUT_DEFS) effective[def.id] = shortcutValue(def.id)
-    const check = validateShortcuts(effective, { platform })
+    const check = validateShortcuts(effective, { platform, lang })
     if (!check.ok) {
       setShortcutError(check.error)
       return
     }
     void window.cobrowse.shortcutsSet(shortcutDraft).then((r) => {
       if (!r.ok) {
-        setShortcutError(r.error ?? '保存失败')
+        setShortcutError(r.error ?? t('shortcuts.saveFailed'))
         return
       }
       if (r.shortcuts) setShortcutCurrent(r.shortcuts)
@@ -253,10 +315,11 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   // Chrome-style: incognito tabs never surface local history/bookmarks in suggestions.
   const localHistory = active?.incognito ? [] : history
   const localBookmarks = active?.incognito ? [] : bookmarks
-  const engineName = engines.find((e) => e.key === engine)?.name ?? '搜索'
+  const engineEntry = engines.find((e) => e.key === engine)
+  const engineDisplay = engineEntry ? t(`engine.${engineEntry.key}` as I18nKey) : t('toolbar.engineFallback')
 
   const refreshSugs = (value: string): void => {
-    setSugs(buildOmniboxSuggestions(value, localHistory, localBookmarks, { engineName }))
+    setSugs(buildOmniboxSuggestions(value, localHistory, localBookmarks, { engineName: engineDisplay, lang }))
     setHl(-1)
   }
 
@@ -265,7 +328,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
     setHl(-1)
   }
 
-  const recent = buildOmniboxSuggestions('', localHistory, [], { recentLimit: 10 })
+  const recent = buildOmniboxSuggestions('', localHistory, [], { recentLimit: 10, lang })
   /** Current trimmed query for match highlighting in the dropdown. */
   const qNow = input.trim()
 
@@ -315,17 +378,17 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   }
 
   const addBinding = (combo: string): void => {
-    const v = validateBinding(combo, platform)
+    const v = validateBinding(combo, platform, lang)
     if (!v.ok) {
       setStopError(v.reason)
       return
     }
     if (stopKeys.some((b) => sameBinding(b, v.combo))) {
-      setStopError('该组合已存在')
+      setStopError(t('stopkeys.duplicate'))
       return
     }
     if (stopKeys.length >= 5) {
-      setStopError('最多设置 5 个')
+      setStopError(t('stopkeys.tooMany'))
       return
     }
     setStopKeys([...stopKeys, v.combo])
@@ -362,16 +425,16 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
 
   return (
     <div className="toolbar">
-      <button className="tb-btn" disabled={!active?.canGoBack} onClick={() => onAction('back')} title="后退"><Icon name="back" /></button>
-      <button className="tb-btn" disabled={!active?.canGoForward} onClick={() => onAction('forward')} title="前进"><Icon name="forward" /></button>
-      <button className="tb-btn" disabled={noPage} onClick={() => onAction(active?.loading ? 'stopLoad' : 'reload')} title={active?.loading ? '停止加载' : '刷新'}><Icon name={active?.loading ? 'stop' : 'reload'} /></button>
-      <button className="tb-btn tb-home" onClick={() => onAction('home')} title="回到主页（起始页）"><Icon name="home" /></button>
+      <button className="tb-btn" disabled={!active?.canGoBack} onClick={() => onAction('back')} title={t('toolbar.back')}><Icon name="back" /></button>
+      <button className="tb-btn" disabled={!active?.canGoForward} onClick={() => onAction('forward')} title={t('toolbar.forward')}><Icon name="forward" /></button>
+      <button className="tb-btn" disabled={noPage} onClick={() => onAction(active?.loading ? 'stopLoad' : 'reload')} title={active?.loading ? t('toolbar.stop') : t('toolbar.reload')}><Icon name={active?.loading ? 'stop' : 'reload'} /></button>
+      <button className="tb-btn tb-home" onClick={() => onAction('home')} title={t('toolbar.home')}><Icon name="home" /></button>
       <div className="urlbar-wrap">
         <input
           className="urlbar"
           value={input}
           spellCheck={false}
-          placeholder="输入网址或搜索内容，回车打开"
+          placeholder={t('toolbar.addressPlaceholder')}
           aria-autocomplete="list"
           aria-controls="omnibox-list"
           aria-expanded={editing && sugs.length > 0}
@@ -417,14 +480,30 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
         <div className="engine-wrap address-engine">
           <button
             className="tb-btn engine-trigger"
-            title={`搜索引擎：${engines.find((e) => e.key === engine)?.name ?? engine}`}
+            title={t('toolbar.engineTitle', { name: engineDisplay })}
             onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect()
-              window.cobrowse.showEngineMenu(rect.left, rect.bottom + 4)
+              e.stopPropagation()
+              toggleEngineMenu()
             }}
           >
-            {engines.find((e) => e.key === engine)?.name ?? '搜索'}　⌄
+            {engineDisplay}　⌄
           </button>
+          {engineMenu !== 'closed' && (
+            <div
+              className={`engine-menu${engineMenu === 'closing' ? ' closing' : ''}`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {engines.map((en) => (
+                <button
+                  key={en.key}
+                  className={engine === en.key ? 'on' : ''}
+                  onClick={() => applyEngine(en.key)}
+                >
+                  {t(`engine.${en.key}` as I18nKey)}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         {editing && sugs.length > 0 && (
           <div className="omnibox-pop" role="listbox" id="omnibox-list">
@@ -454,11 +533,11 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           </div>
         )}
       </div>
-      <button className={`tb-btn bookmark-button ${bookmarked ? 'is-bookmarked' : ''}`} disabled={noPage} title={bookmarked ? '移除书签' : '添加书签'} onClick={onBookmark}><Icon name="star" filled={bookmarked} /></button>
+      <button className={`tb-btn bookmark-button ${bookmarked ? 'is-bookmarked' : ''}`} disabled={noPage} title={bookmarked ? t('toolbar.bookmarkRemove') : t('toolbar.bookmarkAdd')} onClick={onBookmark}><Icon name="star" filled={bookmarked} /></button>
       <div className="hist-wrap">
         <button
           className="tb-btn hist-trigger"
-          title="最近浏览记录"
+          title={t('toolbar.recent')}
           onClick={(e) => {
             e.stopPropagation()
             setHistOpen((v) => !v)
@@ -466,9 +545,9 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
         ><Icon name="history" /></button>
         {histOpen && (
           <div className="hist-pop" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="hist-pop-head">最近浏览</div>
+            <div className="hist-pop-head">{t('toolbar.recentHead')}</div>
             {recent.length === 0 ? (
-              <div className="hist-pop-empty">暂无浏览记录</div>
+              <div className="hist-pop-empty">{t('toolbar.recentEmpty')}</div>
             ) : (
               recent.map((s, i) => (
                 <button
@@ -501,7 +580,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
                 onOpenHistory?.()
               }}
             >
-              查看全部浏览记录
+              {t('toolbar.recentAll')}
             </button>
           </div>
         )}
@@ -509,7 +588,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
       <div className="tools-wrap">
         <button
           className="tb-btn tools-trigger"
-          title="浏览器工具和主题"
+          title={t('toolbar.tools')}
           onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect()
             window.cobrowse.showToolsMenu(rect.left, rect.bottom + 4, { annotationActive, theme })
@@ -522,22 +601,22 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           disabled={noPage && !annotationActive}
           title={
             noPage && !annotationActive
-              ? '当前页面不支持标注（请在网页上使用）'
+              ? t('toolbar.annotateUnsupported')
               : annotationActive
-                ? '退出页面标注模式'
-                : '进入页面标注模式'
+                ? t('toolbar.annotateOff')
+                : t('toolbar.annotateOn')
           }
           onClick={() => {
             if (onToggleAnnotation) onToggleAnnotation()
             else onAction('annotationMode')
           }}
         >
-          ✎ 标注
+          ✎ {t('toolbar.annotate')}
         </button>
       )}
       <div className="ai-wrap">
-        {active?.loading && <span className="load-dot" title="加载中" />}
-        <button className={`tb-btn ai-toggle ${aiOpen ? 'selected' : ''}`} title={aiOpen ? '隐藏 AI 面板' : '打开 AI 面板'} onClick={onToggleAI}>AI</button>
+        {active?.loading && <span className="load-dot" title={t('toolbar.loading')} />}
+        <button className={`tb-btn ai-toggle ${aiOpen ? 'selected' : ''}`} title={aiOpen ? t('toolbar.aiClose') : t('toolbar.aiOpen')} onClick={onToggleAI}>AI</button>
       </div>
 
       {stopKeysOpen && (
@@ -549,24 +628,20 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           }}
         >
           <div className="confirm-box stopkey-box">
-            <div className="confirm-title">急停快捷键</div>
-            <div className="stopkey-hint">
-              触发后立即中止当前任务（内置 agent 与外部工具进程）并接管浏览器；在网页内同样生效。支持单键与组合键（最多 5 个）。
-            </div>
-            <div className="stopkey-hint">
-              单键快捷键在网页输入框内打字时不会触发（避免误伤），组合键始终有效；设置快捷键后该键会从网页中截获。
-            </div>
+            <div className="confirm-title">{t('stopkeys.title')}</div>
+            <div className="stopkey-hint">{t('stopkeys.hint1')}</div>
+            <div className="stopkey-hint">{t('stopkeys.hint2')}</div>
             <div className="stopkey-chips">
-              {stopKeys.length === 0 && <span className="stopkey-empty">（未设置）</span>}
+              {stopKeys.length === 0 && <span className="stopkey-empty">{t('stopkeys.empty')}</span>}
               {stopKeys.map((k) => (
                 <span className="stopkey-chip" key={k}>
-                  {displayParts(k, platform).map((p, i) => (
+                  {displayParts(k, platform, lang).map((p, i) => (
                     <span className="stopkey-capwrap" key={i}>
                       {i > 0 && <span className="stopkey-plus">+</span>}
                       <kbd>{p}</kbd>
                     </span>
                   ))}
-                  <button type="button" title="移除" onClick={() => removeBinding(k)}>
+                  <button type="button" title={t('common.remove')} onClick={() => removeBinding(k)}>
                     ×
                   </button>
                 </span>
@@ -586,34 +661,34 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
               onKeyDown={onRecorderKeyDown}
             >
               {listening
-                ? pendingMods || '请按下快捷键…（Esc 取消）'
-                : '点击这里，然后直接按下你要设置的按键 / 组合键'}
+                ? pendingMods || t('stopkeys.listening')
+                : t('stopkeys.record')}
             </div>
             {stopError && <div className="stopkey-error">{stopError}</div>}
             <button type="button" className="stopkey-vk-toggle" onClick={() => setVkOpen((v) => !v)}>
-              {vkOpen ? '收起虚拟键盘' : '用虚拟键盘选择…'}
+              {vkOpen ? t('stopkeys.localKeyboardHide') : t('stopkeys.localKeyboard')}
             </button>
             {vkOpen && <VirtualKeyboard onPick={(c) => addBinding(c)} />}
             <div className="confirm-row">
               <button className="import-btn" onClick={closeStopKeys}>
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 className="send-btn"
                 onClick={() => {
                   if (stopKeys.length === 0) {
-                    setStopError('至少需要一个按键')
+                    setStopError(t('stopkeys.needOne'))
                     return
                   }
                   void window.cobrowse.emergencyKeysSet(stopKeys).then((r) => {
                     if (r.ok) {
                       setStopKeysOpen(false)
                       onStopKeysChanged?.(r.keys ?? stopKeys)
-                    } else setStopError(r.error ?? '保存失败')
+                    } else setStopError(r.error ?? t('stopkeys.saveFailed'))
                   })
                 }}
               >
-                保存
+                {t('common.save')}
               </button>
             </div>
           </div>
@@ -629,10 +704,8 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           }}
         >
           <div className="confirm-box stopkey-box">
-            <div className="confirm-title">快捷键设置</div>
-            <div className="stopkey-hint">
-              点击某个动作的「录制」后直接按下新按键（Esc 取消录制）；「恢复默认」将该动作还原为默认键。保存后立即生效。
-            </div>
+            <div className="confirm-title">{t('shortcuts.title')}</div>
+            <div className="stopkey-hint">{t('shortcuts.hint')}</div>
             <div
               style={{
                 maxHeight: '46vh',
@@ -658,9 +731,9 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
                       borderBottom: '1px solid var(--line-soft)'
                     }}
                   >
-                    <span style={{ flex: '0 0 118px', fontSize: 12.5 }}>{def.label}</span>
+                    <span style={{ flex: '0 0 118px', fontSize: 12.5 }}>{t(`shortcut.${def.id}` as I18nKey)}</span>
                     <span className="stopkey-chip" style={{ flex: '1 1 auto', minWidth: 0 }}>
-                      {displayParts(value, platform).map((p, i) => (
+                      {displayParts(value, platform, lang).map((p, i) => (
                         <span className="stopkey-capwrap" key={i}>
                           {i > 0 && <span className="stopkey-plus">+</span>}
                           <kbd>{p}</kbd>
@@ -687,7 +760,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
                       }}
                       onKeyDown={(e) => onShortcutRecorderKeyDown(e, def.id)}
                     >
-                      {isListening ? recordingMods || '按下按键…（Esc 取消）' : '录制'}
+                      {isListening ? recordingMods || t('shortcuts.pressNew') : t('shortcuts.rebind')}
                     </div>
                     <button
                       type="button"
@@ -699,7 +772,7 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
                         setShortcutError('')
                       }}
                     >
-                      恢复默认
+                      {t('shortcuts.resetOne')}
                     </button>
                   </div>
                 )
@@ -716,13 +789,13 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
                   setShortcutError('')
                 }}
               >
-                恢复全部默认
+                {t('shortcuts.resetAll')}
               </button>
               <button className="import-btn" onClick={closeShortcuts}>
-                取消
+                {t('common.cancel')}
               </button>
               <button className="send-btn" onClick={saveShortcuts}>
-                保存
+                {t('common.save')}
               </button>
             </div>
           </div>

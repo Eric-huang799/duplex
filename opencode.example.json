@@ -1,8 +1,19 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "permission": {
-    "duplex_*": "deny",
-    "*": "allow"
+    "*": "allow",
+    "duplex_*": "deny"
+  },
+  "agent": {
+    "duplex": {
+      "description": "Duplex browser-panel driven session",
+      "mode": "primary",
+      "prompt": "This prompt was sent from the Duplex browser panel. For browser or page actions, including opening URLs, navigation, inspection, clicking, typing, and screenshots, use the available duplex_* tools, for example duplex_list_tabs, duplex_navigate, duplex_new_tab, duplex_snapshot, duplex_click, duplex_type, and duplex_screenshot. Do not use other browser tooling or launch another browser.",
+      "permission": {
+        "*": "allow",
+        "duplex_*": "allow"
+      }
+    }
   },
   "mcp": {
     "duplex": {

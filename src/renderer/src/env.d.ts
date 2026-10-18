@@ -222,6 +222,9 @@ interface CobrowseApi {
   onAgentConfirmCancel(cb: (s: { id?: number }) => void): () => void
   searchEngineGet(): Promise<{ engine: string; engines: Array<{ key: string; name: string }> }>
   searchEngineSet(engine: string): Promise<{ ok: boolean; error?: string }>
+  languageGet(): Promise<{ language: string; systemLocale: string }>
+  languageSet(language: string): Promise<{ ok: boolean; error?: string }>
+  onLanguageChanged(cb: (language: string) => void): () => void
   agentsStartSession(
     toolId: string,
     message: string

@@ -12,6 +12,8 @@ import type { LlmProtocol } from '../shared/llm'
 import { DEFAULT_ENGINE, SEARCH_ENGINES, type SearchEngine } from '../shared/search'
 import { normalizeBinding } from '../shared/hotkeys'
 import { isShortcutAction } from '../shared/shortcuts'
+import { isValidLangSetting, type LangSetting } from '../shared/i18n'
+import { mt } from './i18n'
 
 /** Default global emergency-stop hotkeys (parsed as hotkey combos, e.g. "F2" / "Ctrl+Shift+K"). */
 export const DEFAULT_STOP_KEYS = ['F2', 'Ctrl+Shift+K']
@@ -45,10 +47,9 @@ export interface AgentConfig {
   idleTimeoutMs?: number
 }
 
-const SAVE_ERROR = '设置保存失败：磁盘或权限问题'
-
 const cache: {
   theme: ThemeSetting
+  language: LangSetting
   session: SavedSession | null
   agentProviders: AgentProvider[]
   activeProviderId: string | null
@@ -60,6 +61,7 @@ const cache: {
   shortcuts: Record<string, string>
 } = {
   theme: 'system',
+  language: 'system',
   session: null,
   agentProviders: [],
   activeProviderId: null,
@@ -169,14 +171,14 @@ function savePatch(patch: Record<string, unknown>): SaveResult {
   try {
     current = readRaw()
   } catch (e) {
-    return { ok: false, error: (e as Error)?.message ?? SAVE_ERROR }
+    return { ok: false, error: (e as Error)?.message ?? mt('settings.saveFailed') }
   }
   try {
     refreshBackup()
     writeRaw({ ...current, ...patch })
     return { ok: true }
   } catch {
-    return { ok: false, error: SAVE_ERROR }
+    return { ok: false, error: mt('settings.saveFailed') }
   }
 }
 
@@ -198,6 +200,7 @@ function sanitizeShortcutOverrides(value: unknown): Record<string, string> {
 
 export function loadSettings(): {
   theme: ThemeSetting
+  language: LangSetting
   session: SavedSession | null
   agentProviders: AgentProvider[]
   activeProviderId: string | null
@@ -216,6 +219,7 @@ export function loadSettings(): {
     raw = {}
   }
   if (isValidTheme(raw.theme)) cache.theme = raw.theme
+  if (isValidLangSetting(raw.language)) cache.language = raw.language
   if (typeof raw.searchEngine === 'string' && raw.searchEngine in SEARCH_ENGINES) {
     cache.searchEngine = raw.searchEngine as SearchEngine
   }
@@ -251,6 +255,7 @@ export function loadSettings(): {
   if (raw.shortcuts !== undefined) cache.shortcuts = sanitizeShortcutOverrides(raw.shortcuts)
   return {
     theme: cache.theme,
+    language: cache.language,
     session: cache.session,
     agentProviders: cache.agentProviders,
     activeProviderId: cache.activeProviderId,
@@ -284,6 +289,12 @@ export function activeAgentConfig(): AgentConfig | null {
 export function saveTheme(theme: ThemeSetting): SaveResult {
   const r = savePatch({ theme })
   if (r.ok) cache.theme = theme
+  return r
+}
+
+export function saveLanguage(language: LangSetting): SaveResult {
+  const r = savePatch({ language })
+  if (r.ok) cache.language = language
   return r
 }
 
@@ -327,7 +338,7 @@ export function saveProviders(
   try {
     current = readRaw()
   } catch (e) {
-    return { ok: false, error: (e as Error)?.message ?? SAVE_ERROR }
+    return { ok: false, error: (e as Error)?.message ?? mt('settings.saveFailed') }
   }
   try {
     refreshBackup()
@@ -342,7 +353,7 @@ export function saveProviders(
     cache.activeProviderId = activeProviderId
     return { ok: true }
   } catch {
-    return { ok: false, error: SAVE_ERROR }
+    return { ok: false, error: mt('settings.saveFailed') }
   }
 }
 

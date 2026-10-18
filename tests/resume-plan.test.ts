@@ -19,7 +19,26 @@ describe('buildResumePlan', () => {
     expect(p.args).toContain('--skip-git-repo-check')
     expect(p.args).toContain('abc-123')
     expect(p.args[p.args.length - 1]).toBe('-')
+    const instruction = p.args.find((a) => a.startsWith('developer_instructions='))
+    expect(instruction).toBeDefined()
+    expect(instruction).toContain('mcp__duplex__*')
+    expect(p.args[p.args.indexOf(instruction!) - 1]).toBe('-c')
     if (isWin) expect(p.file).toBe('cmd.exe')
+  })
+
+  it('codex: resume carries the per-session duplex MCP server', () => {
+    const p = buildResumePlan({ kind: 'codex' }, 'abc-123', '', '', {
+      bridgePath: 'C:\\Duplex\\dist-bridge\\index.cjs',
+      dataDir: 'C:\\tmp\\duplex-demo'
+    })
+    if ('error' in p) throw new Error(p.error)
+    expect(p.args).toContain("mcp_servers.duplex.command='node'")
+    expect(p.args).toContain(
+      "mcp_servers.duplex.args=['C:\\Duplex\\dist-bridge\\index.cjs']"
+    )
+    expect(p.args).toContain(
+      "mcp_servers.duplex.env.DUPLEX_DATA_DIR='C:\\tmp\\duplex-demo'"
+    )
   })
 
   it('claude: --resume with print mode and stdin prompt', () => {
@@ -28,7 +47,19 @@ describe('buildResumePlan', () => {
     expect(p.args).toContain('--resume')
     expect(p.args).toContain('sid-1')
     expect(p.args).toContain('-p')
+    expect(p.args).toContain('--append-system-prompt')
+    expect(p.args).toContain('--allowedTools')
+    expect(p.args).toContain('mcp__duplex')
     if (isWin) expect(p.file).toBe('cmd.exe')
+  })
+
+  it('claude: resume loads the per-session duplex MCP config', () => {
+    const p = buildResumePlan({ kind: 'claude' }, 'sid-1', '', '', {
+      claudeMcpConfigPath: 'C:\\tmp\\claude-mcp-duplex.json'
+    })
+    if ('error' in p) throw new Error(p.error)
+    expect(p.args).toContain('--mcp-config')
+    expect(p.args).toContain('C:\\tmp\\claude-mcp-duplex.json')
   })
 
   it('rejects an empty session id and unsupported kinds', () => {

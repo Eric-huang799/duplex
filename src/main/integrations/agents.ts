@@ -114,6 +114,95 @@ function viaShell(cmd: string, args: string[]): { file: string; args: string[] }
   return WIN ? { file: 'cmd.exe', args: ['/c', cmd, ...args] } : { file: cmd, args }
 }
 
+/**
+ * Codex runs with its own in-app Browser plugin, which reports "no browser"
+ * outside the ChatGPT app even when Duplex is available. Every session Duplex
+ * launches or resumes therefore gets a developer instruction pointing browser
+ * work at Duplex's own MCP tools. TOML literal string: no escapes, no cmd
+ * metacharacters that survive Node's argument quoting.
+ */
+const CODEX_DUPLEX_INSTRUCTIONS =
+  'You are running inside Duplex. The BROWSER environment variable is duplex-open. ' +
+  'For every browser or page action, including opening URLs, navigation, inspection, ' +
+  'clicking, typing, and screenshots, use the available mcp__duplex__* tools, for ' +
+  'example list_tabs, navigate, new_tab, snapshot, click, type, and screenshot. ' +
+  'Do not use the Codex built-in browser plugin, node_repl browser runtime, or ' +
+  'Computer use to control the browser.'
+
+/** Per-session Duplex wiring; nothing is installed globally for these CLIs. */
+export interface DuplexLaunchOptions {
+  /** Absolute path of dist-bridge/index.cjs. */
+  bridgePath?: string
+  /** Data directory the MCP bridge must target (isolated profiles). */
+  dataDir?: string
+  /** JSON file passed to Claude Code via --mcp-config. */
+  claudeMcpConfigPath?: string
+}
+
+/**
+ * TOML string for a value embedded in a command-line argument. Literal
+ * strings keep Windows backslashes intact; the basic-string fallback (JSON
+ * escaping) covers a path that itself contains a single quote.
+ */
+function tomlString(value: string): string {
+  if (!value.includes("'")) return `'${value}'`
+  return JSON.stringify(value)
+}
+
+function codexDuplexInstructionArgs(opts: DuplexLaunchOptions): string[] {
+  const args = ['-c', `developer_instructions='${CODEX_DUPLEX_INSTRUCTIONS}'`]
+  if (opts.bridgePath) {
+    // Pass the MCP server only for this invocation. Codex starts MCP servers
+    // with a narrowed environment, so DUPLEX_DATA_DIR must be explicit too.
+    args.push('-c', "mcp_servers.duplex.command='node'")
+    args.push('-c', `mcp_servers.duplex.args=[${tomlString(opts.bridgePath)}]`)
+    if (opts.dataDir) {
+      args.push('-c', `mcp_servers.duplex.env.DUPLEX_DATA_DIR=${tomlString(opts.dataDir)}`)
+    }
+  }
+  return args
+}
+
+/**
+ * Claude Code equivalent: Duplex's MCP tools are already connected, but print
+ * mode denies them until allowed, and the default system prompt does not know
+ * which browser surface to prefer.
+ */
+const CLAUDE_DUPLEX_INSTRUCTIONS =
+  'You are running inside Duplex. The BROWSER environment variable is duplex-open. ' +
+  'For every browser or page action, including opening URLs, navigation, inspection, ' +
+  'clicking, typing, and screenshots, use the available mcp__duplex__* tools, for ' +
+  'example list_tabs, navigate, new_tab, snapshot, click, type, and screenshot. ' +
+  'Do not use Chrome integration, Playwright, WebFetch, or Computer use to control ' +
+  'the browser.'
+
+function claudeDuplexArgs(opts: DuplexLaunchOptions): string[] {
+  const args = [
+    '--append-system-prompt',
+    CLAUDE_DUPLEX_INSTRUCTIONS,
+    '--allowedTools',
+    'mcp__duplex'
+  ]
+  if (opts.claudeMcpConfigPath) {
+    args.push('--mcp-config', opts.claudeMcpConfigPath)
+  }
+  return args
+}
+
+/**
+ * Write the per-invocation Claude MCP config. Claude Code is never given a
+ * global duplex server; only Duplex-launched/resumed sessions can see it.
+ */
+export function ensureClaudeMcpConfig(bridgePath: string, dataDir?: string): string {
+  const dir = cobrowseDir()
+  const file = path.join(dir, 'claude-mcp-duplex.json')
+  const server: Record<string, unknown> = { command: 'node', args: [bridgePath] }
+  if (dataDir) server.env = { DUPLEX_DATA_DIR: dataDir }
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(file, JSON.stringify({ mcpServers: { duplex: server } }, null, 2), 'utf8')
+  return file
+}
+
 /** Resolve a spawn working directory: the tool's cwd when it exists, else the home directory. */
 function resolveCwd(cwd?: string): string {
   if (cwd) {
@@ -176,20 +265,35 @@ export function escapeWindowsCmdArg(text: string): string {
 export function buildStartPlan(
   tool: Pick<AgentTool, 'kind' | 'command' | 'cwd'>,
   message: string,
-  model?: string
+  model?: string,
+  opts: DuplexLaunchOptions = {}
 ): StartPlan | { error: string } {
   const cwd = resolveCwd(tool.cwd)
   const m = (model ?? '').trim()
   switch (tool.kind) {
     case 'codex':
       return {
-        ...viaShell('codex', ['exec', '--json', '--skip-git-repo-check', ...(m ? ['-m', m] : []), '-']),
+        ...viaShell('codex', [
+          'exec',
+          '--json',
+          '--skip-git-repo-check',
+          ...(m ? ['-m', m] : []),
+          ...codexDuplexInstructionArgs(opts),
+          '-'
+        ]),
         useStdin: true,
         cwd
       }
     case 'claude':
       return {
-        ...viaShell('claude', ['-p', '--output-format', 'stream-json', '--verbose', ...(m ? ['--model', m] : [])]),
+        ...viaShell('claude', [
+          '-p',
+          '--output-format',
+          'stream-json',
+          '--verbose',
+          ...(m ? ['--model', m] : []),
+          ...claudeDuplexArgs(opts)
+        ]),
         useStdin: true,
         cwd
       }
@@ -236,7 +340,8 @@ export function buildResumePlan(
   tool: Pick<AgentTool, 'kind'>,
   cliSessionId: string,
   cwdHint: string,
-  model?: string
+  model?: string,
+  opts: DuplexLaunchOptions = {}
 ): ResumePlan | { error: string } {
   const id = cliSessionId.trim()
   if (!id) return { error: '无法确定该会话的 CLI 会话 ID' }
@@ -252,11 +357,28 @@ export function buildResumePlan(
   switch (tool.kind) {
     case 'codex':
       return {
-        ...viaShell('codex', ['exec', 'resume', '--skip-git-repo-check', ...(m ? ['-m', m] : []), id, '-']),
+        ...viaShell('codex', [
+          'exec',
+          'resume',
+          '--skip-git-repo-check',
+          ...(m ? ['-m', m] : []),
+          ...codexDuplexInstructionArgs(opts),
+          id,
+          '-'
+        ]),
         cwd
       }
     case 'claude':
-      return { ...viaShell('claude', ['--resume', id, '-p', ...(m ? ['--model', m] : [])]), cwd }
+      return {
+        ...viaShell('claude', [
+          '--resume',
+          id,
+          '-p',
+          ...(m ? ['--model', m] : []),
+          ...claudeDuplexArgs(opts)
+        ]),
+        cwd
+      }
     default:
       return { error: '该工具暂不支持从面板续聊，可发起新会话或在原 CLI 中继续' }
   }

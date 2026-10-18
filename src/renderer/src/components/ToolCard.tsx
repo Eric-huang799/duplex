@@ -1,5 +1,6 @@
 import type { MirrorToolEvent } from '../../../shared/protocol'
 import { ShieldIcon } from './PermissionCard'
+import { useI18n } from '../i18n'
 
 const STATUS_ICON: Record<MirrorToolEvent['status'], string> = {
   pending: '⋯',
@@ -37,6 +38,7 @@ export function ToolCard({
   onToggle: () => void
   waiting?: boolean
 }): React.JSX.Element {
+  const { t } = useI18n()
   const summary = ev.title || summarizeInput(ev.input)
   const outputTruncated = !!ev.output && ev.output.length > OUTPUT_LIMIT
   const errorTruncated = !!ev.error && ev.error.length > ERROR_LIMIT
@@ -52,7 +54,7 @@ export function ToolCard({
         )}
         <span className="tool-name">{ev.tool}</span>
         {waiting ? (
-          <span className="tool-title">等待你的许可…</span>
+          <span className="tool-title">{t('tool.waitingPermission')}</span>
         ) : (
           summary && <span className="tool-title">{summary}</span>
         )}
@@ -65,16 +67,16 @@ export function ToolCard({
           {ev.output && (
             <pre className="tool-io">
               {ev.output.slice(0, OUTPUT_LIMIT)}
-              {outputTruncated ? '\n…（已截断）' : ''}
+              {outputTruncated ? '\n' + t('tool.truncated') : ''}
             </pre>
           )}
           {ev.error && (
             <pre className="tool-io err">
               {ev.error.slice(0, ERROR_LIMIT)}
-              {errorTruncated ? '\n…（已截断）' : ''}
+              {errorTruncated ? '\n' + t('tool.truncated') : ''}
             </pre>
           )}
-          {!ev.input && !ev.output && !ev.error && <div className="tool-io dim">（无详情）</div>}
+          {!ev.input && !ev.output && !ev.error && <div className="tool-io dim">{t('tool.noDetails')}</div>}
         </div>
       )}
     </div>

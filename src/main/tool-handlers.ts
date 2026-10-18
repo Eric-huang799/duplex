@@ -2,6 +2,7 @@ import type { Tab, TabManager } from './tabs'
 import * as cdp from './cdp'
 import * as scripts from './page-scripts'
 import { markAiActive, overlaySend, takeoverHint } from './overlay'
+import { currentLang } from './i18n'
 import { operationSignal } from './interrupt'
 import { performPageAction } from './playwright-browser'
 import { resolveAddress } from '../shared/url'
@@ -291,7 +292,7 @@ async function dispatch(
     case 'annotation_mode': {
       const tab = tabs.requireTab(args.tabId as number | undefined)
       const active = args.active === true
-      overlaySend(tab, { kind: 'annotationMode', active })
+      overlaySend(tab, { kind: 'annotationMode', active, lang: currentLang() })
       overlaySend(tab, {
         kind: 'status',
         text: active ? '标注模式已开启：在页面上画框并提问（Esc 退出）' : '标注模式已关闭',

@@ -27,7 +27,7 @@ export type OverlayCommand =
       ttl?: number
     }
   | { kind: 'clearStatus' }
-  | { kind: 'annotationMode'; active?: boolean }
+  | { kind: 'annotationMode'; active?: boolean; lang?: 'zh' | 'en' }
   | {
       kind: 'annotationResult'
       annotationId: string

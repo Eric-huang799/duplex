@@ -44,6 +44,12 @@
 
 - **You and the AI share one page — and you come first.** While you are scrolling, typing or interacting, the AI keeps observing but pauses its own modifications on that page instead of fighting you for the same input. A status bar lists the pages under human control, each with a one-click resume for when you're ready. The emergency stop remains the hard brake: one key cuts every AI action, the CLI processes it started, and all queued messages.
 
+## What's new in v0.2.10
+
+- **Bilingual interface** — the whole renderer, native menus, context menus, dialogs and annotation overlay switch between Simplified Chinese and English; follow the system locale or pin a language in the tools menu.
+- **In-app search-engine menu** — the address-bar engine picker no longer depends on a native popup menu; choose Baidu, Bing or Google in a themed dropdown.
+- **Panel-driven browser control only** — Codex, Claude Code and opencode receive Duplex's MCP browser tools only for sessions started or resumed from the Duplex panel. No global MCP server is installed, so standalone agent sessions never open Duplex on their own; the opencode integration uses a dedicated `duplex` agent with `duplex_*` denied by default.
+
 ## What's new in v0.2.9
 
 - **Human-first collaboration** — the AI yields to you. When you scroll, type, tap or focus something, it keeps reading and thinking but pauses its own modifications on that page; a status bar shows which pages are under human control and hands each one back with a click. Your scroll position and focus are preserved even while the AI acts.
@@ -165,10 +171,23 @@ npm start      # preview the production build
 ### Connect opencode (recommended)
 
 1. Install the mirror plugin. Copy `integrations/opencode/plugins/cobrowse-mirror.ts` to your global opencode plugin directory (`~/.config/opencode/plugins/`), or into `.opencode/plugins/` of a project.
-2. Register the MCP server in your opencode config (`opencode.json`), project-level or global — see [`opencode.example.json`](opencode.example.json):
+2. Register the MCP server and the `duplex` agent in your opencode config (`opencode.json`), project-level or global — see [`opencode.example.json`](opencode.example.json). Normal sessions keep `duplex_*` denied; only the `duplex` agent allows them.
 
 ```json
 {
+  "permission": {
+    "*": "allow",
+    "duplex_*": "deny"
+  },
+  "agent": {
+    "duplex": {
+      "mode": "primary",
+      "permission": {
+        "*": "allow",
+        "duplex_*": "allow"
+      }
+    }
+  },
   "mcp": {
     "duplex": {
       "type": "local",
@@ -179,8 +198,10 @@ npm start      # preview the production build
 }
 ```
 
-3. In opencode, ask the AI to browse: *"open example.com and describe the page"*. The browser launches automatically on the first tool call (no need to start it manually).
-4. In the Duplex side panel choose the **opencode** tab and select the session you want to follow (or keep "Auto").
+3. In the Duplex side panel choose the **opencode** tab and send the request there. The plugin delivers it to the active opencode session under the `duplex` agent, so browser control is enabled for that panel-originated turn. Normal opencode sessions never open Duplex on their own.
+4. To trigger it manually from opencode, select the `duplex` agent explicitly.
+
+Codex and Claude Code follow the same rule: no global MCP server is installed. Duplex injects the server only into sessions it starts or resumes from the panel.
 
 ### Use the built-in model (no opencode required)
 

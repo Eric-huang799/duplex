@@ -10,6 +10,7 @@ import {
   parseBinding,
   type ParsedBinding
 } from './hotkeys'
+import { translate, type Lang } from './i18n'
 
 export type ShortcutAction =
   | 'focusAddress'
@@ -82,8 +83,8 @@ export function isShortcutAction(value: string): value is ShortcutAction {
   return ACTION_IDS.has(value)
 }
 
-export function shortcutLabel(action: ShortcutAction): string {
-  return SHORTCUT_DEFS.find((d) => d.id === action)?.label ?? action
+export function shortcutLabel(action: ShortcutAction, lang: Lang = 'zh'): string {
+  return translate(lang, `shortcut.${action}` as Parameters<typeof translate>[1])
 }
 
 /**
@@ -155,8 +156,10 @@ export type ShortcutValidation = { ok: true } | { ok: false; error: string }
  */
 export function validateShortcuts(
   map: Record<string, string>,
-  opts: ValidateShortcutsOptions = {}
+  opts: ValidateShortcutsOptions & { lang?: Lang } = {}
 ): ShortcutValidation {
+  const lang = opts.lang ?? 'zh'
+  const labelOf = (def: ShortcutDef): string => translate(lang, `shortcut.${def.id}` as Parameters<typeof translate>[1])
   const platform = opts.platform
   const entries: Array<{ def: ShortcutDef; combo: string }> = []
   for (const def of SHORTCUT_DEFS) {
@@ -164,27 +167,27 @@ export function validateShortcuts(
     const raw = map[def.id]
     if (typeof raw !== 'string' || !raw.trim()) continue
     const parsed = parseBinding(raw)
-    if (!parsed) return { ok: false, error: `「${def.label}」的按键无法识别` }
+    if (!parsed) return { ok: false, error: translate(lang, 'shortcutErr.unrecognized', { label: labelOf(def) }) }
     const combo = normalizeBinding(raw) ?? raw.trim()
     if (parsed.key === 'F12') {
-      return { ok: false, error: `「${def.label}」不能使用 F12（系统保留）` }
+      return { ok: false, error: translate(lang, 'shortcutErr.f12', { label: labelOf(def) }) }
     }
     if (combo === 'Alt+F4') {
-      return { ok: false, error: `「${def.label}」不能使用 Alt+F4（系统保留）` }
+      return { ok: false, error: translate(lang, 'shortcutErr.altF4', { label: labelOf(def) }) }
     }
     if (parsed.meta && !isMacPlatform(platform)) {
-      return { ok: false, error: `「${def.label}」使用 Win 键组合会被系统占用` }
+      return { ok: false, error: translate(lang, 'shortcutErr.win', { label: labelOf(def) }) }
     }
     const hasMod = parsed.ctrl || parsed.alt || parsed.shift || parsed.meta
     const bareAllowed = /^F([1-9]|1[0-2])$/.test(parsed.key) || parsed.key === 'Escape'
     if (!hasMod && !bareAllowed) {
       return {
         ok: false,
-        error: `「${def.label}」需要配合 Ctrl / Alt / Shift 使用（F1–F12、Esc 可单用）`
+        error: translate(lang, 'shortcutErr.modifier', { label: labelOf(def) })
       }
     }
     if (isReservedTabSwitch(parsed)) {
-      return { ok: false, error: `「${def.label}」不能使用 Ctrl+1–9（已保留给标签页切换）` }
+      return { ok: false, error: translate(lang, 'shortcutErr.tabSwitch', { label: labelOf(def) }) }
     }
     entries.push({ def, combo })
   }
@@ -193,7 +196,11 @@ export function validateShortcuts(
       if (sameShortcut(entries[i].combo, entries[j].combo, platform)) {
         return {
           ok: false,
-          error: `快捷键重复：「${entries[i].def.label}」与「${entries[j].def.label}」都使用了 ${entries[i].combo}`
+          error: translate(lang, 'shortcutErr.duplicate', {
+            a: labelOf(entries[i].def),
+            b: labelOf(entries[j].def),
+            combo: entries[i].combo
+          })
         }
       }
     }
@@ -204,7 +211,10 @@ export function validateShortcuts(
       if (sameShortcut(entry.combo, key, platform)) {
         return {
           ok: false,
-          error: `「${entry.def.label}」与急停键 ${normalizeBinding(key) ?? key} 冲突`
+          error: translate(lang, 'shortcutErr.emergency', {
+            label: labelOf(entry.def),
+            combo: normalizeBinding(key) ?? key
+          })
         }
       }
     }

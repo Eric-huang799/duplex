@@ -11,6 +11,10 @@ import { MarkdownProse } from './Markdown'
 import { ProvidersPanel } from './ProvidersPanel'
 import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
+import { useI18n } from '../i18n'
+import type { I18nKey } from '../../../shared/i18n'
+
+type TFn = (key: I18nKey, vars?: Record<string, string | number>) => string
 
 export type PanelMode = 'opencode' | 'agent' | 'external'
 
@@ -54,15 +58,15 @@ interface Props {
   initialShowProviders?: boolean
 }
 
-function timeAgo(ts: number): string {
+function timeAgo(t: TFn, ts: number): string {
   if (!ts) return ''
   const diff = Date.now() - ts
   const m = Math.floor(diff / 60000)
-  if (m < 1) return '刚刚'
-  if (m < 60) return `${m} 分钟前`
+  if (m < 1) return t('time.justNow')
+  if (m < 60) return t('time.minutesAgo', { n: m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小时前`
-  return `${Math.floor(h / 24)} 天前`
+  if (h < 24) return t('time.hoursAgo', { n: h })
+  return t('time.daysAgo', { n: Math.floor(h / 24) })
 }
 
 function AnnotationNotice({ ev }: { ev: MirrorAnnotationEvent }): React.JSX.Element {
@@ -81,6 +85,7 @@ function AnnotationNotice({ ev }: { ev: MirrorAnnotationEvent }): React.JSX.Elem
 }
 
 function MirrorItem({ ev, pendingToolId }: { ev: MirrorEvent; pendingToolId?: number | null }): React.JSX.Element | null {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
 
   if (ev.kind === 'annotation') {
@@ -97,7 +102,7 @@ function MirrorItem({ ev, pendingToolId }: { ev: MirrorEvent; pendingToolId?: nu
   if (ev.kind === 'reasoning') {
     return (
       <details className="reasoning">
-        <summary>思考过程</summary>
+        <summary>{t('panel.thinking')}</summary>
         <pre>{ev.text}</pre>
       </details>
     )
@@ -114,9 +119,9 @@ function MirrorItem({ ev, pendingToolId }: { ev: MirrorEvent; pendingToolId?: nu
   }
   if (ev.kind === 'session') {
     if (ev.status === 'error') {
-      return <div className="session-line err">会话错误：{ev.error ?? '未知错误'}</div>
+      return <div className="session-line err">{t('panel.sessionError', { err: ev.error ?? t('panel.unknownError') })}</div>
     }
-    return <div className="session-line">— 本轮结束 —</div>
+    return <div className="session-line">{t('panel.roundEnd')}</div>
   }
   return null
 }
@@ -137,6 +142,7 @@ export function SidePanel({
   onAgentSessionDeleted,
   initialShowProviders
 }: Props): React.JSX.Element {
+  const { t } = useI18n()
   const [draft, setDraft] = useState(() => loadDraft(mode))
   const draftRef = useRef(draft)
   const draftModeRef = useRef(mode)
@@ -231,7 +237,7 @@ export function SidePanel({
     )
     setAddBusy(false)
     if (!r.ok) {
-      setAddErr(r.error ?? '添加失败')
+      setAddErr(r.error ?? t('panel.addFailed'))
       return
     }
     setAddOpen(false)
@@ -397,41 +403,41 @@ export function SidePanel({
   const extReplyReady = extCanReply && !!externalOpened
 
   const send = (): void => {
-    const t = draft.trim()
-    if (!t) return
+    const text = draft.trim()
+    if (!text) return
     if (mode === 'external') {
       if (extReplyReady) {
         if (externalPending) return
         setExternalErr('')
         setExternalPending(true)
-        void window.cobrowse.agentsSessionSend(externalTool, t).then((r) => {
+        void window.cobrowse.agentsSessionSend(externalTool, text).then((r) => {
           setExternalPending(false)
           if (!r.ok) {
-            setExternalErr(r.error ?? '发送失败')
+            setExternalErr(r.error ?? t('panel.sendFailed'))
             return
           }
-          clearDraftIfUnchanged(t)
+          clearDraftIfUnchanged(text)
         })
         return
       }
       if (!externalCanStart || externalPending) return
       setExternalErr('')
       setExternalPending(true)
-      void window.cobrowse.agentsStartSession(externalTool, t).then((r) => {
+      void window.cobrowse.agentsStartSession(externalTool, text).then((r) => {
         setExternalPending(false)
         if (!r.ok) {
-          setExternalErr(r.error ?? '启动失败')
+          setExternalErr(r.error ?? t('panel.startFailed'))
           return
         }
-        clearDraftIfUnchanged(t)
+        clearDraftIfUnchanged(text)
       })
       return
     }
     if (isAgent) {
       setAgentError('')
-      void window.cobrowse.agentSend(t, modifyNextSend ? { interrupt: true } : undefined).then((res) => {
+      void window.cobrowse.agentSend(text, modifyNextSend ? { interrupt: true } : undefined).then((res) => {
         if (res.ok) {
-          clearDraftIfUnchanged(t)
+          clearDraftIfUnchanged(text)
           setModifyNextSend(false)
           return
         }
@@ -440,7 +446,7 @@ export function SidePanel({
       return
     }
     updateDraft('')
-    onSend(t)
+    onSend(text)
   }
 
   useEffect(() => {
@@ -559,9 +565,9 @@ export function SidePanel({
         <button
           className={mode === 'agent' ? 'on' : ''}
           onClick={() => onModeChange('agent')}
-          title="浏览器内置模型直接工作（API 直连，可选功能）"
+          title={t('panel.builtinTitle')}
         >
-          内置模型
+          {t('panel.builtin')}
           {agentSessionState === 'busy' && mode !== 'agent' && (
             <span
               className="dot busy"
@@ -571,7 +577,7 @@ export function SidePanel({
         </button>
         <select
           className="tool-select"
-          title="切换要镜像的外部 agent 工具"
+          title={t('panel.switchTool')}
           onMouseDown={() => void refreshTools()}
           value={mode === 'agent' ? '__placeholder__' : mode === 'external' ? externalTool : 'opencode'}
           onChange={(e) => {
@@ -589,18 +595,18 @@ export function SidePanel({
           }}
         >
           <option value="__placeholder__" disabled>
-            {mode === 'agent' ? '切换工具…' : '外部工具…'}
+            {mode === 'agent' ? t('panel.switchToolOption') : t('panel.externalToolOption')}
           </option>
-          <option value="opencode">opencode（双向镜像）</option>
+          <option value="opencode">{t('panel.opencodeMirror')}</option>
           {tools
-            .filter((t) => t.id !== 'opencode')
-            .map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
-                {t.available ? '' : '（未检测到）'}
+            .filter((tool) => tool.id !== 'opencode')
+            .map((tool) => (
+              <option key={tool.id} value={tool.id}>
+                {tool.name}
+                {tool.available ? '' : t('panel.notDetected')}
               </option>
             ))}
-          <option value="__add__">＋ 添加自定义工具…</option>
+          <option value="__add__">{t('panel.addCustomTool')}</option>
         </select>
       </div>
 
@@ -609,21 +615,21 @@ export function SidePanel({
           <span className={`dot ${agentSessionState === 'busy' ? 'busy' : agentConfigured ? 'ok' : 'idle'}`} />
           <span className="panel-status">
             {agentSessionState === 'busy'
-              ? '内置模型工作中…'
+              ? t('panel.agentBusy')
               : agentConfigured
-                ? '内置模型就绪'
-                : '未配置模型'}
+                ? t('panel.agentReady')
+                : t('panel.agentUnconfigured')}
           </span>
-          <button className="session-btn" data-panel-toggle="providers" onClick={() => setShowProviders((v) => !v)} title="模型配置">
+          <button className="session-btn" data-panel-toggle="providers" onClick={() => setShowProviders((v) => !v)} title={t('panel.modelConfig')}>
             ⚙
           </button>
-          <button className="session-btn" data-panel-toggle="skills" onClick={() => setShowSkills((v) => !v)} title="Skills 与 CLI 接入">
+          <button className="session-btn" data-panel-toggle="skills" onClick={() => setShowSkills((v) => !v)} title={t('panel.skillsCli')}>
             ✦
           </button>
-          <button className="session-btn" onClick={toggleAgentSessions} title="历史对话">
+          <button className="session-btn" onClick={toggleAgentSessions} title={t('panel.historyChats')}>
             ☰
           </button>
-          <button className="panel-collapse" title="收起面板" onClick={onCollapse}>
+          <button className="panel-collapse" title={t('panel.collapse')} onClick={onCollapse}>
             »
           </button>
         </div>
@@ -643,24 +649,24 @@ export function SidePanel({
           <span className={`dot ${busy ? 'busy' : connected ? 'ok' : 'idle'}`} />
           <span className="panel-status">
             {creatingSession
-              ? '正在创建对话…'
+              ? t('panel.creatingChat')
               : busy
-                ? 'AI 正在工作…'
+                ? t('panel.aiWorking')
                 : connected
-                  ? 'AI 已连接'
-                  : '等待 AI 连接'}
+                  ? t('panel.aiConnected')
+                  : t('panel.aiWaiting')}
           </span>
           <button
             className="session-btn"
             onClick={toggleSessionMenu}
-            title="选择要连接的 opencode 对话"
+            title={t('panel.selectOpencodeChat')}
           >
             <span className="session-btn-label">
-              {sessionInfo?.activeSessionID ? sessionInfo.activeTitle || '已选对话' : '自动'}
+              {sessionInfo?.activeSessionID ? sessionInfo.activeTitle || t('panel.selectedChat') : t('panel.auto')}
             </span>
             <span className="session-btn-caret">▾</span>
           </button>
-          <button className="panel-collapse" title="收起面板" onClick={onCollapse}>
+          <button className="panel-collapse" title={t('panel.collapse')} onClick={onCollapse}>
             »
           </button>
         </div>
@@ -670,15 +676,15 @@ export function SidePanel({
         <>
           <div className="session-menu-backdrop" onClick={() => setSessionMenu(false)} />
           <div className="session-menu">
-            <div className="session-menu-title">连接的 opencode 对话</div>
+            <div className="session-menu-title">{t('panel.connectedOpencode')}</div>
             <button className="session-item session-new-top" onClick={createSession}>
-              ＋ 新建对话
+              {t('panel.newChat')}
             </button>
             <button
               className={`session-item ${!sessionInfo?.activeSessionID ? 'on' : ''}`}
               onClick={() => pickSession(null)}
             >
-              <span className="session-item-title">自动（跟随最近对话）</span>
+              <span className="session-item-title">{t('panel.autoFollow')}</span>
             </button>
             {(sessionInfo?.sessions ?? []).map((s) => (
               <button
@@ -687,11 +693,11 @@ export function SidePanel({
                 onClick={() => pickSession(s.id, s.title)}
               >
                 <span className="session-item-title">{s.title}</span>
-                <span className="session-item-time">{timeAgo(s.updated)}</span>
+                <span className="session-item-time">{timeAgo(t, s.updated)}</span>
               </button>
             ))}
             {(sessionInfo?.sessions ?? []).length === 0 && (
-              <div className="session-empty">暂无对话列表 — 可在顶部新建一个</div>
+              <div className="session-empty">{t('panel.noChats')}</div>
             )}
           </div>
         </>
@@ -701,11 +707,11 @@ export function SidePanel({
         <>
           <div className="session-menu-backdrop" onClick={() => setAgentSessionMenu(false)} />
           <div className="session-menu">
-            <div className="session-menu-title">历史对话（保存在本机）</div>
+            <div className="session-menu-title">{t('panel.historyChatsLocal')}</div>
             <button className="session-item session-new-top" onClick={newAgentSession}>
-              ＋ 新建对话
+              {t('panel.newChat')}
             </button>
-            {agentSessions.length === 0 && <div className="session-empty">暂无历史对话</div>}
+            {agentSessions.length === 0 && <div className="session-empty">{t('panel.noHistory')}</div>}
             {agentSessions.map((s) => (
               <button
                 key={s.id}
@@ -713,10 +719,10 @@ export function SidePanel({
                 onClick={() => switchAgentSession(s.id)}
               >
                 <span className="session-item-title">{s.title}</span>
-                <span className="session-item-time">{timeAgo(s.updatedAt)}</span>
+                <span className="session-item-time">{timeAgo(t, s.updatedAt)}</span>
                 <span
                   className={`session-del ${confirmAgentDel?.id === s.id ? 'danger' : ''}`}
-                  title="删除对话（需连续确认三次）"
+                  title={t('panel.deleteChat')}
                   onClick={(e) => {
                     e.stopPropagation()
                     e.preventDefault()
@@ -725,8 +731,8 @@ export function SidePanel({
                 >
                   {confirmAgentDel?.id === s.id
                     ? confirmAgentDel.stage === 1
-                      ? '确认?'
-                      : '再确认!'
+                      ? t('panel.confirmOne')
+                      : t('panel.confirmAgain')
                     : '✕'}
                 </span>
               </button>
@@ -747,13 +753,13 @@ export function SidePanel({
             {agentVisible.length === 0 && (
               <div className="empty">
                 {agentConfigured ? (
-                  '和内置模型对话，它会直接操控这个浏览器'
+                  t('panel.agentIntro')
                 ) : (
                   <>
-                    还没有可用的模型配置
+                    {t('panel.noProviders')}
                     <div className="empty-action">
                       <button className="send-btn" onClick={() => setShowProviders(true)}>
-                        打开配置
+                        {t('panel.openConfig')}
                       </button>
                     </div>
                   </>
@@ -769,8 +775,8 @@ export function SidePanel({
             {visibleEvents.length === 0 && localMsgs.length === 0 && (
               <div className="empty">
                 {mode === 'external'
-                  ? '从 ☰ 选择历史会话，或输入第一条消息启动新会话'
-                  : '向 AI 发送消息开始协作'}
+                  ? t('panel.agentEmptyHint')
+                  : t('panel.aiEmptyHint')}
               </div>
             )}
             {visibleEvents.map((ev) => (
@@ -791,11 +797,11 @@ export function SidePanel({
       {(agentErrText || externalErr) && (
         <div className="agent-error skill-err">
           <span>
-            {agentErrText ? `内置模型：${agentErrText}` : `外部工具：${externalErr}`}
+            {agentErrText ? t('panel.agentErr', { err: agentErrText }) : t('panel.externalErr', { err: externalErr ?? '' })}
           </span>
           <button
             type="button"
-            title="清除错误提示"
+            title={t('panel.clearError')}
             onClick={() => {
               setAgentError('')
               setExternalErr('')
@@ -816,46 +822,43 @@ export function SidePanel({
           }}
         >
           <div className="confirm-box">
-            <div className="confirm-title">添加自定义 Agent 工具</div>
+            <div className="confirm-title">{t('panel.addToolTitle')}</div>
             <label className="add-tool-field">
-              <span>工具名称</span>
+              <span>{t('panel.toolName')}</span>
               <input
                 value={addName}
                 spellCheck={false}
-                placeholder="例如：Gemini CLI"
+                placeholder={t('panel.toolNamePlaceholder')}
                 onChange={(e) => setAddName(e.target.value)}
                 onKeyDown={onAddInputKeyDown}
               />
             </label>
             <label className="add-tool-field">
-              <span>会话记录目录（包含 .jsonl / .json 会话文件）</span>
+              <span>{t('panel.sessionsDir')}</span>
               <input
                 value={addDir}
                 spellCheck={false}
-                placeholder="例如：C:\Users\me\.gemini\tmp"
+                placeholder={t('panel.sessionsDirPlaceholder')}
                 onChange={(e) => setAddDir(e.target.value)}
                 onKeyDown={onAddInputKeyDown}
               />
             </label>
             <label className="add-tool-field">
-              <span>
-                启动命令（可选——填了才能从面板发消息；默认从 stdin 读，支持 {'{prompt}'} 占位。指令可能含
-                cmd 特殊字符时请用 stdin 模式：命令中不要出现 {'{prompt}'}）
-              </span>
+              <span>{t('panel.launchCmd')}</span>
               <input
                 value={addCmd}
                 spellCheck={false}
-                placeholder="例如：gemini   或   my-agent --prompt {prompt}"
+                placeholder={t('panel.launchCmdPlaceholder')}
                 onChange={(e) => setAddCmd(e.target.value)}
                 onKeyDown={onAddInputKeyDown}
               />
             </label>
             <label className="add-tool-field">
-              <span>工作目录（可选）</span>
+              <span>{t('panel.workdir')}</span>
               <input
                 value={addCwd}
                 spellCheck={false}
-                placeholder="留空则用用户主目录（例如 C:\work\project）"
+                placeholder={t('panel.workdirPlaceholder')}
                 onChange={(e) => setAddCwd(e.target.value)}
                 onKeyDown={onAddInputKeyDown}
               />
@@ -863,14 +866,14 @@ export function SidePanel({
             {addErr && <div className="agent-form-err">{addErr}</div>}
             <div className="confirm-row">
               <button className="import-btn" onClick={() => setAddOpen(false)}>
-                取消
+                {t('common.cancel')}
               </button>
               <button
                 className="send-btn"
                 disabled={!addName.trim() || !addDir.trim() || addBusy}
                 onClick={() => void submitAddTool()}
               >
-                {addBusy ? '添加中…' : '添加'}
+                {addBusy ? t('panel.adding') : t('common.add')}
               </button>
             </div>
           </div>
@@ -888,15 +891,15 @@ export function SidePanel({
           placeholder={
             isAgent
               ? agentConfigured
-                ? '给内置模型下指令（Enter 发送）'
-                : '请先配置模型'
+                ? t('panel.inputAgent')
+                : t('panel.configureFirst')
               : mode === 'external'
                 ? extReplyReady
-                  ? '回复当前会话（Enter 发送，将续接该会话）'
+                  ? t('panel.replySession')
                   : externalCanStart
-                    ? '输入第一条消息，以无头模式启动新会话（Enter 发送）'
-                    : '只读镜像：请在对应的 CLI 中继续对话'
-                : '给 AI 发消息（Enter 发送，Shift+Enter 换行）'
+                    ? t('panel.firstMessage')
+                    : t('panel.readOnlyMirror')
+                : t('panel.sendToAi')
           }
           onChange={(e) => updateDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -908,24 +911,24 @@ export function SidePanel({
         />
         {isAgent && agentSessionState === 'busy' ? (
           <div className="composer-actions">
-            <button className="send-btn stop" onClick={() => void window.cobrowse.agentAbort()}>停止</button>
+            <button className="send-btn stop" onClick={() => void window.cobrowse.agentAbort()}>{t('panel.stop')}</button>
             <button className="send-btn" onClick={() => {
               setModifyNextSend(true)
               void window.cobrowse.agentAbort()
               composerRef.current?.focus()
-            }}>暂停并修改</button>
-            <button className="send-btn" disabled={!draft.trim()} onClick={send}>补充排队</button>
+            }}>{t('panel.pauseModify')}</button>
+            <button className="send-btn" disabled={!draft.trim()} onClick={send}>{t('panel.queueFollowup')}</button>
           </div>
         ) : mode === 'external' && (externalPending || agentChildren > 0) ? (
           <button
             className="send-btn stop"
-            title="紧急停止：终止从面板发起的任务进程"
+            title={t('panel.emergencyStopTitle')}
             onClick={() => {
               setExternalPending(false)
               void window.cobrowse.agentsStop()
             }}
           >
-            停止
+            {t('panel.stop')}
           </button>
         ) : (
           <button
@@ -937,7 +940,7 @@ export function SidePanel({
               (mode === 'external' && (externalPending || (!extReplyReady && !externalCanStart)))
             }
           >
-            {externalPending ? (extReplyReady ? '发送中…' : '启动中…') : isAgent && modifyNextSend ? '发送修改' : '发送'}
+            {externalPending ? (extReplyReady ? t('panel.sending') : t('panel.starting')) : isAgent && modifyNextSend ? t('panel.sendModify') : t('panel.send')}
           </button>
         )}
       </div>

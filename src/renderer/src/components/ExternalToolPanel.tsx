@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../i18n'
+import type { I18nKey } from '../../../shared/i18n'
+
+type TFn = (key: I18nKey, vars?: Record<string, string | number>) => string
 import type { ExternalSessionState } from '../../../shared/protocol'
 
 export interface AgentToolInfo {
@@ -19,14 +23,14 @@ interface SessionInfo {
   file: string
 }
 
-function timeAgo(ts: number): string {
+function timeAgo(t: TFn, ts: number): string {
   const s = Math.max(0, Math.floor((Date.now() - ts) / 1000))
-  if (s < 60) return `${s} 秒前`
+  if (s < 60) return t('time.secondsAgo', { n: s })
   const m = Math.floor(s / 60)
-  if (m < 60) return `${m} 分钟前`
+  if (m < 60) return t('time.minutesAgo', { n: m })
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} 小时前`
-  return `${Math.floor(h / 24)} 天前`
+  if (h < 24) return t('time.hoursAgo', { n: h })
+  return t('time.daysAgo', { n: Math.floor(h / 24) })
 }
 
 /**
@@ -49,6 +53,7 @@ export function ExternalToolPanel({
   onToolRemoved: () => void
   onOpenedChange?: (opened: { id: string; title: string } | null) => void
 }): React.JSX.Element {
+  const { t } = useI18n()
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [menuOpen, setMenuOpen] = useState(false)
   const [opened, setOpened] = useState<{ id: string; title: string } | null>(null)
@@ -77,7 +82,7 @@ export function ExternalToolPanel({
       const list = (await window.cobrowse.agentsSessions(toolId)) as SessionInfo[]
       setSessions(Array.isArray(list) ? list : [])
     } catch (e) {
-      setError((e as Error)?.message ?? '读取会话列表失败')
+      setError((e as Error)?.message ?? t('ext.readSessionsFailed'))
     }
   }
 
@@ -129,7 +134,7 @@ export function ExternalToolPanel({
     const r = await window.cobrowse.agentsSessionOpen(toolId, s.id, s.file)
     setBusy(false)
     if (!r.ok) {
-      setError(r.error ?? '打开失败')
+      setError(r.error ?? t('ext.openFailed'))
       return
     }
     setNewHint(false)
@@ -157,25 +162,25 @@ export function ExternalToolPanel({
     setModelMsg('')
     const r = await window.cobrowse.agentsModelSet(toolId, value)
     if (!r.ok) {
-      setModelMsg(r.error ?? '保存失败')
+      setModelMsg(r.error ?? t('ext.saveFailed'))
       return
     }
     setModel(value)
     setModelMsg(
-      value ? `已选择：${value}（对面板发起/续聊的会话生效）` : '已恢复默认（跟随 CLI 配置）'
+      value ? t('ext.modelSelected', { name: value }) : t('ext.modelDefault')
     )
   }
 
   const syncModel = async (): Promise<void> => {
     if (syncStage === 0) {
       setSyncStage(1)
-      setModelMsg('将写入全局 CLI 配置——影响该 CLI 的全部会话（不只 Duplex），确认后写入并自动备份')
+      setModelMsg(t('ext.syncConfirm'))
       setTimeout(() => setSyncStage(0), 4000)
       return
     }
     setSyncStage(0)
     const r = await window.cobrowse.agentsModelSyncGlobal(toolId)
-    setModelMsg(r.ok ? `已写入全局配置（备份：${r.backupPath ?? ''}）` : (r.error ?? '同步失败'))
+    setModelMsg(r.ok ? t('ext.synced', { path: r.backupPath ?? '' }) : (r.error ?? t('ext.syncFailed')))
   }
 
   const armDelReset = (): void => {
@@ -220,9 +225,9 @@ export function ExternalToolPanel({
       <div className="panel-header">
         <span className={`dot ${available ? 'ok' : 'idle'}`} />
         <span className="panel-status">
-          {tool ? `${tool.name}${available ? '' : '（未检测到）'}` : '未选择工具'}
+          {tool ? `${tool.name}${available ? '' : t('panel.notDetected')}` : t('ext.notSelectedTool')}
         </span>
-        <button className="session-btn" onClick={() => void refresh()} title="刷新会话列表">
+        <button className="session-btn" onClick={() => void refresh()} title={t('ext.refreshSessions')}>
           ⟳
         </button>
         <button
@@ -231,7 +236,7 @@ export function ExternalToolPanel({
             setMenuOpen((v) => !v)
             if (!menuOpen) void refresh()
           }}
-          title="历史会话"
+          title={t('ext.historySessions')}
         >
           ☰
         </button>
@@ -239,12 +244,12 @@ export function ExternalToolPanel({
           <button
             className={`session-btn ${delStage > 0 ? 'danger' : ''}`}
             onClick={() => void removeTool()}
-            title="移除该自定义工具（需连续确认三次）"
+            title={t('ext.removeTool')}
           >
-            {delStage === 0 ? '✕' : delStage === 1 ? '确认?' : '再确认!'}
+            {delStage === 0 ? '✕' : delStage === 1 ? t('panel.confirmOne') : t('panel.confirmAgain')}
           </button>
         )}
-        <button className="panel-collapse" title="收起面板" onClick={onCollapse}>
+        <button className="panel-collapse" title={t('ext.collapse')} onClick={onCollapse}>
           »
         </button>
       </div>
@@ -253,14 +258,14 @@ export function ExternalToolPanel({
 
       {modelCapable && (
         <div className="model-row">
-          <span className="model-row-label">模型</span>
+          <span className="model-row-label">{t('ext.model')}</span>
           {customMode ? (
             <>
               <input
                 className="model-input"
                 value={customInput}
                 spellCheck={false}
-                placeholder="输入模型名，回车保存"
+                placeholder={t('ext.modelPlaceholder')}
                 onChange={(e) => setCustomInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && customInput.trim()) {
@@ -276,7 +281,7 @@ export function ExternalToolPanel({
                   setCustomMode(false)
                 }}
               >
-                保存
+                {t('common.save')}
               </button>
             </>
           ) : (
@@ -294,23 +299,23 @@ export function ExternalToolPanel({
                   void saveModel(v)
                 }}
               >
-                <option value="">默认（跟随 CLI 配置）</option>
+                <option value="">{t('ext.defaultCli')}</option>
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.label}
                   </option>
                 ))}
                 {model && !models.some((m) => m.id === model) && (
-                  <option value={model}>{model}（自定义）</option>
+                  <option value={model}>{t('ext.customSuffix', { model })}</option>
                 )}
-                <option value="__custom__">自定义…</option>
+                <option value="__custom__">{t('ext.customOption')}</option>
               </select>
               <button
                 className={`model-sync ${syncStage > 0 ? 'danger' : ''}`}
-                title="写入全局 CLI 配置：影响该 CLI 的全部会话（自动备份）"
+                title={t('ext.writeGlobalTitle')}
                 onClick={() => void syncModel()}
               >
-                {syncStage === 0 ? '⇪ 全局' : '确认写入'}
+                {syncStage === 0 ? t('ext.globalButton') : t('ext.confirmWrite')}
               </button>
             </>
           )}
@@ -323,7 +328,7 @@ export function ExternalToolPanel({
           <div className="session-menu-backdrop" onClick={() => setMenuOpen(false)} />
           <div className="session-menu">
             <div className="session-menu-title">
-              历史会话（{tool?.name ?? ''} · {sessions.length} 个）
+              {t('ext.historySessionsWith', { name: tool?.name ?? '', n: sessions.length })}
             </div>
             <button
               className="session-item session-new-top"
@@ -333,9 +338,9 @@ export function ExternalToolPanel({
                 })
               }}
             >
-              ＋ 新建对话
+              {t('ext.newChat')}
             </button>
-            {sessions.length === 0 && <div className="session-empty">未找到会话记录</div>}
+            {sessions.length === 0 && <div className="session-empty">{t('ext.noSessions')}</div>}
             {sessions.slice(0, 60).map((s) => (
               <button
                 key={s.id}
@@ -344,7 +349,7 @@ export function ExternalToolPanel({
                 title={s.file}
               >
                 <span className="session-item-title">{s.title}</span>
-                <span className="session-item-time">{timeAgo(s.updatedAt)}</span>
+                <span className="session-item-time">{timeAgo(t, s.updatedAt)}</span>
               </button>
             ))}
           </div>
@@ -353,26 +358,26 @@ export function ExternalToolPanel({
 
       {watchError && (
         <div className="watch-error-banner" role="status">
-          会话记录同步已断开；重新打开该会话可恢复
+          {t('ext.syncDisconnected')}
         </div>
       )}
       {error && <div className="agent-error">{error}</div>}
-      {busy && <div className="external-hint">正在加载会话…</div>}
+      {busy && <div className="external-hint">{t('ext.loadingSessions')}</div>}
       {!busy && newHint && !opened && (
         <div className="external-hint">
           {!tool
-            ? '未选择外部工具：请在顶部下拉中选择或添加自定义工具'
+            ? t('ext.pickTool')
             : !available
-              ? `${tool.name} 未检测到可用命令，仅可浏览历史会话；继续对话请在对应的 CLI 中进行`
+              ? t('ext.cmdUnavailable', { name: tool.name })
               : canStartFromPanel
-                ? '新对话：在下方输入第一条消息，将以无头模式启动（Enter 发送）'
-                : '该工具不支持从面板发送消息，请在对应的 CLI 中继续'}
+                ? t('ext.newHeadless')
+                : t('ext.noSend')}
         </div>
       )}
       {!busy && opened && (
         <div className="external-hint">
-          已打开：{opened.title}
-          {canReply ? '（可直接在下方回复，将续接该会话）' : '（只读镜像，新消息自动同步）'}
+          {t('ext.opened', { title: opened.title })}
+          {canReply ? t('ext.replyInline') : t('ext.readOnly')}
         </div>
       )}
     </>

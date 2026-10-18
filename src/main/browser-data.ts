@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { mt } from './i18n'
 
 export interface BookmarkRecord {
   url: string
@@ -255,7 +256,7 @@ export class BrowserDataStore {
     folder?: string
   }): { ok: boolean; error?: string } {
     const url = record.url?.trim() ?? ''
-    if (!url) return { ok: false, error: '网址不能为空' }
+    if (!url) return { ok: false, error: mt('bd.urlEmpty') }
     const title = record.title?.trim() || url
     const favicon = record.favicon?.trim() || undefined
     const folder = record.folder?.trim() || undefined
@@ -286,14 +287,14 @@ export class BrowserDataStore {
     patch: { title?: string; url?: string; folder?: string }
   ): { ok: boolean; error?: string } {
     const index = this.data.bookmarks.findIndex((item) => item.url === url)
-    if (index < 0) return { ok: false, error: '书签不存在' }
+    if (index < 0) return { ok: false, error: mt('bd.bookmarkMissing') }
     const item = this.data.bookmarks[index]
     if (patch.url !== undefined) {
       const nextUrl = patch.url.trim()
-      if (!nextUrl) return { ok: false, error: '网址不能为空' }
+      if (!nextUrl) return { ok: false, error: mt('bd.urlEmpty') }
       if (nextUrl !== item.url) {
         if (this.data.bookmarks.some((entry) => entry.url === nextUrl)) {
-          return { ok: false, error: '该网址已有书签' }
+          return { ok: false, error: mt('bd.bookmarkExists') }
         }
         item.url = nextUrl
       }
@@ -320,9 +321,9 @@ export class BrowserDataStore {
   /** Create a bookmark folder (trimmed, deduped). */
   addFolder(name: string): { ok: boolean; error?: string } {
     const value = name?.trim() ?? ''
-    if (!value) return { ok: false, error: '文件夹名称不能为空' }
+    if (!value) return { ok: false, error: mt('bd.folderNameEmpty') }
     if (this.data.bookmarkFolders.includes(value)) {
-      return { ok: false, error: '文件夹已存在' }
+      return { ok: false, error: mt('bd.folderExists') }
     }
     this.data.bookmarkFolders.push(value)
     this.scheduleSave()
@@ -347,11 +348,11 @@ export class BrowserDataStore {
     const oldValue = typeof oldName === 'string' ? oldName.trim() : ''
     const newValue = newName?.trim() ?? ''
     const index = this.data.bookmarkFolders.indexOf(oldValue)
-    if (index < 0) return { ok: false, error: '文件夹不存在' }
-    if (!newValue) return { ok: false, error: '文件夹名称不能为空' }
+    if (index < 0) return { ok: false, error: mt('bd.folderMissing') }
+    if (!newValue) return { ok: false, error: mt('bd.folderNameEmpty') }
     if (newValue === oldValue) return { ok: true }
     if (this.data.bookmarkFolders.includes(newValue)) {
-      return { ok: false, error: '文件夹已存在' }
+      return { ok: false, error: mt('bd.folderExists') }
     }
     this.data.bookmarkFolders[index] = newValue
     for (const item of this.data.bookmarks) {

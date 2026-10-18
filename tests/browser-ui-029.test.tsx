@@ -8,6 +8,9 @@ vi.mock('react', async (original) => {
   const react = await original<typeof import('react')>()
   return {
     ...react,
+    useContext: () => ({ lang: 'zh', setting: 'system', t: (key: string) => key, setLanguage: () => {} }),
+    useCallback: (fn: unknown) => fn,
+    useMemo: (fn: () => unknown) => fn(),
     useEffect: (effect: () => void | (() => void)) => { hooks.effects.push(effect) },
     useLayoutEffect: (effect: () => void | (() => void)) => { hooks.effects.push(effect) },
     useRef: (initial: unknown) => {

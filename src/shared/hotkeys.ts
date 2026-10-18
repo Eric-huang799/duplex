@@ -190,27 +190,30 @@ export function matchesBinding(binding: string, e: KeyEventLike, platform?: stri
   )
 }
 
+import { translate, type Lang } from './i18n'
+
 export function validateBinding(
   binding: string,
-  platform?: string
+  platform?: string,
+  lang: Lang = 'zh'
 ): { ok: true; combo: string } | { ok: false; reason: string } {
   const p = parseBinding(binding)
-  if (!p) return { ok: false, reason: '无法识别的按键' }
+  if (!p) return { ok: false, reason: translate(lang, 'hotkeys.unrecognized') }
   const combo = buildCombo(p, p.key)
   if (p.meta && !isMacPlatform(platform)) {
-    return { ok: false, reason: 'Win 键组合会被系统占用，无法用作急停键' }
+    return { ok: false, reason: translate(lang, 'hotkeys.winReserved') }
   }
   if (combo === 'Alt+F4') {
-    return { ok: false, reason: 'Alt+F4 是系统保留按键（会直接关闭窗口）' }
+    return { ok: false, reason: translate(lang, 'hotkeys.altF4Reserved') }
   }
   const equivalents = platformEquivalents(combo, platform)
   if (BUILTIN_SHORTCUTS.some((b) => equivalents.some((c) => sameBinding(b, c)))) {
-    return { ok: false, reason: `与浏览器快捷键 ${combo} 冲突` }
+    return { ok: false, reason: translate(lang, 'hotkeys.conflictBrowser', { combo }) }
   }
   const hasMod = p.ctrl || p.alt || p.shift || p.meta
   const bareAllowed = /^F\d{1,2}$/.test(p.key) || p.key === 'Escape'
   if (!hasMod && !bareAllowed) {
-    return { ok: false, reason: '请配合 Ctrl / Alt / Shift 使用（F1–F12、Esc 可单用）' }
+    return { ok: false, reason: translate(lang, 'hotkeys.needModifier') }
   }
   return { ok: true, combo }
 }
@@ -231,7 +234,7 @@ const DISPLAY_KEY: Record<string, string> = {
   Meta: 'Win'
 }
 
-export function displayParts(binding: string, platform?: string): string[] {
+export function displayParts(binding: string, platform?: string, lang: Lang = 'zh'): string[] {
   const p = parseBinding(binding)
   if (!p) return [binding]
   const mac = isMacPlatform(platform)
@@ -240,6 +243,7 @@ export function displayParts(binding: string, platform?: string): string[] {
   if (p.alt) parts.push(mac ? '⌥' : 'Alt')
   if (p.shift) parts.push(mac ? '⇧' : 'Shift')
   if (p.meta) parts.push(mac ? '⌘' : 'Win')
-  parts.push(DISPLAY_KEY[p.key] ?? p.key)
+  const label = DISPLAY_KEY[p.key] ?? p.key
+  parts.push(p.key === 'Space' ? translate(lang, 'hotkeys.space') : label)
   return parts
 }

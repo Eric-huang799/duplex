@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { BookmarkRecord, HistoryRecord } from '../../../shared/protocol'
 import { buildOmniboxSuggestions, splitHighlight, stripUrlForDisplay, type OmniboxSuggestion } from '../../../shared/omnibox'
+import { useI18n } from '../i18n'
+import type { I18nKey } from '../../../shared/i18n'
 
 /** Render text with the query's first occurrence bolded (Chrome suggestion style). */
 function renderHighlight(text: string, query: string): React.ReactNode[] {
@@ -30,6 +32,7 @@ export function StartPage({
   onRemoveBookmark,
   onRemoveHistory
 }: Props): React.JSX.Element {
+  const { t, lang } = useI18n()
   const [value, setValue] = useState('')
   const [now, setNow] = useState(() => new Date())
   const [bgFailed, setBgFailed] = useState(false)
@@ -108,11 +111,12 @@ export function StartPage({
     closeEngineMenu()
   }
 
-  const engineName = engines.find((e) => e.key === engineKey)?.name ?? '百度'
+  const engineEntry = engines.find((e) => e.key === engineKey)
+  const engineName = engineEntry ? t(`engine.${engineEntry.key}` as I18nKey) : t('engine.baidu')
 
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 30_000)
-    return () => clearInterval(t)
+    const timer = setInterval(() => setNow(new Date()), 30_000)
+    return () => clearInterval(timer)
   }, [])
 
   const submit = (): void => {
@@ -189,9 +193,9 @@ export function StartPage({
       setHl(-1)
       return
     }
-    const base = buildOmniboxSuggestions(v, history, bookmarks, { engineName })
+    const base = buildOmniboxSuggestions(v, history, bookmarks, { engineName, lang })
     if (base.length === 1) {
-      setSugs([...base, ...buildOmniboxSuggestions('', history, [], { recentLimit: 4 })])
+      setSugs([...base, ...buildOmniboxSuggestions('', history, [], { recentLimit: 4, lang })])
     } else {
       setSugs(base)
     }
@@ -210,7 +214,7 @@ export function StartPage({
 
   const hh = String(now.getHours()).padStart(2, '0')
   const mm = String(now.getMinutes()).padStart(2, '0')
-  const dateStr = now.toLocaleDateString('zh-CN', {
+  const dateStr = now.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', {
     month: 'long',
     day: 'numeric',
     weekday: 'long'
@@ -258,7 +262,7 @@ export function StartPage({
           <input
             value={value}
             spellCheck={false}
-            placeholder="搜索或输入网址"
+            placeholder={t('start.searchPlaceholder')}
             aria-autocomplete="list"
             onChange={(e) => {
               setValue(e.target.value)
@@ -292,7 +296,7 @@ export function StartPage({
           <div className="start-engine-wrap">
             <button
               className="start-engine"
-              title="点击切换搜索引擎"
+              title={t('start.engineTitle')}
               onClick={(e) => {
                 e.stopPropagation()
                 toggleEngineMenu()
@@ -311,7 +315,7 @@ export function StartPage({
                     className={engineKey === en.key ? 'on' : ''}
                     onClick={() => applyEngine(en.key)}
                   >
-                    {en.name}
+                    {t(`engine.${en.key}` as I18nKey)}
                   </button>
                 ))}
               </div>
@@ -354,7 +358,7 @@ export function StartPage({
                 </button>
                 <button
                   className="shortcut-del"
-                  title="删除此常用网站（移除书签）"
+                  title={t('start.removeBookmarkTile')}
                   onClick={(e) => {
                     e.stopPropagation()
                     removeTile(e.currentTarget.closest('.shortcut'), () => onRemoveBookmark?.(item.url))
@@ -376,7 +380,7 @@ export function StartPage({
                 </button>
                 <button
                   className="shortcut-del"
-                  title="删除此常用网站（移除历史记录）"
+                  title={t('start.removeHistoryTile')}
                   onClick={(e) => {
                     e.stopPropagation()
                     removeTile(e.currentTarget.closest('.shortcut'), () => onRemoveHistory?.(item.url, item.visitedAt))

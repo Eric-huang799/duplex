@@ -24,7 +24,7 @@ import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
-const VERSION = '0.2.9'
+const VERSION = '0.2.10'
 const CALLER_ID = `bridge:${process.pid}:${crypto.randomUUID()}`
 
 /**

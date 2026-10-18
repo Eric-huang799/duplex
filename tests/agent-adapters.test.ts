@@ -48,7 +48,32 @@ describe('buildStartPlan', () => {
     expect(p.args).toContain('exec')
     expect(p.args).toContain('--skip-git-repo-check')
     expect(p.args[p.args.length - 1]).toBe('-')
+    const instruction = p.args.find((a) => a.startsWith('developer_instructions='))
+    expect(instruction).toBeDefined()
+    expect(instruction).toContain('mcp__duplex__*')
+    expect(p.args[p.args.indexOf(instruction!) - 1]).toBe('-c')
     if (isWin) expect(p.file).toBe('cmd.exe')
+  })
+
+  it('codex: injects the duplex MCP server only for this invocation', () => {
+    const p = buildStartPlan({ kind: 'codex' }, 'hi', '', {
+      bridgePath: 'C:\\Duplex\\dist-bridge\\index.cjs',
+      dataDir: 'C:\\tmp\\duplex-demo'
+    })
+    if ('error' in p) throw new Error(p.error)
+    expect(p.args).toContain("mcp_servers.duplex.command='node'")
+    expect(p.args).toContain(
+      "mcp_servers.duplex.args=['C:\\Duplex\\dist-bridge\\index.cjs']"
+    )
+    expect(p.args).toContain(
+      "mcp_servers.duplex.env.DUPLEX_DATA_DIR='C:\\tmp\\duplex-demo'"
+    )
+  })
+
+  it('codex: does not mention duplex without a bridge path', () => {
+    const p = buildStartPlan({ kind: 'codex' }, 'hi')
+    if ('error' in p) throw new Error(p.error)
+    expect(p.args.some((a) => a.startsWith('mcp_servers.duplex'))).toBe(false)
   })
 
   it('claude: -p with stdin', () => {
@@ -56,6 +81,18 @@ describe('buildStartPlan', () => {
     if ('error' in p) throw new Error(p.error)
     expect(p.useStdin).toBe(true)
     expect(p.args).toContain('-p')
+    expect(p.args).toContain('--append-system-prompt')
+    expect(p.args).toContain('--allowedTools')
+    expect(p.args).toContain('mcp__duplex')
+  })
+
+  it('claude: loads the duplex MCP config only for this invocation', () => {
+    const p = buildStartPlan({ kind: 'claude' }, 'hi', '', {
+      claudeMcpConfigPath: 'C:\\tmp\\claude-mcp-duplex.json'
+    })
+    if ('error' in p) throw new Error(p.error)
+    expect(p.args).toContain('--mcp-config')
+    expect(p.args).toContain('C:\\tmp\\claude-mcp-duplex.json')
   })
 
   it('gemini and qwen: bare command, prompt via stdin', () => {

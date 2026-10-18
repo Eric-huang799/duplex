@@ -1,0 +1,2314 @@
+{
+  "common.ok": [
+    "确定",
+    "OK"
+  ],
+  "common.cancel": [
+    "取消",
+    "Cancel"
+  ],
+  "common.close": [
+    "关闭",
+    "Close"
+  ],
+  "common.save": [
+    "保存",
+    "Save"
+  ],
+  "common.remove": [
+    "移除",
+    "Remove"
+  ],
+  "common.add": [
+    "添加",
+    "Add"
+  ],
+  "common.reset": [
+    "恢复默认",
+    "Reset"
+  ],
+  "common.recording": [
+    "录制中…",
+    "Recording…"
+  ],
+  "common.error": [
+    "保存失败",
+    "Save failed"
+  ],
+  "toolbar.back": [
+    "后退",
+    "Back"
+  ],
+  "toolbar.forward": [
+    "前进",
+    "Forward"
+  ],
+  "toolbar.reload": [
+    "刷新",
+    "Reload"
+  ],
+  "toolbar.stop": [
+    "停止加载",
+    "Stop loading"
+  ],
+  "toolbar.home": [
+    "主页",
+    "Home"
+  ],
+  "toolbar.addressPlaceholder": [
+    "输入网址或搜索内容，回车打开",
+    "Enter a URL or search, press Enter"
+  ],
+  "toolbar.engineTitle": [
+    "搜索引擎：{name}",
+    "Search engine: {name}"
+  ],
+  "toolbar.engineFallback": [
+    "搜索",
+    "Search"
+  ],
+  "toolbar.bookmarkAdd": [
+    "添加书签",
+    "Add bookmark"
+  ],
+  "toolbar.bookmarkRemove": [
+    "移除书签",
+    "Remove bookmark"
+  ],
+  "toolbar.recent": [
+    "最近浏览记录",
+    "Recent history"
+  ],
+  "toolbar.recentEmpty": [
+    "暂无浏览记录",
+    "No recent history"
+  ],
+  "toolbar.recentHead": [
+    "最近浏览",
+    "Recent"
+  ],
+  "toolbar.aiClose": [
+    "隐藏 AI 面板",
+    "Hide AI panel"
+  ],
+  "toolbar.aiOpen": [
+    "打开 AI 面板",
+    "Open AI panel"
+  ],
+  "toolbar.annotate": [
+    "标注",
+    "Annotate"
+  ],
+  "toolbar.annotateOn": [
+    "进入页面标注模式",
+    "Enter page annotation mode"
+  ],
+  "toolbar.annotateOff": [
+    "退出页面标注模式",
+    "Exit page annotation mode"
+  ],
+  "toolbar.annotateUnsupported": [
+    "当前页面不支持标注（仅普通网页可使用）",
+    "Annotation is unavailable on this page (regular web pages only)"
+  ],
+  "toolbar.loading": [
+    "加载中",
+    "Loading"
+  ],
+  "toolbar.themeTitle": [
+    "切换主题",
+    "Toggle theme"
+  ],
+  "toolbar.themeSystem": [
+    "主题：跟随系统",
+    "Theme: system"
+  ],
+  "toolbar.themeLight": [
+    "主题：浅色",
+    "Theme: light"
+  ],
+  "toolbar.themeDark": [
+    "主题：深色",
+    "Theme: dark"
+  ],
+  "toolbar.more": [
+    "更多",
+    "More"
+  ],
+  "toolbar.tools": [
+    "浏览器工具和主题",
+    "Browser tools & theme"
+  ],
+  "toolbar.recentAll": [
+    "查看全部浏览记录",
+    "View all history"
+  ],
+  "toolbar.shortcuts": [
+    "快捷键设置",
+    "Keyboard shortcuts"
+  ],
+  "toolbar.stopKeys": [
+    "急停快捷键",
+    "Emergency stop keys"
+  ],
+  "toolbar.find": [
+    "页内查找",
+    "Find in page"
+  ],
+  "toolbar.findPlaceholder": [
+    "查找",
+    "Find"
+  ],
+  "toolbar.findNoMatches": [
+    "无匹配",
+    "No matches"
+  ],
+  "toolbar.findMatches": [
+    "{n} 个匹配",
+    "{n} matches"
+  ],
+  "shortcuts.title": [
+    "快捷键设置",
+    "Keyboard shortcuts"
+  ],
+  "shortcuts.hint": [
+    "点击某个动作的「录制」后直接按下新按键（Esc 取消录制）；「恢复默认」将该动作还原为默认键。保存后立即生效。",
+    "Click “Record” for an action and press the new keys (Esc cancels). “Reset” restores that action’s default. Changes apply immediately after saving."
+  ],
+  "shortcuts.rebind": [
+    "录制",
+    "Record"
+  ],
+  "shortcuts.pressNew": [
+    "按下按键…（Esc 取消）",
+    "Press keys… (Esc to cancel)"
+  ],
+  "shortcuts.resetOne": [
+    "恢复默认",
+    "Reset"
+  ],
+  "shortcuts.resetAll": [
+    "恢复全部默认",
+    "Reset all"
+  ],
+  "shortcuts.saveFailed": [
+    "快捷键保存失败",
+    "Failed to save shortcuts"
+  ],
+  "shortcut.focusAddress": [
+    "聚焦地址栏",
+    "Focus address bar"
+  ],
+  "shortcut.newTab": [
+    "新建标签页",
+    "New tab"
+  ],
+  "shortcut.newTabIncognito": [
+    "新建无痕标签页",
+    "New incognito tab"
+  ],
+  "shortcut.reopenClosed": [
+    "恢复关闭的标签页",
+    "Reopen closed tab"
+  ],
+  "shortcut.closeTab": [
+    "关闭标签页",
+    "Close tab"
+  ],
+  "shortcut.reload": [
+    "刷新",
+    "Reload"
+  ],
+  "shortcut.bookmark": [
+    "添加/移除书签",
+    "Bookmark / unbookmark"
+  ],
+  "shortcut.find": [
+    "页内查找",
+    "Find in page"
+  ],
+  "shortcut.togglePanel": [
+    "打开 AI 面板",
+    "Toggle AI panel"
+  ],
+  "shortcut.annotationToggle": [
+    "开启/退出标注",
+    "Toggle annotation"
+  ],
+  "shortcut.nextTab": [
+    "下一个标签页",
+    "Next tab"
+  ],
+  "shortcut.prevTab": [
+    "上一个标签页",
+    "Previous tab"
+  ],
+  "shortcut.zoomIn": [
+    "放大",
+    "Zoom in"
+  ],
+  "shortcut.zoomOut": [
+    "缩小",
+    "Zoom out"
+  ],
+  "shortcut.zoomReset": [
+    "重置缩放",
+    "Reset zoom"
+  ],
+  "shortcut.back": [
+    "后退",
+    "Back"
+  ],
+  "shortcut.forward": [
+    "前进",
+    "Forward"
+  ],
+  "stopkeys.title": [
+    "急停快捷键",
+    "Emergency stop keys"
+  ],
+  "stopkeys.hint1": [
+    "触发后立即中止当前任务（内置 agent 与外部工具进程）并接管浏览器；在网页内同样生效。支持单键与组合键（最多 5 个）。",
+    "Pressing one immediately terminates the current task (built-in agent and external tool processes) and takes over the browser; it also works inside web pages. Single keys and combinations are supported (up to 5)."
+  ],
+  "stopkeys.hint2": [
+    "单键快捷键在网页输入框内打字时不会触发（避免误伤），组合键始终有效；设置快捷键后该键会从网页中截获。",
+    "Single-key shortcuts do not fire while typing in a page input (to avoid false triggers); combinations always work. Once set, the key is captured from the page."
+  ],
+  "stopkeys.empty": [
+    "（未设置）",
+    "(none configured)"
+  ],
+  "stopkeys.record": [
+    "点击这里，然后直接按下你要设置的按键 / 组合键",
+    "Click here, then press the key / combination"
+  ],
+  "stopkeys.listening": [
+    "请按下快捷键…（Esc 取消）",
+    "Press the shortcut… (Esc to cancel)"
+  ],
+  "stopkeys.localKeyboard": [
+    "用虚拟键盘选择…",
+    "Pick with on-screen keyboard…"
+  ],
+  "stopkeys.localKeyboardHide": [
+    "收起虚拟键盘",
+    "Hide on-screen keyboard"
+  ],
+  "stopkeys.needOne": [
+    "至少需要一个按键",
+    "At least one key is required"
+  ],
+  "stopkeys.saveFailed": [
+    "保存失败",
+    "Failed to save"
+  ],
+  "stopkeys.tooMany": [
+    "最多设置 5 个",
+    "Up to 5 keys"
+  ],
+  "stopkeys.duplicate": [
+    "该组合已存在",
+    "This combination already exists"
+  ],
+  "start.clockDate": [
+    "{month}月{day}日{weekday}",
+    "{weekday}, {monthName} {day}"
+  ],
+  "start.searchPlaceholder": [
+    "搜索或输入网址",
+    "Search or enter URL"
+  ],
+  "start.engineTitle": [
+    "点击切换搜索引擎",
+    "Switch search engine"
+  ],
+  "start.removeBookmarkTile": [
+    "删除此常用网站（移除书签）",
+    "Remove this shortcut (from bookmarks)"
+  ],
+  "start.removeHistoryTile": [
+    "删除此常用网站（移除历史记录）",
+    "Remove this shortcut (from history)"
+  ],
+  "engine.baidu": [
+    "百度",
+    "Baidu"
+  ],
+  "engine.bing": [
+    "必应",
+    "Bing"
+  ],
+  "engine.google": [
+    "Google",
+    "Google"
+  ],
+  "tab.new": [
+    "新建标签页",
+    "New tab"
+  ],
+  "tab.close": [
+    "关闭标签",
+    "Close tab"
+  ],
+  "tab.mute": [
+    "静音标签页",
+    "Mute tab"
+  ],
+  "tab.unmute": [
+    "取消静音",
+    "Unmute tab"
+  ],
+  "tab.incognitoTitle": [
+    "无痕标签页（不记录历史）",
+    "Incognito tab (no history kept)"
+  ],
+  "tab.newIncognito": [
+    "新建无痕标签页（Ctrl+Shift+N）",
+    "New incognito tab (Ctrl+Shift+N)"
+  ],
+  "providers.title": [
+    "模型服务",
+    "Model providers"
+  ],
+  "providers.back": [
+    "返回",
+    "Back"
+  ],
+  "providers.configHint": [
+    "配置一个 OpenAI 兼容的模型服务即可开始与 AI 对话。",
+    "Configure an OpenAI-compatible provider to start chatting with the AI."
+  ],
+  "providers.add": [
+    "添加服务商",
+    "Add provider"
+  ],
+  "providers.edit": [
+    "编辑",
+    "Edit"
+  ],
+  "providers.delete": [
+    "删除",
+    "Delete"
+  ],
+  "providers.name": [
+    "名称",
+    "Name"
+  ],
+  "providers.baseUrl": [
+    "Base URL",
+    "Base URL"
+  ],
+  "providers.model": [
+    "模型",
+    "Model"
+  ],
+  "providers.apiKey": [
+    "API Key",
+    "API Key"
+  ],
+  "providers.protocol": [
+    "协议",
+    "Protocol"
+  ],
+  "providers.active": [
+    "当前使用",
+    "Active"
+  ],
+  "providers.setActive": [
+    "设为当前",
+    "Set active"
+  ],
+  "providers.none": [
+    "尚未配置模型服务",
+    "No provider configured yet"
+  ],
+  "providers.saved": [
+    "已保存",
+    "Saved"
+  ],
+  "providers.saveFailed": [
+    "保存失败：磁盘或权限问题",
+    "Save failed: disk or permission problem"
+  ],
+  "providers.importAuth": [
+    "导入登录凭据",
+    "Import login credential"
+  ],
+  "providers.idleTimeout": [
+    "空闲超时（秒）",
+    "Idle timeout (seconds)"
+  ],
+  "providers.allowCustomHost": [
+    "允许非标准主机",
+    "Allow non-standard host"
+  ],
+  "providers.preset": [
+    "快速填充",
+    "Quick fill"
+  ],
+  "providers.removeConfirm": [
+    "确定删除该服务商？",
+    "Delete this provider?"
+  ],
+  "providers.close": [
+    "关闭设置",
+    "Close settings"
+  ],
+  "providers.protocolOpenAI": [
+    "OpenAI 兼容",
+    "OpenAI-compatible"
+  ],
+  "providers.localOllamaLabel": [
+    "本地 Ollama",
+    "Local Ollama"
+  ],
+  "providers.clearFailed": [
+    "清除失败",
+    "Failed to clear"
+  ],
+  "providers.importFailed": [
+    "导入失败",
+    "Import failed"
+  ],
+  "providers.count": [
+    "{n} 个",
+    "{n} providers"
+  ],
+  "providers.empty": [
+    "还没有配置 — 可以「从 opencode 导入」或「新建」",
+    "Nothing configured yet — import from opencode or create one"
+  ],
+  "providers.fillPreset": [
+    "填入 {url} · {model}",
+    "Fill in {url} · {model}"
+  ],
+  "providers.inUse": [
+    "当前使用中",
+    "Currently in use"
+  ],
+  "providers.confirmSwitch": [
+    "再次点击确认切换",
+    "Click again to confirm switching"
+  ],
+  "providers.switchHint": [
+    "点击切换使用（需二次确认）",
+    "Click to switch (requires a second confirmation)"
+  ],
+  "providers.inUseTag": [
+    "使用中",
+    "Active"
+  ],
+  "providers.noModel": [
+    "未填模型",
+    "No model"
+  ],
+  "providers.importSuffix": [
+    " · 导入:{src}",
+    " · imported:{src}"
+  ],
+  "providers.deleteConfirm": [
+    "删除（需连续确认三次）",
+    "Delete (requires three confirmations)"
+  ],
+  "providers.modelName": [
+    "模型名",
+    "Model name"
+  ],
+  "providers.authType": [
+    "认证方式",
+    "Authentication"
+  ],
+  "providers.importFromCli": [
+    "从本机 CLI 导入凭据",
+    "Import a credential from a local CLI"
+  ],
+  "providers.credSource": [
+    "凭据来源",
+    "Credential source"
+  ],
+  "providers.codexLogin": [
+    "Codex（ChatGPT 订阅登录）",
+    "Codex (ChatGPT subscription login)"
+  ],
+  "providers.opencodeCred": [
+    "opencode 登录凭据",
+    "opencode login credential"
+  ],
+  "providers.keyPlaceholderSaved": [
+    "已保存 · 留空保持不变",
+    "Saved · leave empty to keep"
+  ],
+  "providers.keyPlaceholderEmpty": [
+    "本地服务（如 Ollama）可留空",
+    "Optional for local services (e.g. Ollama)"
+  ],
+  "providers.clearKeyTitle": [
+    "删除本机已保存的 API Key（提供商配置保留）",
+    "Delete the saved API key (the provider stays configured)"
+  ],
+  "providers.clearKey": [
+    "清除已保存的 Key",
+    "Clear saved key"
+  ],
+  "providers.trustGateway": [
+    "我信任此网关：允许把导入的凭据发送到当前主机 {host}",
+    "I trust this gateway: allow sending the imported credential to {host}"
+  ],
+  "providers.baseUrlMissing": [
+    "（Base URL 未填写）",
+    "(Base URL not filled in)"
+  ],
+  "providers.importFound": [
+    "已找到：{list}",
+    "Found: {list}"
+  ],
+  "providers.importNoEntries": [
+    "（无可用条目）",
+    "(no usable entries)"
+  ],
+  "providers.importExpiry": [
+    " · 有效期至 {date}",
+    " · expires {date}"
+  ],
+  "providers.importNotFound": [
+    "未找到本机凭据文件",
+    "No local credential file found"
+  ],
+  "providers.idleTimeoutLabel": [
+    "空闲超时（秒，留空使用默认）",
+    "Idle timeout (seconds; empty uses default)"
+  ],
+  "providers.idleExample": [
+    "例如：120",
+    "e.g. 120"
+  ],
+  "providers.saving": [
+    "保存中…",
+    "Saving…"
+  ],
+  "providers.ollamaHint": [
+    "本地 Ollama 无需 API Key：先运行 ollama serve，Base URL 填 http://localhost:11434/v1",
+    "Local Ollama needs no API key: run ollama serve, then set Base URL to http://localhost:11434/v1"
+  ],
+  "providers.newProvider": [
+    "＋ 新建",
+    "+ New"
+  ],
+  "providers.confirmImport": [
+    "确认导入？",
+    "Confirm import?"
+  ],
+  "providers.importOpencode": [
+    "↓ 从 opencode 导入",
+    "↓ Import from opencode"
+  ],
+  "vk.space": [
+    "空格",
+    "Space"
+  ],
+  "vk.clickModifier": [
+    "点击 Ctrl / Alt / Shift 后再点一个按键",
+    "Click Ctrl / Alt / Shift, then a key"
+  ],
+  "vk.selectedModifiers": [
+    "已选修饰键：{mods}",
+    "Selected modifiers: {mods}"
+  ],
+  "markdown.linkUnavailable": [
+    "此类型的链接无法在浏览器中打开",
+    "This link type cannot be opened in the browser"
+  ],
+  "tool.waitingPermission": [
+    "等待你的许可…",
+    "Waiting for your permission…"
+  ],
+  "tool.truncated": [
+    "…（已截断）",
+    "… (truncated)"
+  ],
+  "tool.noDetails": [
+    "（无详情）",
+    "(no details)"
+  ],
+  "permission.kindWrite": [
+    "写入文件",
+    "Write file"
+  ],
+  "permission.kindCommand": [
+    "执行命令",
+    "Run command"
+  ],
+  "permission.kindScript": [
+    "运行脚本",
+    "Run script"
+  ],
+  "permission.requestWrite": [
+    "AI 请求写入文件",
+    "AI wants to write a file"
+  ],
+  "permission.requestScript": [
+    "AI 请求运行脚本",
+    "AI wants to run a script"
+  ],
+  "permission.requestCommand": [
+    "AI 请求执行命令",
+    "AI wants to run a command"
+  ],
+  "permission.allowed": [
+    "已允许执行",
+    "Allowed"
+  ],
+  "permission.denied": [
+    "已拒绝",
+    "Denied"
+  ],
+  "permission.expired": [
+    "超时未确认 · 已自动拒绝",
+    "Timed out · auto-denied"
+  ],
+  "permission.stopped": [
+    "已急停 · 自动拒绝",
+    "Stopped · auto-denied"
+  ],
+  "permission.aria": [
+    "权限请求：{title}，等待你的许可",
+    "Permission request: {title}; waiting for your approval"
+  ],
+  "permission.collapseCmd": [
+    "收起全文",
+    "Collapse"
+  ],
+  "permission.expandCmd": [
+    "展开全文",
+    "Expand"
+  ],
+  "permission.collapseContent": [
+    "收起内容",
+    "Collapse"
+  ],
+  "permission.showContent": [
+    "查看内容",
+    "View content"
+  ],
+  "permission.cwd": [
+    "工作目录 · {cwd}",
+    "Working directory · {cwd}"
+  ],
+  "permission.autoReject": [
+    "剩余 {n} 秒自动拒绝 · 按 Esc 快速拒绝",
+    "Auto-deny in {n}s · Esc to deny now"
+  ],
+  "permission.escReject": [
+    "按 Esc 快速拒绝",
+    "Esc to deny"
+  ],
+  "permission.deny": [
+    "拒绝",
+    "Deny"
+  ],
+  "permission.allow": [
+    "允许执行",
+    "Allow"
+  ],
+  "app.stopAll": [
+    "AI 操作已全部切断",
+    "All AI actions stopped"
+  ],
+  "app.stopDetail": [
+    "中断 {n} 个操作、终止 {killed} 个外部进程、丢弃 {dropped} 条排队消息",
+    "Interrupted {n} operation(s), terminated {killed} external process(es), dropped {dropped} queued message(s)"
+  ],
+  "app.downloadDone": [
+    "下载完成：{name}",
+    "Download complete: {name}"
+  ],
+  "app.downloadFailed": [
+    "下载中断：{name}",
+    "Download interrupted: {name}"
+  ],
+  "app.navigateFailed": [
+    "导航失败",
+    "Navigation failed"
+  ],
+  "app.linkCopied": [
+    "链接已复制",
+    "Link copied"
+  ],
+  "app.imageUrlCopied": [
+    "图片地址已复制",
+    "Image URL copied"
+  ],
+  "app.pageUrlCopied": [
+    "页面地址已复制",
+    "Page URL copied"
+  ],
+  "app.copiedMarkdown": [
+    "已复制为 Markdown",
+    "Copied as Markdown"
+  ],
+  "app.tabsSaved": [
+    "已保存 {n} 个标签页",
+    "Saved {n} tabs"
+  ],
+  "app.tabsSavedAll": [
+    "已保存所有标签页",
+    "Saved all tabs"
+  ],
+  "app.aiWaitingConfirm": [
+    "AI 操作等待确认，请打开 AI 面板查看",
+    "An AI action is waiting for confirmation; open the AI panel"
+  ],
+  "app.aiResumed": [
+    "AI 已恢复",
+    "AI resumed"
+  ],
+  "app.stoppedPrefix": [
+    "已急停：{detail}",
+    "Emergency stop: {detail}"
+  ],
+  "app.sendFailed": [
+    "消息发送失败",
+    "Failed to send message"
+  ],
+  "app.opencodeQueued": [
+    "opencode 未连接：消息已排队",
+    "opencode not connected: message queued"
+  ],
+  "app.sendFailedMain": [
+    "消息发送失败：无法连接主进程",
+    "Failed to send message: cannot reach the main process"
+  ],
+  "app.aiPausedBanner": [
+    "AI 已急停",
+    "AI emergency-stopped"
+  ],
+  "app.resumeAi": [
+    "恢复 AI",
+    "Resume AI"
+  ],
+  "app.viewPending": [
+    "查看待确认操作",
+    "View pending confirmations"
+  ],
+  "app.taskTab": [
+    "任务页 #{id}",
+    "Task tab #{id}"
+  ],
+  "app.humanTakeover": [
+    "人工接管",
+    "Human takeover"
+  ],
+  "app.humanReading": [
+    "人工阅读中",
+    "Human reading"
+  ],
+  "app.aiProcessing": [
+    "AI 正在处理",
+    "AI is working"
+  ],
+  "app.resumeTabAi": [
+    "恢复此页 AI",
+    "Resume AI for this tab"
+  ],
+  "app.resumeFailed": [
+    "恢复失败",
+    "Failed to resume"
+  ],
+  "app.findPlaceholder": [
+    "在页面中查找",
+    "Find in page"
+  ],
+  "app.findTab": [
+    "查找页 #{id}",
+    "Find in tab #{id}"
+  ],
+  "app.prev": [
+    "上一个",
+    "Previous"
+  ],
+  "app.next": [
+    "下一个",
+    "Next"
+  ],
+  "app.openFailed": [
+    "打开文件失败",
+    "Failed to open file"
+  ],
+  "app.revealFailed": [
+    "定位文件失败",
+    "Failed to reveal file"
+  ],
+  "app.expandPanel": [
+    "展开 AI 面板",
+    "Expand AI panel"
+  ],
+  "app.loadError": [
+    "页面加载失败：{desc}（{url}）",
+    "Page failed to load: {desc} ({url})"
+  ],
+  "app.retry": [
+    "重试",
+    "Retry"
+  ],
+  "app.aiPermissionWaiting": [
+    "AI 请求执行操作，等待你的许可",
+    "An AI action needs your permission"
+  ],
+  "time.justNow": [
+    "刚刚",
+    "Just now"
+  ],
+  "time.minutesAgo": [
+    "{n} 分钟前",
+    "{n} min ago"
+  ],
+  "time.hoursAgo": [
+    "{n} 小时前",
+    "{n} h ago"
+  ],
+  "time.daysAgo": [
+    "{n} 天前",
+    "{n} d ago"
+  ],
+  "panel.thinking": [
+    "思考过程",
+    "Thinking"
+  ],
+  "panel.sessionError": [
+    "会话错误：{err}",
+    "Session error: {err}"
+  ],
+  "panel.unknownError": [
+    "未知错误",
+    "Unknown error"
+  ],
+  "panel.roundEnd": [
+    "— 本轮结束 —",
+    "— End of round —"
+  ],
+  "panel.addFailed": [
+    "添加失败",
+    "Failed to add"
+  ],
+  "panel.sendFailed": [
+    "发送失败",
+    "Failed to send"
+  ],
+  "panel.startFailed": [
+    "启动失败",
+    "Failed to start"
+  ],
+  "panel.builtinTitle": [
+    "浏览器内置模型直接工作（API 直连，可选功能）",
+    "The browser built-in model works directly (API connection, optional)"
+  ],
+  "panel.builtin": [
+    "内置模型",
+    "Built-in model"
+  ],
+  "panel.switchTool": [
+    "切换要镜像的外部 agent 工具",
+    "Switch the external agent tool to mirror"
+  ],
+  "panel.switchToolOption": [
+    "切换工具…",
+    "Switch tool…"
+  ],
+  "panel.externalToolOption": [
+    "外部工具…",
+    "External tools…"
+  ],
+  "panel.opencodeMirror": [
+    "opencode（双向镜像）",
+    "opencode (two-way mirror)"
+  ],
+  "panel.notDetected": [
+    "（未检测到）",
+    "(not detected)"
+  ],
+  "panel.addCustomTool": [
+    "＋ 添加自定义工具…",
+    "+ Add custom tool…"
+  ],
+  "panel.agentBusy": [
+    "内置模型工作中…",
+    "Built-in model working…"
+  ],
+  "panel.agentReady": [
+    "内置模型就绪",
+    "Built-in model ready"
+  ],
+  "panel.agentUnconfigured": [
+    "未配置模型",
+    "No model configured"
+  ],
+  "panel.modelConfig": [
+    "模型配置",
+    "Model configuration"
+  ],
+  "panel.skillsCli": [
+    "Skills 与 CLI 接入",
+    "Skills & CLI integrations"
+  ],
+  "panel.historyChats": [
+    "历史对话",
+    "Chat history"
+  ],
+  "panel.collapse": [
+    "收起面板",
+    "Collapse panel"
+  ],
+  "panel.creatingChat": [
+    "正在创建对话…",
+    "Creating chat…"
+  ],
+  "panel.aiWorking": [
+    "AI 正在工作…",
+    "AI is working…"
+  ],
+  "panel.aiConnected": [
+    "AI 已连接",
+    "AI connected"
+  ],
+  "panel.aiWaiting": [
+    "等待 AI 连接",
+    "Waiting for AI connection"
+  ],
+  "panel.selectOpencodeChat": [
+    "选择要连接的 opencode 对话",
+    "Choose the opencode chat to connect"
+  ],
+  "panel.selectedChat": [
+    "已选对话",
+    "Selected chat"
+  ],
+  "panel.auto": [
+    "自动",
+    "Auto"
+  ],
+  "panel.connectedOpencode": [
+    "连接的 opencode 对话",
+    "Connected opencode chats"
+  ],
+  "panel.newChat": [
+    "＋ 新建对话",
+    "+ New chat"
+  ],
+  "panel.autoFollow": [
+    "自动（跟随最近对话）",
+    "Auto (follow the most recent chat)"
+  ],
+  "panel.noChats": [
+    "暂无对话列表 — 可在顶部新建一个",
+    "No chats yet — create one at the top"
+  ],
+  "panel.historyChatsLocal": [
+    "历史对话（保存在本机）",
+    "Chat history (stored locally)"
+  ],
+  "panel.noHistory": [
+    "暂无历史对话",
+    "No chat history"
+  ],
+  "panel.deleteChat": [
+    "删除对话（需连续确认三次）",
+    "Delete chat (requires three confirmations)"
+  ],
+  "panel.confirmOne": [
+    "确认?",
+    "Confirm?"
+  ],
+  "panel.confirmAgain": [
+    "再确认!",
+    "Confirm again!"
+  ],
+  "panel.agentIntro": [
+    "和内置模型对话，它会直接操控这个浏览器",
+    "Chat with the built-in model; it operates this browser directly"
+  ],
+  "panel.noProviders": [
+    "还没有可用的模型配置",
+    "No model configuration available yet"
+  ],
+  "panel.openConfig": [
+    "打开配置",
+    "Open settings"
+  ],
+  "panel.agentEmptyHint": [
+    "从 ☰ 选择历史会话，或输入第一条消息启动新会话",
+    "Pick a chat from ☰, or type the first message to start a new chat"
+  ],
+  "panel.aiEmptyHint": [
+    "向 AI 发送消息开始协作",
+    "Send a message to start collaborating with the AI"
+  ],
+  "panel.agentErr": [
+    "内置模型：{err}",
+    "Built-in model: {err}"
+  ],
+  "panel.externalErr": [
+    "外部工具：{err}",
+    "External tool: {err}"
+  ],
+  "panel.clearError": [
+    "清除错误提示",
+    "Clear the error"
+  ],
+  "panel.addToolTitle": [
+    "添加自定义 Agent 工具",
+    "Add a custom agent tool"
+  ],
+  "panel.toolName": [
+    "工具名称",
+    "Tool name"
+  ],
+  "panel.toolNamePlaceholder": [
+    "例如：Gemini CLI",
+    "e.g. Gemini CLI"
+  ],
+  "panel.sessionsDir": [
+    "会话记录目录（包含 .jsonl / .json 会话文件）",
+    "Session directory (contains .jsonl / .json session files)"
+  ],
+  "panel.sessionsDirPlaceholder": [
+    "例如：C:\\\\Users\\\\me\\\\.gemini\\\\tmp",
+    "e.g. C:\\\\Users\\\\me\\\\.gemini\\\\tmp"
+  ],
+  "panel.launchCmd": [
+    "启动命令（可选——填了才能从面板发消息；默认从 stdin 读，支持 {prompt} 占位。指令可能含 cmd 特殊字符时请用 stdin 模式：命令中不要出现 {prompt}）",
+    "Launch command (optional — required to send from the panel; reads stdin by default; supports a {prompt} placeholder. When the command may contain cmd special characters use stdin mode: do not include {prompt})"
+  ],
+  "panel.launchCmdPlaceholder": [
+    "例如：gemini   或   my-agent --prompt {prompt}",
+    "e.g. gemini   or   my-agent --prompt {prompt}"
+  ],
+  "panel.workdir": [
+    "工作目录（可选）",
+    "Working directory (optional)"
+  ],
+  "panel.workdirPlaceholder": [
+    "留空则用用户主目录（例如 C:\\\\work\\\\project）",
+    "Empty means the home directory (e.g. C:\\\\work\\\\project)"
+  ],
+  "panel.adding": [
+    "添加中…",
+    "Adding…"
+  ],
+  "panel.inputAgent": [
+    "给内置模型下指令（Enter 发送）",
+    "Instruct the built-in model (Enter to send)"
+  ],
+  "panel.configureFirst": [
+    "请先配置模型",
+    "Configure a model first"
+  ],
+  "panel.replySession": [
+    "回复当前会话（Enter 发送，将续接该会话）",
+    "Reply to the current chat (Enter to send; continues it)"
+  ],
+  "panel.firstMessage": [
+    "输入第一条消息，以无头模式启动新会话（Enter 发送）",
+    "Type the first message to start a new headless chat (Enter to send)"
+  ],
+  "panel.readOnlyMirror": [
+    "只读镜像：请在对应的 CLI 中继续对话",
+    "Read-only mirror: continue the chat in the corresponding CLI"
+  ],
+  "panel.sendToAi": [
+    "给 AI 发消息（Enter 发送，Shift+Enter 换行）",
+    "Message the AI (Enter to send, Shift+Enter for a newline)"
+  ],
+  "panel.stop": [
+    "停止",
+    "Stop"
+  ],
+  "panel.pauseModify": [
+    "暂停并修改",
+    "Pause & edit"
+  ],
+  "panel.queueFollowup": [
+    "补充排队",
+    "Queue follow-up"
+  ],
+  "panel.emergencyStopTitle": [
+    "紧急停止：终止从面板发起的任务进程",
+    "Emergency stop: terminate task processes started from the panel"
+  ],
+  "panel.sending": [
+    "发送中…",
+    "Sending…"
+  ],
+  "panel.starting": [
+    "启动中…",
+    "Starting…"
+  ],
+  "panel.sendModify": [
+    "发送修改",
+    "Send changes"
+  ],
+  "panel.send": [
+    "发送",
+    "Send"
+  ],
+  "lib.bookmarks": [
+    "书签",
+    "Bookmarks"
+  ],
+  "lib.history": [
+    "浏览记录",
+    "History"
+  ],
+  "lib.downloads": [
+    "下载",
+    "Downloads"
+  ],
+  "lib.removeFromHistory": [
+    "从记录中移除",
+    "Remove from history"
+  ],
+  "lib.enterUrl": [
+    "请输入网址",
+    "Enter a URL"
+  ],
+  "lib.newBookmarkFailed": [
+    "新建书签失败",
+    "Failed to create bookmark"
+  ],
+  "lib.bookmarkAdded": [
+    "已添加书签",
+    "Bookmark added"
+  ],
+  "lib.importFailed": [
+    "导入书签失败",
+    "Failed to import bookmarks"
+  ],
+  "lib.skippedInvalid": [
+    "，跳过重复/无效 {n} 条",
+    "; skipped {n} duplicate/invalid"
+  ],
+  "lib.imported": [
+    "已导入 {n} 条书签{extra}",
+    "Imported {n} bookmarks{extra}"
+  ],
+  "lib.importLocalFailed": [
+    "导入本机浏览器书签失败",
+    "Failed to import local browser bookmarks"
+  ],
+  "lib.skippedDuplicate": [
+    "，跳过重复 {n} 条",
+    "; skipped {n} duplicates"
+  ],
+  "lib.sourceSuffix": [
+    "，来源：{src}",
+    "; source: {src}"
+  ],
+  "lib.urlRequired": [
+    "网址不能为空",
+    "URL cannot be empty"
+  ],
+  "lib.saveBookmarkFailed": [
+    "保存书签失败",
+    "Failed to save bookmark"
+  ],
+  "lib.bookmarkDeleted": [
+    "书签已删除",
+    "Bookmark deleted"
+  ],
+  "lib.linkCopied": [
+    "已复制链接",
+    "Link copied"
+  ],
+  "lib.copyFailed": [
+    "复制失败，请手动复制",
+    "Copy failed; please copy manually"
+  ],
+  "lib.newFolderFailed": [
+    "新建文件夹失败",
+    "Failed to create folder"
+  ],
+  "lib.renameFolderFailed": [
+    "重命名文件夹失败",
+    "Failed to rename folder"
+  ],
+  "lib.folderDeleted": [
+    "文件夹已删除，书签已移到未分类",
+    "Folder deleted; its bookmarks moved to Uncategorized"
+  ],
+  "lib.deleteFolderConfirm": [
+    "删除「{name}」？文件夹内书签将移到未分类",
+    "Delete “{name}”? Its bookmarks will move to Uncategorized"
+  ],
+  "lib.delete": [
+    "删除",
+    "Delete"
+  ],
+  "lib.renamable": [
+    "双击重命名",
+    "Double-click to rename"
+  ],
+  "lib.deleteFolderTitle": [
+    "删除文件夹「{name}」",
+    "Delete folder “{name}”"
+  ],
+  "lib.titlePlaceholder": [
+    "标题（留空则使用网址）",
+    "Title (leave empty to use the URL)"
+  ],
+  "lib.url": [
+    "网址",
+    "URL"
+  ],
+  "lib.uncategorized": [
+    "未分类",
+    "Uncategorized"
+  ],
+  "lib.save": [
+    "保存",
+    "Save"
+  ],
+  "lib.openHint": [
+    "打开（Ctrl/⌘+点击或鼠标中键在新标签打开）",
+    "Open (Ctrl/⌘+click or middle-click opens in a new tab)"
+  ],
+  "lib.confirmDelete": [
+    "确认删除",
+    "Confirm delete"
+  ],
+  "lib.openInCurrent": [
+    "在当前标签打开",
+    "Open in current tab"
+  ],
+  "lib.open": [
+    "打开",
+    "Open"
+  ],
+  "lib.openInNewTab": [
+    "在新标签打开",
+    "Open in new tab"
+  ],
+  "lib.newTab": [
+    "新标签",
+    "New tab"
+  ],
+  "lib.edit": [
+    "编辑",
+    "Edit"
+  ],
+  "lib.copyLink": [
+    "复制链接",
+    "Copy link"
+  ],
+  "lib.copy": [
+    "复制",
+    "Copy"
+  ],
+  "lib.noMatch": [
+    "没有匹配内容",
+    "No matches"
+  ],
+  "lib.tryAnotherKeyword": [
+    "换个关键词再试试",
+    "Try another keyword"
+  ],
+  "lib.emptyHere": [
+    "这里还没有内容",
+    "Nothing here yet"
+  ],
+  "lib.emptyDesc": [
+    "浏览记录、书签和下载会显示在这里",
+    "History, bookmarks, and downloads appear here"
+  ],
+  "lib.noBookmarksInFolder": [
+    "该文件夹还没有书签",
+    "This folder has no bookmarks yet"
+  ],
+  "lib.noBookmarksUncategorized": [
+    "未分类还没有书签",
+    "No uncategorized bookmarks yet"
+  ],
+  "lib.adjustFolderHint": [
+    "可在书签行点击「编辑」调整所在文件夹",
+    "Use “Edit” on a bookmark row to change its folder"
+  ],
+  "lib.noBookmarks": [
+    "还没有书签",
+    "No bookmarks yet"
+  ],
+  "lib.addBookmarkHint": [
+    "点击「＋ 新建书签」，或浏览时点击星标",
+    "Click “+ New bookmark” or the star while browsing"
+  ],
+  "lib.items": [
+    "{n} 项",
+    "{n} items"
+  ],
+  "lib.searchIn": [
+    "搜索{label}",
+    "Search {label}"
+  ],
+  "lib.sortToggle": [
+    "切换排序方式",
+    "Toggle sort order"
+  ],
+  "lib.sortBy": [
+    "排序：{mode}",
+    "Sort: {mode}"
+  ],
+  "lib.sortRecent": [
+    "最近添加",
+    "Recently added"
+  ],
+  "lib.sortTitle": [
+    "标题 A–Z",
+    "Title A–Z"
+  ],
+  "lib.newBookmark": [
+    "＋ 新建书签",
+    "+ New bookmark"
+  ],
+  "lib.importLocalTitle": [
+    "自动读取本机 Chrome / Edge 已有的书签（自动去重）",
+    "Import bookmarks from local Chrome / Edge (auto-deduplicated)"
+  ],
+  "lib.reading": [
+    "读取中…",
+    "Reading…"
+  ],
+  "lib.importLocal": [
+    "导入本机书签",
+    "Import local bookmarks"
+  ],
+  "lib.importHtmlTitle": [
+    "从导出的书签 HTML 文件导入（自动去重）",
+    "Import from an exported bookmarks HTML file (auto-deduplicated)"
+  ],
+  "lib.importing": [
+    "导入中…",
+    "Importing…"
+  ],
+  "lib.importHtml": [
+    "导入 HTML",
+    "Import HTML"
+  ],
+  "lib.allWithCount": [
+    "全部 ({n})",
+    "All ({n})"
+  ],
+  "lib.uncategorizedWithCount": [
+    "未分类 ({n})",
+    "Uncategorized ({n})"
+  ],
+  "lib.folderName": [
+    "文件夹名称",
+    "Folder name"
+  ],
+  "lib.newFolder": [
+    "＋ 新建文件夹",
+    "+ New folder"
+  ],
+  "lib.urlExample": [
+    "网址，例如 https://example.com",
+    "URL, e.g. https://example.com"
+  ],
+  "lib.clearHistoryConfirm": [
+    "确认清除浏览记录？",
+    "Clear browsing history?"
+  ],
+  "lib.clearHistory": [
+    "清除浏览记录",
+    "Clear history"
+  ],
+  "lib.clearListConfirm": [
+    "确认清除列表？",
+    "Clear the list?"
+  ],
+  "lib.clearList": [
+    "清除列表",
+    "Clear list"
+  ],
+  "lib.allYears": [
+    "全部年份",
+    "All years"
+  ],
+  "lib.year": [
+    "{y}年",
+    "{y}"
+  ],
+  "lib.all": [
+    "全部",
+    "All"
+  ],
+  "lib.records": [
+    "{n} 条",
+    "{n} records"
+  ],
+  "lib.canceled": [
+    "已取消",
+    "Canceled"
+  ],
+  "lib.interrupted": [
+    "下载中断",
+    "Interrupted"
+  ],
+  "lib.folder": [
+    "文件夹",
+    "Folder"
+  ],
+  "time.secondsAgo": [
+    "{n} 秒前",
+    "{n}s ago"
+  ],
+  "ext.readSessionsFailed": [
+    "读取会话列表失败",
+    "Failed to read the session list"
+  ],
+  "ext.openFailed": [
+    "打开失败",
+    "Failed to open"
+  ],
+  "ext.saveFailed": [
+    "保存失败",
+    "Failed to save"
+  ],
+  "ext.modelSelected": [
+    "已选择：{name}（对面板发起/续聊的会话生效）",
+    "Selected: {name} (applies to chats started/continued from the panel)"
+  ],
+  "ext.modelDefault": [
+    "已恢复默认（跟随 CLI 配置）",
+    "Restored default (follows CLI config)"
+  ],
+  "ext.syncConfirm": [
+    "将写入全局 CLI 配置——影响该 CLI 的全部会话（不只 Duplex），确认后写入并自动备份",
+    "This writes the global CLI config — affecting all sessions of that CLI (not just Duplex). It backs up automatically."
+  ],
+  "ext.synced": [
+    "已写入全局配置（备份：{path}）",
+    "Wrote the global config (backup: {path})"
+  ],
+  "ext.syncFailed": [
+    "同步失败",
+    "Sync failed"
+  ],
+  "ext.notSelectedTool": [
+    "未选择工具",
+    "No tool selected"
+  ],
+  "ext.refreshSessions": [
+    "刷新会话列表",
+    "Refresh session list"
+  ],
+  "ext.historySessions": [
+    "历史会话",
+    "Chat history"
+  ],
+  "ext.removeTool": [
+    "移除该自定义工具（需连续确认三次）",
+    "Remove this custom tool (requires three confirmations)"
+  ],
+  "ext.collapse": [
+    "收起面板",
+    "Collapse panel"
+  ],
+  "ext.model": [
+    "模型",
+    "Model"
+  ],
+  "ext.modelPlaceholder": [
+    "输入模型名，回车保存",
+    "Enter a model name; press Enter to save"
+  ],
+  "ext.defaultCli": [
+    "默认（跟随 CLI 配置）",
+    "Default (follows CLI config)"
+  ],
+  "ext.customSuffix": [
+    "{model}（自定义）",
+    "{model} (custom)"
+  ],
+  "ext.customOption": [
+    "自定义…",
+    "Custom…"
+  ],
+  "ext.writeGlobalTitle": [
+    "写入全局 CLI 配置：影响该 CLI 的全部会话（自动备份）",
+    "Write the global CLI config: affects all sessions of that CLI (auto backup)"
+  ],
+  "ext.globalButton": [
+    "⇪ 全局",
+    "⇪ Global"
+  ],
+  "ext.confirmWrite": [
+    "确认写入",
+    "Confirm write"
+  ],
+  "ext.historySessionsWith": [
+    "历史会话（{name} · {n} 个）",
+    "Chat history ({name} · {n})"
+  ],
+  "ext.newChat": [
+    "＋ 新建对话",
+    "+ New chat"
+  ],
+  "ext.noSessions": [
+    "未找到会话记录",
+    "No session records found"
+  ],
+  "ext.syncDisconnected": [
+    "会话记录同步已断开；重新打开该会话可恢复",
+    "Session sync disconnected; reopen the chat to restore it"
+  ],
+  "ext.loadingSessions": [
+    "正在加载会话…",
+    "Loading sessions…"
+  ],
+  "ext.pickTool": [
+    "未选择外部工具：请在顶部下拉中选择或添加自定义工具",
+    "No external tool selected: pick one in the top dropdown or add a custom tool"
+  ],
+  "ext.cmdUnavailable": [
+    "{name} 未检测到可用命令，仅可浏览历史会话；继续对话请在对应的 CLI 中进行",
+    "{name} has no usable command; only historical sessions can be browsed. Continue the chat in the corresponding CLI."
+  ],
+  "ext.newHeadless": [
+    "新对话：在下方输入第一条消息，将以无头模式启动（Enter 发送）",
+    "New chat: type the first message below to launch headless (Enter to send)"
+  ],
+  "ext.noSend": [
+    "该工具不支持从面板发送消息，请在对应的 CLI 中继续",
+    "This tool cannot send from the panel; continue in the corresponding CLI"
+  ],
+  "ext.opened": [
+    "已打开：{title}",
+    "Opened: {title}"
+  ],
+  "ext.replyInline": [
+    "（可直接在下方回复，将续接该会话）",
+    "(Reply below; the chat will continue)"
+  ],
+  "ext.readOnly": [
+    "（只读镜像，新消息自动同步）",
+    "(Read-only mirror; new messages sync automatically)"
+  ],
+  "skills.readFailed": [
+    "读取失败",
+    "Failed to read"
+  ],
+  "skills.toggleFailed": [
+    "切换失败",
+    "Failed to toggle"
+  ],
+  "skills.deleteFailed": [
+    "删除失败",
+    "Failed to delete"
+  ],
+  "skills.importFailed": [
+    "导入失败",
+    "Import failed"
+  ],
+  "skills.writeFailed": [
+    "写入失败",
+    "Failed to write"
+  ],
+  "skills.codexBackup": [
+    "已写入配置。原文件备份：{path}",
+    "Wrote the config. Original backed up to: {path}"
+  ],
+  "skills.codexFresh": [
+    "已写入配置（原文件不存在，已新建）。",
+    "Wrote the config (file did not exist; created)."
+  ],
+  "skills.copied": [
+    "已复制到剪贴板",
+    "Copied to clipboard"
+  ],
+  "skills.copyFailed": [
+    "复制失败：请手动选中命令复制",
+    "Copy failed: select the command and copy manually"
+  ],
+  "skills.count": [
+    "{n} 个（专用 {duplex} / Claude {claude}）",
+    "{n} skills (Duplex {duplex} / Claude {claude})"
+  ],
+  "skills.empty": [
+    "未发现 skill — 可导入文件夹（需含 SKILL.md），或先用 Claude Code 装一些",
+    "No skills found — import a folder (must contain SKILL.md), or install some with Claude Code first"
+  ],
+  "skills.sourceDuplex": [
+    "专用",
+    "Duplex"
+  ],
+  "skills.noDesc": [
+    "（无描述）",
+    "(no description)"
+  ],
+  "skills.enabled": [
+    "已启用（点击停用）",
+    "Enabled (click to disable)"
+  ],
+  "skills.disabled": [
+    "已停用（点击启用）",
+    "Disabled (click to enable)"
+  ],
+  "skills.deleteConfirm": [
+    "删除（需连续确认三次）",
+    "Delete (requires three confirmations)"
+  ],
+  "skills.claudeSource": [
+    "Claude 来源（只读）",
+    "Claude source (read-only)"
+  ],
+  "skills.importFolder": [
+    "＋ 导入文件夹",
+    "+ Import folder"
+  ],
+  "skills.cli": [
+    "CLI 接入",
+    "CLI integration"
+  ],
+  "skills.codexConnected": [
+    "已接入 ✓",
+    "Connected ✓"
+  ],
+  "skills.codexNotConnected": [
+    "未接入",
+    "Not connected"
+  ],
+  "skills.codexNoConfig": [
+    "未找到 config.toml",
+    "config.toml not found"
+  ],
+  "skills.connectCodex": [
+    "接入 Codex",
+    "Connect Codex"
+  ],
+  "skills.claudeHint": [
+    "Claude Code：复制命令后到终端执行",
+    "Claude Code: copy the command and run it in a terminal"
+  ],
+  "skills.copy": [
+    "复制",
+    "Copy"
+  ],
+  "skills.hideCmd": [
+    "隐藏命令",
+    "Hide command"
+  ],
+  "skills.showCmd": [
+    "显示命令",
+    "Show command"
+  ],
+  "skills.bridgeMissing": [
+    "注意：未找到 dist-bridge/index.cjs——请先在项目根运行 npm run build:bridge",
+    "Note: dist-bridge/index.cjs is missing — run npm run build:bridge in the project root first"
+  ],
+  "skills.injectedNote": [
+    "无需全局配置：Codex / Claude Code / opencode 仅在从 Duplex 面板发起或续接会话时临时获得浏览器控制能力。",
+    "No global setup needed: Codex / Claude Code / opencode receive browser control only for sessions started or resumed from the Duplex panel."
+  ],
+  "skills.writeMcpTo": [
+    "将把 Duplex 的 MCP 配置写入：{path}",
+    "This writes Duplex MCP config to: {path}"
+  ],
+  "skills.backupNote": [
+    "（会自动备份原文件）确定继续？",
+    "(The original will be backed up) Continue?"
+  ],
+  "skills.confirmWrite": [
+    "确定写入",
+    "Write"
+  ],
+  "menu.openLinkNewTab": [
+    "在新标签页打开链接",
+    "Open link in new tab"
+  ],
+  "menu.copyLink": [
+    "复制链接地址",
+    "Copy link address"
+  ],
+  "menu.openImageNewTab": [
+    "在新标签页打开图片",
+    "Open image in new tab"
+  ],
+  "menu.copyImage": [
+    "复制图片地址",
+    "Copy image address"
+  ],
+  "menu.saveImageAs": [
+    "图片另存为",
+    "Save image as…"
+  ],
+  "menu.copy": [
+    "复制",
+    "Copy"
+  ],
+  "menu.searchWith": [
+    "使用{engine}搜索 \"{text}\"",
+    "Search {engine} for \"{text}\""
+  ],
+  "menu.cut": [
+    "剪切",
+    "Cut"
+  ],
+  "menu.paste": [
+    "粘贴",
+    "Paste"
+  ],
+  "menu.selectAll": [
+    "全选",
+    "Select all"
+  ],
+  "menu.back": [
+    "后退",
+    "Back"
+  ],
+  "menu.forward": [
+    "前进",
+    "Forward"
+  ],
+  "menu.reload": [
+    "刷新",
+    "Reload"
+  ],
+  "menu.copyPageUrl": [
+    "复制页面地址",
+    "Copy page URL"
+  ],
+  "menu.copyPageMarkdown": [
+    "复制为 Markdown",
+    "Copy as Markdown"
+  ],
+  "menu.tabCopy": [
+    "复制标签页",
+    "Duplicate tab"
+  ],
+  "menu.tabMute": [
+    "静音标签页",
+    "Mute tab"
+  ],
+  "menu.tabUnmute": [
+    "取消静音",
+    "Unmute tab"
+  ],
+  "menu.closeOtherTabs": [
+    "关闭其他标签页",
+    "Close other tabs"
+  ],
+  "menu.closeRightTabs": [
+    "关闭右侧标签页",
+    "Close tabs to the right"
+  ],
+  "menu.bookmarkAllTabs": [
+    "所有标签页加入书签",
+    "Bookmark all tabs"
+  ],
+  "menu.recentClosed": [
+    "最近关闭的标签页",
+    "Recently closed"
+  ],
+  "menu.reopenClosed": [
+    "重新打开关闭的标签页",
+    "Reopen closed tab"
+  ],
+  "menu.empty": [
+    "（空）",
+    "(empty)"
+  ],
+  "menu.libraryBookmarks": [
+    "书签",
+    "Bookmarks"
+  ],
+  "menu.libraryHistory": [
+    "浏览记录",
+    "History"
+  ],
+  "menu.libraryDownloads": [
+    "下载内容",
+    "Downloads"
+  ],
+  "menu.newIncognitoTab": [
+    "新建无痕标签页",
+    "New incognito tab"
+  ],
+  "menu.autoContinue": [
+    "60 步上限后自动续接",
+    "Auto-continue after the 60-step limit"
+  ],
+  "menu.autoContinueOff": [
+    "关闭（默认）",
+    "Off (default)"
+  ],
+  "menu.autoContinueN": [
+    "自动续接 {n} 轮",
+    "Auto-continue {n} rounds"
+  ],
+  "menu.copyPageMarkdownShort": [
+    "复制本页为 Markdown",
+    "Copy this page as Markdown"
+  ],
+  "menu.annotation": [
+    "页面标注",
+    "Page annotation"
+  ],
+  "menu.stopKeys": [
+    "设置急停键",
+    "Set emergency stop keys"
+  ],
+  "menu.shortcuts": [
+    "快捷键设置",
+    "Keyboard shortcuts"
+  ],
+  "menu.language": [
+    "界面语言",
+    "Interface language"
+  ],
+  "menu.languageSystem": [
+    "跟随系统",
+    "Follow system"
+  ],
+  "menu.languageZh": [
+    "简体中文",
+    "简体中文"
+  ],
+  "menu.languageEn": [
+    "English",
+    "English"
+  ],
+  "menu.defaultBrowser": [
+    "设为默认浏览器…",
+    "Set as default browser…"
+  ],
+  "menu.askDownloadLocation": [
+    "下载前询问保存位置",
+    "Ask where to save before downloading"
+  ],
+  "menu.importBookmarksTitle": [
+    "导入书签（Chrome / Edge 导出的 HTML）",
+    "Import bookmarks (HTML exported from Chrome / Edge)"
+  ],
+  "menu.importBookmarksFilter": [
+    "书签 HTML",
+    "Bookmarks HTML"
+  ],
+  "menu.importSkillTitle": [
+    "选择要导入的 Skill 文件夹（需包含 SKILL.md）",
+    "Choose a skill folder to import (must contain SKILL.md)"
+  ],
+  "omnibox.searchSub": [
+    "{engine} 搜索",
+    "Search with {engine}"
+  ],
+  "omnibox.today": [
+    "今天",
+    "Today"
+  ],
+  "omnibox.yesterday": [
+    "昨天",
+    "Yesterday"
+  ],
+  "omnibox.monthLabel": [
+    "{m}月",
+    "{monthName}"
+  ],
+  "omnibox.yearMonthLabel": [
+    "{y}年{m}月",
+    "{monthName} {y}"
+  ],
+  "omnibox.yearMonthChip": [
+    "{y}年{m}月",
+    "{monthName} {y}"
+  ],
+  "omnibox.weekdays": [
+    "星期日,星期一,星期二,星期三,星期四,星期五,星期六",
+    "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday"
+  ],
+  "hotkeys.unrecognized": [
+    "无法识别的按键",
+    "Unrecognized key"
+  ],
+  "hotkeys.winReserved": [
+    "Win 键组合会被系统占用，无法用作急停键",
+    "Win-key combinations are reserved by the system and cannot be used as an emergency key"
+  ],
+  "hotkeys.altF4Reserved": [
+    "Alt+F4 是系统保留按键（会直接关闭窗口）",
+    "Alt+F4 is reserved by the system (it closes the window)"
+  ],
+  "hotkeys.conflictBrowser": [
+    "与浏览器快捷键 {combo} 冲突",
+    "Conflicts with the browser shortcut {combo}"
+  ],
+  "hotkeys.needModifier": [
+    "请配合 Ctrl / Alt / Shift 使用（F1–F12、Esc 可单用）",
+    "Use with Ctrl / Alt / Shift (F1–F12 and Esc may be used alone)"
+  ],
+  "hotkeys.space": [
+    "空格",
+    "Space"
+  ],
+  "shortcutErr.unrecognized": [
+    "「{label}」的按键无法识别",
+    "The keys for “{label}” cannot be recognized"
+  ],
+  "shortcutErr.f12": [
+    "「{label}」不能使用 F12（系统保留）",
+    "“{label}” cannot use F12 (system reserved)"
+  ],
+  "shortcutErr.altF4": [
+    "「{label}」不能使用 Alt+F4（系统保留）",
+    "“{label}” cannot use Alt+F4 (system reserved)"
+  ],
+  "shortcutErr.win": [
+    "「{label}」使用 Win 键组合会被系统占用",
+    "“{label}” with a Win-key combination is reserved by the system"
+  ],
+  "shortcutErr.modifier": [
+    "「{label}」需要配合 Ctrl / Alt / Shift 使用（F1–F12、Esc 可单用）",
+    "“{label}” needs Ctrl / Alt / Shift (F1–F12 and Esc may be used alone)"
+  ],
+  "shortcutErr.tabSwitch": [
+    "「{label}」不能使用 Ctrl+1–9（已保留给标签页切换）",
+    "“{label}” cannot use Ctrl+1–9 (reserved for tab switching)"
+  ],
+  "shortcutErr.duplicate": [
+    "快捷键重复：「{a}」与「{b}」都使用了 {combo}",
+    "Duplicate shortcut: “{a}” and “{b}” both use {combo}"
+  ],
+  "shortcutErr.emergency": [
+    "「{label}」与急停键 {combo} 冲突",
+    "“{label}” conflicts with the emergency key {combo}"
+  ],
+  "settings.saveFailed": [
+    "设置保存失败：磁盘或权限问题",
+    "Failed to save settings: disk or permission problem"
+  ],
+  "dl.notFoundPending": [
+    "未找到该下载记录（可能尚未完成）",
+    "Download record not found (it may not be finished yet)"
+  ],
+  "dl.notFound": [
+    "未找到该下载记录",
+    "Download record not found"
+  ],
+  "dl.fileMoved": [
+    "文件已被移动或删除：{path}",
+    "The file was moved or deleted: {path}"
+  ],
+  "dl.openFailed": [
+    "打开文件失败",
+    "Failed to open the file"
+  ],
+  "dl.revealFailed": [
+    "定位文件失败",
+    "Failed to reveal the file"
+  ],
+  "bd.urlEmpty": [
+    "网址不能为空",
+    "URL cannot be empty"
+  ],
+  "bd.bookmarkMissing": [
+    "书签不存在",
+    "Bookmark does not exist"
+  ],
+  "bd.bookmarkExists": [
+    "该网址已有书签",
+    "This URL is already bookmarked"
+  ],
+  "bd.folderNameEmpty": [
+    "文件夹名称不能为空",
+    "Folder name cannot be empty"
+  ],
+  "bd.folderExists": [
+    "文件夹已存在",
+    "Folder already exists"
+  ],
+  "bd.folderMissing": [
+    "文件夹不存在",
+    "Folder does not exist"
+  ],
+  "app.unknownEngine": [
+    "未知搜索引擎",
+    "Unknown search engine"
+  ],
+  "app.annotateQueued": [
+    "opencode 未连接：标注已排队，连接后自动送达",
+    "opencode not connected: annotation queued and will be delivered automatically"
+  ],
+  "app.annotateRecordedNoAsk": [
+    "已记录标注（未提问：AI 不会单独回应）",
+    "Annotation recorded (no question asked; the AI will not reply on its own)"
+  ],
+  "app.messageQueued": [
+    "opencode 未连接：消息已排队，连接后自动送达",
+    "opencode not connected: message queued and delivered automatically"
+  ],
+  "app.modelMissing": [
+    "当前模型配置不存在，请在 ⚙ 模型配置里选择或新建",
+    "The current model configuration does not exist; choose or create one in ⚙ Model configuration"
+  ],
+  "app.modelNotInOpencode": [
+    "未在 opencode 配置中找到可用 provider：至少需要 Base URL；本地服务（如 Ollama）可不填 API Key",
+    "No usable provider found in the opencode config: a Base URL is required; local services (e.g. Ollama) may omit the API key"
+  ],
+  "app.readOpencodeFailed": [
+    "读取 opencode 配置失败：{err}",
+    "Failed to read the opencode config: {err}"
+  ],
+  "app.windowNotReady": [
+    "窗口未就绪",
+    "Window not ready"
+  ],
+  "app.cancelled": [
+    "已取消",
+    "Canceled"
+  ],
+  "app.skillFolderPickTitle": [
+    "选择要导入的 Skill 文件夹（需包含 SKILL.md）",
+    "Choose a skill folder to import (must contain SKILL.md)"
+  ],
+  "app.bookmarkHtmlTooBig": [
+    "文件超过 30MB，不太像书签导出文件",
+    "The file is over 30MB and does not look like a bookmarks export"
+  ],
+  "app.noBookmarksInHtml": [
+    "没有找到书签（请确认是浏览器导出的书签 HTML 文件）",
+    "No bookmarks found (make sure this is an HTML file exported by a browser)"
+  ],
+  "app.noLocalAppData": [
+    "找不到本机应用数据目录（LOCALAPPDATA）",
+    "Cannot find the local app data directory (LOCALAPPDATA)"
+  ],
+  "app.noLocalBookmarks": [
+    "没有找到 Chrome / Edge 的书签（未安装，或书签为空）",
+    "No Chrome / Edge bookmarks found (not installed, or empty)"
+  ],
+  "app.noTabs": [
+    "没有打开的标签页",
+    "No open tabs"
+  ],
+  "app.tabClosed": [
+    "目标标签已关闭",
+    "The target tab has been closed"
+  ],
+  "app.tabMissing": [
+    "标签页不存在",
+    "Tab does not exist"
+  ],
+  "app.toolMissing": [
+    "工具不存在（列表可能已刷新）",
+    "Tool does not exist (the list may have been refreshed)"
+  ],
+  "app.openSessionFirst": [
+    "请先从「历史会话」中打开一个会话，再发送续聊消息",
+    "Open a chat in “Chat history” before sending a reply"
+  ],
+  "app.annotationSessionSwitched": [
+    "标注对应的外部会话已切换，请重新提交",
+    "The external chat for this annotation has switched; please resubmit"
+  ],
+  "app.messageEmpty": [
+    "消息不能为空",
+    "Message cannot be empty"
+  ],
+  "app.taskRunning": [
+    "已有任务在运行中，请等待完成，或点「停止」后再发送",
+    "A task is already running; wait for it to finish or press “Stop” before sending"
+  ],
+  "app.annotationToExternalFailed": [
+    "标注发送到外部会话失败：{err}",
+    "Failed to send the annotation to the external chat: {err}"
+  ],
+  "app.annotationExternalUnavailable": [
+    "外部工具模式下标注不会送达：请先在面板打开 Codex / Claude 会话，或切换到内置模型 / opencode 模式",
+    "Annotations are not delivered in external-tool mode: open a Codex / Claude chat in the panel first, or switch to the built-in model / opencode mode"
+  ],
+  "app.annotationBuiltinSwitched": [
+    "标注对应的内置会话已切换，请重新提交",
+    "The built-in chat for this annotation has switched; please resubmit"
+  ],
+  "app.annotationBuiltinFailed": [
+    "内置模型标注发送失败：{err}",
+    "Failed to send the annotation to the built-in model: {err}"
+  ],
+  "app.annotationAiPaused": [
+    "AI 已急停挂起：请先点「恢复」再提交标注",
+    "AI is paused by the emergency stop: press “Resume” before submitting an annotation"
+  ],
+  "app.startFailed": [
+    "启动失败：{err}",
+    "Failed to start: {err}"
+  ],
+  "app.sendFailedNoTool": [
+    "发送失败：无法启动 {tool}（{err}）",
+    "Failed to send: cannot start {tool} ({err})"
+  ],
+  "app.invalidPath": [
+    "非法路径",
+    "Invalid path"
+  ],
+  "app.noSessionsDir": [
+    "工具不可用（未找到会话目录）",
+    "Tool unavailable (session directory not found)"
+  ],
+  "app.pickModelFirst": [
+    "请先在面板中选择一个模型，再同步到全局",
+    "Pick a model in the panel before syncing to the global config"
+  ],
+  "app.toolUnavailable": [
+    "未检测到「{name}」（命令或配置目录不存在）",
+    "“{name}” was not detected (command or config directory missing)"
+  ],
+  "app.sessionDirMissing": [
+    "未找到该工具的会话目录，无法跟随新会话",
+    "The tool has no session directory; cannot follow new chats"
+  ],
+  "app.startCustomTool": [
+    "启动自定义工具",
+    "Start custom tool"
+  ],
+  "app.userRejected": [
+    "用户拒绝了这次启动",
+    "The user rejected this launch"
+  ],
+  "app.cancelledStop": [
+    "已取消（用户急停）",
+    "Canceled (emergency stop)"
+  ],
+  "app.processStopped": [
+    "已停止该进程（用户取消）",
+    "Stopped the process (user canceled)"
+  ],
+  "app.ambiguousSessions": [
+    "检测到多个同时创建的会话，无法确定本次启动对象；已停止，请从历史会话选择",
+    "Multiple sessions were created at once; cannot determine which one to follow. Stopped — pick one in Chat history"
+  ],
+  "app.processExited": [
+    "进程提前退出（exit {code}），未检测到新的会话文件{stderr}",
+    "The process exited early (exit {code}); no new session file was detected{stderr}"
+  ],
+  "app.startTimeout": [
+    "启动超时（20 秒），未检测到会话文件；已终止该进程{stderr}",
+    "Startup timed out (20s); no session file was detected. The process was terminated{stderr}"
+  ],
+  "app.invalidShortcuts": [
+    "无效的快捷键设置",
+    "Invalid shortcut settings"
+  ],
+  "app.invalidBinding": [
+    "「{label}」的按键无效",
+    "The keys for “{label}” are invalid"
+  ],
+  "app.bindingUnrecognized": [
+    "「{label}」的按键无法识别",
+    "The keys for “{label}” cannot be recognized"
+  ],
+  "app.comboUsed": [
+    "该组合已被快捷键「{label}」使用",
+    "This combination is already used by the shortcut “{label}”"
+  ],
+  "app.emergencyKeyNeeded": [
+    "请设置至少一个有效按键（F1–F12、Esc 或带 Ctrl/Alt/Shift 的组合）",
+    "Set at least one valid key (F1–F12, Esc, or a combination with Ctrl/Alt/Shift)"
+  ],
+  "app.baseUrlEmpty": [
+    "Base URL 不能为空",
+    "Base URL cannot be empty"
+  ],
+  "app.noModelConfig": [
+    "未找到该模型配置",
+    "Model configuration not found"
+  ],
+  "app.readSessionFailed": [
+    "无法读取会话文件（{err}）：{file}",
+    "Cannot read the session file ({err}): {file}"
+  ],
+  "app.sessionWatchStopped": [
+    "会话文件跟踪连续出错，已停止监听（{err}）：{file}",
+    "Session file watching stopped after repeated errors ({err}): {file}"
+  ],
+  "app.lastOutput": [
+    "；最近输出：{text}",
+    "; last output: {text}"
+  ],
+  "app.permDetailWrite": [
+    "写入文件：{detail}",
+    "Write file: {detail}"
+  ],
+  "app.permSkillWrite": [
+    "write_file（写文件）",
+    "write_file (write)"
+  ],
+  "app.permSkillRun": [
+    "run_command（执行命令）",
+    "run_command (command)"
+  ],
+  "overlay.toolsTitle": [
+    "工具选择（可拖动）",
+    "Tools (draggable)"
+  ],
+  "overlay.rect": [
+    "框选 (1)",
+    "Select area (1)"
+  ],
+  "overlay.circle": [
+    "圈选 (2)",
+    "Circle (2)"
+  ],
+  "overlay.arrow": [
+    "箭头 (3)",
+    "Arrow (3)"
+  ],
+  "overlay.point": [
+    "点选 (4)",
+    "Point (4)"
+  ],
+  "overlay.clearAll": [
+    "清空全部标注",
+    "Clear all annotations"
+  ],
+  "overlay.exit": [
+    "退出标注模式 (Esc)",
+    "Exit annotation mode (Esc)"
+  ],
+  "overlay.askPlaceholder": [
+    "对这块提问…（可留空，Enter 发送）",
+    "Ask about this area… (optional, Enter to send)"
+  ],
+  "overlay.cardHint": [
+    "Enter 发送 · Esc 收起卡片（标注保留）",
+    "Enter to send · Esc hides the card (annotation kept)"
+  ],
+  "overlay.send": [
+    "发送",
+    "Send"
+  ],
+  "overlay.elements": [
+    "{n} 个元素",
+    "{n} elements"
+  ],
+  "overlay.sent": [
+    "已发送给 AI",
+    "Sent to AI"
+  ],
+  "overlay.sentCount": [
+    "已发送给 AI（{n} 个元素）",
+    "Sent to AI ({n} elements)"
+  ],
+  "overlay.sendFailed": [
+    "发送失败",
+    "Failed to send"
+  ],
+  "overlay.exited": [
+    "已退出标注，{n} 个未提交标注已清除",
+    "Exited annotation; {n} unsubmitted annotations cleared"
+  ],
+  "overlay.undo": [
+    "撤销此标注",
+    "Undo this annotation"
+  ],
+  "overlay.tooSmall": [
+    "框选太小，请拖大一点",
+    "Selection too small — drag a larger area"
+  ]
+}

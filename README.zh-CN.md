@@ -44,6 +44,12 @@
 
 - **你和 AI 共用一个页面——优先听你的。** 当你在滚动、输入或与页面交互时，AI 会继续观察，但**暂停自己在该页面的修改**，而不是和你抢同一份输入；顶部状态条会列出处于"人工接管"的页面，你准备好后可以逐页一键交还。急停仍是最后的硬刹车：一键切断全部 AI 操作、它启动的 CLI 子进程和排队消息。
 
+## v0.2.10 新增
+
+- **中英双语界面** —— 渲染层、原生菜单、右键菜单、对话框与标注浮层均支持简体中文 / English，可跟随系统或手动固定语言。
+- **应用内搜索引擎下拉** —— 地址栏引擎选择不再依赖系统原生菜单，使用主题化的应用内下拉选择百度 / Bing / Google。
+- **仅面板驱动的浏览器控制** —— Codex、Claude Code、opencode 只在从 Duplex 面板发起或续接会话时临时获得 Duplex 的 MCP 浏览器工具；不再安装全局 MCP，独立 agent 会话不会自行打开 Duplex。opencode 使用专用 `duplex` agent，默认拒绝 `duplex_*`。
+
 ## v0.2.9 新增
 
 - **人机协作（以人为先）** —— AI 会给你让路：你一滚动 / 输入 / 触摸 / 聚焦，它继续读取和思考，但暂停自己在该页面的修改；状态条展示被人工接管的页面，点一下即可逐页交还。即使 AI 正在操作，你的滚动位置与焦点也不会被夺走。
@@ -165,10 +171,23 @@ npm start      # 预览生产构建
 ### 接入 opencode（推荐）
 
 1. 安装镜像插件：把 `integrations/opencode/plugins/cobrowse-mirror.ts` 复制到全局插件目录（`~/.config/opencode/plugins/`），或项目的 `.opencode/plugins/`。
-2. 在 opencode 配置（`opencode.json`，项目级或全局）中注册 MCP 服务，参考 [`opencode.example.json`](opencode.example.json)：
+2. 在 opencode 配置（`opencode.json`，项目级或全局）中注册 MCP 服务和 `duplex` agent，参考 [`opencode.example.json`](opencode.example.json)。普通会话默认拒绝 `duplex_*` 工具，只有 `duplex` agent 允许：
 
 ```json
 {
+  "permission": {
+    "*": "allow",
+    "duplex_*": "deny"
+  },
+  "agent": {
+    "duplex": {
+      "mode": "primary",
+      "permission": {
+        "*": "allow",
+        "duplex_*": "allow"
+      }
+    }
+  },
   "mcp": {
     "duplex": {
       "type": "local",
@@ -179,8 +198,10 @@ npm start      # 预览生产构建
 }
 ```
 
-3. 在 opencode 里让 AI 浏览：*"打开 example.com 介绍下这个页面"*。浏览器会在第一次工具调用时自动启动（无需手动打开）。
-4. 在 Duplex 侧边面板选择 **opencode** 标签，选择要跟随的会话（或保持"自动"）。
+3. 在 Duplex 侧边面板选择 **opencode** 标签，直接在那里发送请求。插件会把消息投递给当前 opencode 会话，并切换到 `duplex` agent，因此只有这轮面板消息获得浏览器控制能力；普通 opencode 会话不会自己打开 Duplex。
+4. 如需从 opencode 手动触发，显式选择 `duplex` agent。
+
+Codex 和 Claude Code 遵循同样的规则：不安装全局 MCP。Duplex 只对从面板发起或续接的会话临时注入 MCP 服务。
 
 ### 使用内置模型（不依赖 opencode）
 

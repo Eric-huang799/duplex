@@ -20,6 +20,30 @@ afterEach(() => {
 })
 
 describe('OpenCode message delivery at the HTTP boundary', () => {
+  it('delivers a Duplex-origin prompt through the duplex agent only', async () => {
+    let options: any
+    vi.stubGlobal('fetch', async (input: string) => {
+      const url = new URL(input)
+      if (url.pathname === '/api/session/state') return Response.json({ activeSessionID: 'A' })
+      if (url.pathname === '/api/injections/renew') return Response.json({ ok: true })
+      if (url.pathname === '/api/injections') {
+        return Response.json([{ id: 'origin', text: 'find a page' }])
+      }
+      if (url.pathname === '/api/injections/ack') return Response.json({ ok: true })
+      return never()
+    })
+    await CobrowseMirror({ client: { session: {
+      get: async () => ({ data: { id: 'A' } }),
+      promptAsync: async (opts: any) => {
+        options = opts
+      }
+    } } })
+    await tick()
+    expect(options?.body?.agent).toBe('duplex')
+    expect(options?.body?.system).toContain('duplex_*')
+    expect(options?.body?.parts).toEqual([{ type: 'text', text: 'find a page' }])
+  })
+
   it('does not claim messages for a session belonging to another OpenCode client', async () => {
     let claims = 0
     vi.stubGlobal('fetch', async (input: string) => {

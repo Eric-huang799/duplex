@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CollaborationState, LoadErrorInfo, MirrorEvent, TabInfo } from '../../shared/protocol'
+import type { I18nKey } from '../../shared/i18n'
+import { useI18n } from './i18n'
 import { matchesBinding, parseBinding } from '../../shared/hotkeys'
 import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, type ShortcutAction } from '../../shared/shortcuts'
 import type { PermissionRequest } from './components/PermissionCard'
@@ -44,16 +46,19 @@ interface EmergencyStopEvent {
   dropped?: number
 }
 
-function emergencyStopText(s: EmergencyStopEvent): string {
+type TFn = (key: I18nKey, vars?: Record<string, string | number>) => string
+
+function emergencyStopText(t: TFn, s: EmergencyStopEvent): string {
   const ops = typeof s.aborted === 'number' ? s.aborted : null
   const killed = typeof s.killed === 'number' ? s.killed : null
   const dropped = typeof s.dropped === 'number' ? s.dropped : null
-  if (ops == null && killed == null && dropped == null) return 'AI 操作已全部切断'
+  if (ops == null && killed == null && dropped == null) return t('app.stopAll')
   const n = ops ?? (s.aborted === true ? 1 : 0)
-  return `中断 ${n} 个操作、终止 ${killed ?? 0} 个外部进程、丢弃 ${dropped ?? 0} 条排队消息`
+  return t('app.stopDetail', { n, killed: killed ?? 0, dropped: dropped ?? 0 })
 }
 
 export default function App(): React.JSX.Element {
+  const { t } = useI18n()
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [browserData, setBrowserData] = useState<BrowserDataSnapshot>({ bookmarks: [], bookmarkFolders: [], history: [], downloads: [] })
@@ -154,9 +159,9 @@ export default function App(): React.JSX.Element {
         for (const row of rows) {
           const before = prev.get(row.id)
           if (row.state === 'completed' && before?.state !== 'completed') {
-            showToast(`下载完成：${row.filename}`)
+            showToast(t('app.downloadDone', { name: row.filename }))
           } else if (row.state === 'interrupted' && before?.state !== 'interrupted') {
-            showToast(`下载中断：${row.filename}`)
+            showToast(t('app.downloadFailed', { name: row.filename }))
           }
         }
       }
@@ -171,7 +176,7 @@ export default function App(): React.JSX.Element {
     (url: string, tabId = activeTabRef.current ?? undefined): void => {
       void window.cobrowse.tabAction({ type: 'navigate', url, tabId }).then((r) => {
         const res = r as { ok?: boolean; error?: string } | undefined
-        if (res && res.ok === false) showToast(res.error || '导航失败')
+        if (res && res.ok === false) showToast(res.error || t('app.navigateFailed'))
       })
     },
     [showToast]
@@ -238,13 +243,13 @@ export default function App(): React.JSX.Element {
       if (action === 'menu:library-downloads') setLibrary('downloads')
       if (action === 'menu:stopkeys') window.dispatchEvent(new Event('duplex:open-stopkeys'))
       if (action === 'menu:shortcuts') window.dispatchEvent(new Event('duplex:open-shortcuts'))
-      if (action === 'menu:copied-link') showToast('链接已复制')
-      if (action === 'menu:copied-image') showToast('图片地址已复制')
-      if (action === 'menu:copied-url') showToast('页面地址已复制')
-      if (action === 'menu:copied-markdown') showToast('已复制为 Markdown')
+    if (action === 'menu:copied-link') showToast(t('app.linkCopied'))
+    if (action === 'menu:copied-image') showToast(t('app.imageUrlCopied'))
+    if (action === 'menu:copied-url') showToast(t('app.pageUrlCopied'))
+    if (action === 'menu:copied-markdown') showToast(t('app.copiedMarkdown'))
       if (action.startsWith('menu:bookmarked-all')) {
         const n = Number(action.split(':')[2])
-        showToast(Number.isFinite(n) && n > 0 ? `已保存 ${n} 个标签页` : '已保存所有标签页')
+        showToast(Number.isFinite(n) && n > 0 ? t('app.tabsSaved', { n }) : t('app.tabsSavedAll'))
       }
       // QA/automation hook (only reachable via the dev-only debug route):
       // switch the panel mode so end-to-end tests are deterministic.
@@ -317,7 +322,7 @@ export default function App(): React.JSX.Element {
         const next = [...prev.filter((c) => c.id !== req.id), { ...req, state: 'pending' as const }]
         return next.length > 20 ? next.slice(next.length - 20) : next
       })
-      showToast('AI 操作等待确认，请打开 AI 面板查看')
+      showToast(t('app.aiWaitingConfirm'))
     })
     const offConfirmCancel = window.cobrowse.onAgentConfirmCancel((s) => {
       setConfirms((prev) =>
@@ -494,11 +499,11 @@ export default function App(): React.JSX.Element {
     const offState = window.cobrowse.onEmergencyState((s) => {
       const paused = !!s.paused
       setAiPaused(paused)
-      if (!paused && pausedRef.current) showToast('AI 已恢复')
+      if (!paused && pausedRef.current) showToast(t('app.aiResumed'))
       pausedRef.current = paused
     })
     const offStop = window.cobrowse.onEmergencyStop((s) => {
-      setStopToast(`已急停：${emergencyStopText(s)}`)
+      setStopToast(t('app.stoppedPrefix', { detail: emergencyStopText(t, s) }))
       if (stopToastTimerRef.current != null) window.clearTimeout(stopToastTimerRef.current)
       stopToastTimerRef.current = window.setTimeout(() => {
         stopToastTimerRef.current = null
@@ -625,13 +630,13 @@ export default function App(): React.JSX.Element {
       const res = await window.cobrowse.sendChat(text)
       if (!res.ok) {
         setLocalMsgs((prev) => prev.filter((m) => m.id !== lm.id))
-        showToast('消息发送失败')
+        showToast(t('app.sendFailed'))
         return
       }
-      if (res.warning) showToast('opencode 未连接：消息已排队')
+      if (res.warning) showToast(t('app.opencodeQueued'))
     } catch {
       setLocalMsgs((prev) => prev.filter((m) => m.id !== lm.id))
-      showToast('消息发送失败：无法连接主进程')
+      showToast(t('app.sendFailedMain'))
     }
   }
 
@@ -670,12 +675,12 @@ export default function App(): React.JSX.Element {
         />
         {(aiPaused || confirms.some((c) => c.state === 'pending') || collaboration.tabs.some((tab) => tab.owner || tab.paused)) && (
           <div className="collaboration-bar" role="status">
-            {aiPaused && <span>AI 已急停 <button onClick={() => window.cobrowse.resumeAi()}>恢复 AI</button></span>}
-            {confirms.some((c) => c.state === 'pending') && <button onClick={() => { setCollapsed(false); localStorage.setItem('duplex-ai-open', 'true') }}>查看待确认操作</button>}
+            {aiPaused && <span>{t('app.aiPausedBanner')} <button onClick={() => window.cobrowse.resumeAi()}>{t('app.resumeAi')}</button></span>}
+            {confirms.some((c) => c.state === 'pending') && <button onClick={() => { setCollapsed(false); localStorage.setItem('duplex-ai-open', 'true') }}>{t('app.viewPending')}</button>}
             {collaboration.tabs.filter((tab) => tab.owner || tab.paused).map((state) => (
               <span key={state.tabId}>
-                任务页 #{state.tabId} · {state.paused ? `人工接管${state.reason ? `（${state.reason}）` : ''}` : state.scrolling ? '人工阅读中' : 'AI 正在处理'}
-                {state.paused && <button onClick={() => { void window.cobrowse.collaborationResume(state.tabId).then((r) => { if (!r.ok) showToast(r.error || '恢复失败') }) }}>恢复此页 AI</button>}
+                {t('app.taskTab', { id: state.tabId })} · {state.paused ? `${t('app.humanTakeover')}${state.reason ? ` (${state.reason})` : ''}` : state.scrolling ? t('app.humanReading') : t('app.aiProcessing')}
+                {state.paused && <button onClick={() => { void window.cobrowse.collaborationResume(state.tabId).then((r) => { if (!r.ok) showToast(r.error || t('app.resumeFailed')) }) }}>{t('app.resumeTabAi')}</button>}
               </span>
             ))}
           </div>
@@ -684,7 +689,7 @@ export default function App(): React.JSX.Element {
           <div className="findbar findbar-flow">
             <input
               autoFocus
-              placeholder="在页面中查找"
+              placeholder={t('app.findPlaceholder')}
               value={findText}
               onChange={(e) => {
                 setFindText(e.target.value)
@@ -701,10 +706,10 @@ export default function App(): React.JSX.Element {
             <span className="find-count">
               {findResult ? `${findResult.activeMatch}/${findResult.matches}` : ''}
             </span>
-            {findTabId !== activeTabId && <button onClick={() => void window.cobrowse.tabAction({ type: 'switchTab', tabId: findTabId ?? undefined })}>查找页 #{findTabId}</button>}
-            <button type="button" title="上一个" onClick={findPrev}>↑</button>
-            <button type="button" title="下一个" onClick={findNext}>↓</button>
-            <button type="button" onClick={closeFind}>关闭</button>
+            {findTabId !== activeTabId && <button onClick={() => void window.cobrowse.tabAction({ type: 'switchTab', tabId: findTabId ?? undefined })}>{t('app.findTab', { id: findTabId ?? 0 })}</button>}
+            <button type="button" title={t('app.prev')} onClick={findPrev}>↑</button>
+            <button type="button" title={t('app.next')} onClick={findNext}>↓</button>
+            <button type="button" onClick={closeFind}>{t('common.close')}</button>
           </div>
         )}
         <div className="content" ref={contentRef}>
@@ -730,13 +735,13 @@ export default function App(): React.JSX.Element {
           onClearHistory={() => { void window.cobrowse.historyClear().then(() => window.cobrowse.browserData()).then(setBrowserData) }}
           onCancelDownload={(id) => { void window.cobrowse.downloadsCancel(id) }}
           onClearDownloads={() => { void window.cobrowse.downloadsClear().then(() => window.cobrowse.downloadsList()).then((rows) => applyDownloads(rows, true)) }}
-          onOpenDownload={(id) => { void window.cobrowse.downloadsOpen(id).then((r) => { if (!r.ok) showToast(r.error || '打开文件失败') }) }}
-          onRevealDownload={(id) => { void window.cobrowse.downloadsReveal(id).then((r) => { if (!r.ok) showToast(r.error || '定位文件失败') }) }}
+          onOpenDownload={(id) => { void window.cobrowse.downloadsOpen(id).then((r) => { if (!r.ok) showToast(r.error || t('app.openFailed')) }) }}
+          onRevealDownload={(id) => { void window.cobrowse.downloadsReveal(id).then((r) => { if (!r.ok) showToast(r.error || t('app.revealFailed')) }) }}
         /></div>}
       </div>
 
       {collapsed ? (
-        <button className="panel-expand" title="展开 AI 面板" onClick={() => { setCollapsed(false); localStorage.setItem('duplex-ai-open', 'true') }}>
+        <button className="panel-expand" title={t('app.expandPanel')} onClick={() => { setCollapsed(false); localStorage.setItem('duplex-ai-open', 'true') }}>
           AI
         </button>
       ) : (
@@ -769,7 +774,7 @@ export default function App(): React.JSX.Element {
           {toast && <div className={`stop-toast${toastLeaving ? ' leaving' : ''}`}>{toast}</div>}
           {loadError && (
             <div className="stop-toast" style={{ pointerEvents: 'auto' }}>
-              页面加载失败：{loadError.desc}（{loadError.url}）
+              {t('app.loadError', { desc: loadError.desc, url: loadError.url })}
               <button
                 style={{ pointerEvents: 'auto', marginLeft: 8, cursor: 'pointer' }}
                 onClick={() => {
@@ -777,7 +782,7 @@ export default function App(): React.JSX.Element {
                   void window.cobrowse.tabAction({ type: 'reload', tabId: loadError.tabId })
                 }}
               >
-                重试
+                {t('app.retry')}
               </button>
             </div>
           )}
@@ -786,7 +791,7 @@ export default function App(): React.JSX.Element {
 
       {confirms.some((c) => c.state === 'pending') && (
         <div className="sr-only" aria-live="polite">
-          AI 请求执行操作，等待你的许可
+          {t('app.aiPermissionWaiting')}
         </div>
       )}
     </div>

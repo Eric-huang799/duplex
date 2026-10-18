@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import type { BrowserDataSnapshot, DownloadRecord, HistoryRecord } from '../../../shared/protocol'
 import { filterHistoryByMonth, groupHistoryByDay, listHistoryMonths } from '../../../shared/omnibox'
+import { useI18n } from '../i18n'
 
 type Section = 'bookmarks' | 'history' | 'downloads'
 type Bookmark = BrowserDataSnapshot['bookmarks'][number]
@@ -21,7 +22,6 @@ interface Props {
   onRefresh?: () => void
 }
 
-const titles: Record<Section, string> = { bookmarks: '书签', history: '浏览记录', downloads: '下载' }
 
 /** Never let a dirty record URL crash the whole panel. */
 function faviconSrc(url: string, favicon?: string): string | null {
@@ -109,6 +109,13 @@ const rowFormStyle: React.CSSProperties = {
 }
 
 export function BrowserPanel(props: Props): React.JSX.Element {
+  const { t, lang } = useI18n()
+  const sectionLabel =
+    props.section === 'bookmarks'
+      ? t('lib.bookmarks')
+      : props.section === 'history'
+        ? t('lib.history')
+        : t('lib.downloads')
   const [query, setQuery] = useState('')
   const [clearStage, setClearStage] = useState(0)
   const [sort, setSort] = useState<BookmarkSort>('recent')
@@ -146,14 +153,14 @@ export function BrowserPanel(props: Props): React.JSX.Element {
   // Chrome-style day/month grouping for the full history page.
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const historyGroups = useMemo(
-    () => (props.section === 'history' ? groupHistoryByDay(items as HistoryRecord[]) : []),
-    [props.section, items]
+    () => (props.section === 'history' ? groupHistoryByDay(items as HistoryRecord[], new Date(), lang) : []),
+    [props.section, items, lang]
   )
 
   // Year/month chips come from the full history so text search never reshuffles them.
   const historyMonths = useMemo(
-    () => (props.section === 'history' ? listHistoryMonths(props.data.history) : []),
-    [props.section, props.data.history]
+    () => (props.section === 'history' ? listHistoryMonths(props.data.history, lang) : []),
+    [props.section, props.data.history, lang]
   )
 
   const historyYears = useMemo(
@@ -170,7 +177,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
           {icon && <img key={icon} src={icon} onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />}
           <span className="library-row-main"><strong>{row.title || row.url}</strong><small>{row.url}<i>{new Date(when).toLocaleString()}</i></small></span>
         </button>
-        <button className="row-remove" title="从记录中移除" onClick={() => props.onRemoveHistory(row.url, when)}>×</button>
+        <button className="row-remove" title={t('lib.removeFromHistory')} onClick={() => props.onRemoveHistory(row.url, when)}>×</button>
       </article>
     )
   }
@@ -266,7 +273,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
   const saveNew = async (): Promise<void> => {
     const url = newUrl.trim()
     if (!url) {
-      toast('请输入网址')
+      toast(t('lib.enterUrl'))
       return
     }
     const result = await window.cobrowse.bookmarkAdd({
@@ -275,11 +282,11 @@ export function BrowserPanel(props: Props): React.JSX.Element {
       folder: newFolder || undefined
     })
     if (!result.ok) {
-      toast(result.error || '新建书签失败')
+      toast(result.error || t('lib.newBookmarkFailed'))
       return
     }
     setNewOpen(false)
-    toast('已添加书签')
+    toast(t('lib.bookmarkAdded'))
     refresh()
   }
 
@@ -290,11 +297,11 @@ export function BrowserPanel(props: Props): React.JSX.Element {
       const result = await window.cobrowse.bookmarkImport()
       if (result.canceled) return
       if (!result.ok) {
-        toast(result.error || '导入书签失败')
+        toast(result.error || t('lib.importFailed'))
         return
       }
-      const skippedNote = result.skipped ? `，跳过重复/无效 ${result.skipped} 条` : ''
-      toast(`已导入 ${result.added ?? 0} 条书签${skippedNote}`)
+      const skippedNote = result.skipped ? t('lib.skippedInvalid', { n: result.skipped }) : ''
+      toast(t('lib.imported', { n: result.added ?? 0, extra: skippedNote }))
       refresh()
     } finally {
       setImporting(false)
@@ -307,12 +314,12 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     try {
       const result = await window.cobrowse.bookmarkImportLocal()
       if (!result.ok) {
-        toast(result.error || '导入本机浏览器书签失败')
+        toast(result.error || t('lib.importLocalFailed'))
         return
       }
-      const skippedNote = result.skipped ? `，跳过重复 ${result.skipped} 条` : ''
+      const skippedNote = result.skipped ? t('lib.skippedDuplicate', { n: result.skipped }) : ''
       const src = result.sources?.map((s) => `${s.browser}(${s.count})`).join('、')
-      toast(`已导入 ${result.added ?? 0} 条书签${skippedNote}${src ? `，来源：${src}` : ''}`)
+      toast(t('lib.imported', { n: result.added ?? 0, extra: skippedNote + (src ? t('lib.sourceSuffix', { src }) : '') }))
       refresh()
     } finally {
       setImportingLocal(false)
@@ -330,7 +337,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
   const saveEdit = async (originalUrl: string): Promise<void> => {
     const url = editUrlValue.trim()
     if (!url) {
-      toast('网址不能为空')
+      toast(t('lib.urlRequired'))
       return
     }
     const result = await window.cobrowse.bookmarkUpdate(originalUrl, {
@@ -339,7 +346,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
       folder: editFolder
     })
     if (!result.ok) {
-      toast(result.error || '保存书签失败')
+      toast(result.error || t('lib.saveBookmarkFailed'))
       return
     }
     setEditUrl(null)
@@ -350,7 +357,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     setConfirmRemove(null)
     await window.cobrowse.bookmarkRemove(url)
     if (editUrl === url) setEditUrl(null)
-    toast('书签已删除')
+    toast(t('lib.bookmarkDeleted'))
     refresh()
   }
 
@@ -358,9 +365,9 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     try {
       if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable')
       await navigator.clipboard.writeText(url)
-      toast('已复制链接')
+      toast(t('lib.linkCopied'))
     } catch {
-      toast('复制失败，请手动复制')
+      toast(t('lib.copyFailed'))
     }
   }
 
@@ -371,7 +378,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     if (!name) return
     const result = await window.cobrowse.bookmarkFolderAdd(name)
     if (!result.ok) {
-      toast(result.error || '新建文件夹失败')
+      toast(result.error || t('lib.newFolderFailed'))
       return
     }
     setFolderFilter(name)
@@ -384,7 +391,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     if (!name || name === oldName) return
     const result = await window.cobrowse.bookmarkFolderRename(oldName, name)
     if (!result.ok) {
-      toast(result.error || '重命名文件夹失败')
+      toast(result.error || t('lib.renameFolderFailed'))
       return
     }
     if (folderFilter === oldName) setFolderFilter(name)
@@ -395,7 +402,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     setDeleteFolderConfirm(null)
     await window.cobrowse.bookmarkFolderRemove(name)
     if (folderFilter === name) setFolderFilter(null)
-    toast('文件夹已删除，书签已移到未分类')
+    toast(t('lib.folderDeleted'))
     refresh()
   }
 
@@ -414,12 +421,12 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     if (deleteFolderConfirm === name) {
       return (
         <span key={name} style={confirmBarStyle}>
-          <span>删除「{name}」？文件夹内书签将移到未分类</span>
+          <span>{t('lib.deleteFolderConfirm', { name })}</span>
           <button style={dangerBtnStyle} onClick={() => void confirmDeleteFolder(name)}>
-            删除
+            {t('lib.delete')}
           </button>
           <button style={plainBtnStyle} onClick={() => setDeleteFolderConfirm(null)}>
-            取消
+            {t('common.cancel')}
           </button>
         </span>
       )
@@ -448,7 +455,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
       <span key={name} style={{ display: 'inline-flex', alignItems: 'center' }}>
         <button
           style={chipStyle(folderFilter === name)}
-          title="双击重命名"
+          title={t('lib.renamable')}
           onClick={() => setFolderFilter(name)}
           onDoubleClick={() => {
             setRenamingFolder(name)
@@ -459,7 +466,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
         </button>
         <button
           style={chipDeleteStyle}
-          title={`删除文件夹「${name}」`}
+          title={t('lib.deleteFolderTitle', { name })}
           onClick={() => {
             setDeleteFolderConfirm(name)
             armConfirm()
@@ -486,7 +493,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
               autoFocus
               style={{ ...inputStyle, flex: '1 1 180px', minWidth: 140 }}
               value={editTitle}
-              placeholder="标题（留空则使用网址）"
+              placeholder={t('lib.titlePlaceholder')}
               onChange={(e) => setEditTitle(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation()
@@ -496,7 +503,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             <input
               style={{ ...inputStyle, flex: '1 1 220px', minWidth: 160 }}
               value={editUrlValue}
-              placeholder="网址"
+              placeholder={t('lib.url')}
               onChange={(e) => setEditUrlValue(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation()
@@ -512,7 +519,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
                 if (e.key === 'Escape') setEditUrl(null)
               }}
             >
-              <option value="">未分类</option>
+              <option value="">{t('lib.uncategorized')}</option>
               {props.data.bookmarkFolders.map((f) => (
                 <option key={f} value={f}>
                   {f}
@@ -520,10 +527,10 @@ export function BrowserPanel(props: Props): React.JSX.Element {
               ))}
             </select>
             <button type="submit" style={plainBtnStyle}>
-              保存
+              {t('lib.save')}
             </button>
             <button type="button" style={plainBtnStyle} onClick={() => setEditUrl(null)}>
-              取消
+              {t('common.cancel')}
             </button>
           </form>
         </article>
@@ -540,7 +547,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
       >
         <button
           className="library-row-open"
-          title="打开（Ctrl/⌘+点击或鼠标中键在新标签打开）"
+          title={t('lib.openHint')}
           onClick={(e) => {
             if (e.ctrlKey || e.metaKey) openInNewTab(b.url)
             else props.onNavigate(b.url)
@@ -568,7 +575,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             <strong>{b.title || b.url}</strong>
             <small>
               {b.url}
-              <i>{b.folder ?? '未分类'}</i>
+              <i>{b.folder ?? t('lib.uncategorized')}</i>
               <i>{new Date(b.addedAt).toLocaleString()}</i>
             </small>
           </span>
@@ -578,32 +585,32 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             {confirmRemove === b.url ? (
               <>
                 <button style={{ color: 'var(--err)' }} onClick={() => void removeBookmark(b.url)}>
-                  确认删除
+                  {t('lib.confirmDelete')}
                 </button>
-                <button onClick={() => setConfirmRemove(null)}>取消</button>
+                <button onClick={() => setConfirmRemove(null)}>{t('common.cancel')}</button>
               </>
             ) : (
               <>
-                <button title="在当前标签打开" onClick={() => props.onNavigate(b.url)}>
-                  打开
+                <button title={t('lib.openInCurrent')} onClick={() => props.onNavigate(b.url)}>
+                  {t('lib.open')}
                 </button>
-                <button title="在新标签打开" onClick={() => openInNewTab(b.url)}>
-                  新标签
+                <button title={t('lib.openInNewTab')} onClick={() => openInNewTab(b.url)}>
+                  {t('lib.newTab')}
                 </button>
-                <button title="编辑" onClick={() => startEdit(b)}>
-                  编辑
+                <button title={t('lib.edit')} onClick={() => startEdit(b)}>
+                  {t('lib.edit')}
                 </button>
-                <button title="复制链接" onClick={() => void copyLink(b.url)}>
-                  复制
+                <button title={t('lib.copyLink')} onClick={() => void copyLink(b.url)}>
+                  {t('lib.copy')}
                 </button>
                 <button
-                  title="删除"
+                  title={t('lib.delete')}
                   onClick={() => {
                     setConfirmRemove(b.url)
                     armConfirm()
                   }}
                 >
-                  删除
+                  {t('lib.delete')}
                 </button>
               </>
             )}
@@ -614,50 +621,50 @@ export function BrowserPanel(props: Props): React.JSX.Element {
   }
 
   const emptyState = q ? (
-    <div className="library-empty"><span>⌕</span><strong>没有匹配内容</strong><small>换个关键词再试试</small></div>
+    <div className="library-empty"><span>⌕</span><strong>{t('lib.noMatch')}</strong><small>{t('lib.tryAnotherKeyword')}</small></div>
   ) : (
-    <div className="library-empty"><span>✧</span><strong>这里还没有内容</strong><small>浏览记录、书签和下载会显示在这里</small></div>
+    <div className="library-empty"><span>✧</span><strong>{t('lib.emptyHere')}</strong><small>{t('lib.emptyDesc')}</small></div>
   )
 
   const bookmarkEmpty = q ? (
-    <div className="library-empty"><span>⌕</span><strong>没有匹配内容</strong><small>换个关键词再试试</small></div>
+    <div className="library-empty"><span>⌕</span><strong>{t('lib.noMatch')}</strong><small>{t('lib.tryAnotherKeyword')}</small></div>
   ) : folderFilter != null ? (
-    <div className="library-empty"><span>✧</span><strong>{folderFilter === '' ? '未分类还没有书签' : '该文件夹还没有书签'}</strong><small>可在书签行点击「编辑」调整所在文件夹</small></div>
+    <div className="library-empty"><span>✧</span><strong>{folderFilter === '' ? t('lib.noBookmarksUncategorized') : t('lib.noBookmarksInFolder')}</strong><small>{t('lib.adjustFolderHint')}</small></div>
   ) : (
-    <div className="library-empty"><span>✧</span><strong>还没有书签</strong><small>点击「＋ 新建书签」，或浏览时点击星标</small></div>
+    <div className="library-empty"><span>✧</span><strong>{t('lib.noBookmarks')}</strong><small>{t('lib.addBookmarkHint')}</small></div>
   )
 
   return <section className="browser-panel">
     <header className="browser-panel-head">
-      <div><span className="panel-eyebrow">DUPLEX LIBRARY</span><h2>{titles[props.section]}</h2></div>
-      <button className="panel-close" onClick={props.onClose} aria-label="关闭">×</button>
+      <div><span className="panel-eyebrow">DUPLEX LIBRARY</span><h2>{sectionLabel}</h2></div>
+      <button className="panel-close" onClick={props.onClose} aria-label={t('common.close')}>×</button>
     </header>
-    <label className="library-search"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={`搜索${titles[props.section]}`} autoFocus /></label>
+    <label className="library-search"><span>⌕</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('lib.searchIn', { label: sectionLabel })} autoFocus /></label>
     {props.section === 'bookmarks' ? (
       <>
         <div className="library-tools">
-          <span>{bookmarks.length} 项</span>
+          <span>{t('lib.items', { n: bookmarks.length })}</span>
           <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             <button
-              title="切换排序方式"
+              title={t('lib.sortToggle')}
               onClick={() => setSort((prev) => (prev === 'recent' ? 'title' : 'recent'))}
             >
-              排序：{sort === 'recent' ? '最近添加' : '标题 A–Z'}
+              {t('lib.sortBy', { mode: sort === 'recent' ? t('lib.sortRecent') : t('lib.sortTitle') })}
             </button>
-            <button onClick={openNewForm}>＋ 新建书签</button>
+            <button onClick={openNewForm}>{t('lib.newBookmark')}</button>
             <button
-              title="自动读取本机 Chrome / Edge 已有的书签（自动去重）"
+              title={t('lib.importLocalTitle')}
               disabled={importingLocal}
               onClick={() => void runImportLocal()}
             >
-              {importingLocal ? '读取中…' : '导入本机书签'}
+              {importingLocal ? t('lib.reading') : t('lib.importLocal')}
             </button>
             <button
-              title="从导出的书签 HTML 文件导入（自动去重）"
+              title={t('lib.importHtmlTitle')}
               disabled={importing}
               onClick={() => void runImport()}
             >
-              {importing ? '导入中…' : '导入 HTML'}
+              {importing ? t('lib.importing') : t('lib.importHtml')}
             </button>
           </span>
         </div>
@@ -671,14 +678,14 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             alignItems: 'center'
           }}
         >
-          {folderChip('all', `全部 (${props.data.bookmarks.length})`, folderFilter === null, () => setFolderFilter(null))}
-          {folderChip('root', `未分类 (${folderCounts.root})`, folderFilter === '', () => setFolderFilter(''))}
+          {folderChip('all', t('lib.allWithCount', { n: props.data.bookmarks.length }), folderFilter === null, () => setFolderFilter(null))}
+          {folderChip('root', t('lib.uncategorizedWithCount', { n: folderCounts.root }), folderFilter === '', () => setFolderFilter(''))}
           {props.data.bookmarkFolders.map((name) => renderFolderChip(name))}
           {creatingFolder ? (
             <input
               autoFocus
               value={folderName}
-              placeholder="文件夹名称"
+              placeholder={t('lib.folderName')}
               style={{ ...inputStyle, padding: '2px 10px', borderRadius: 999 }}
               onChange={(e) => setFolderName(e.target.value)}
               onKeyDown={(e) => {
@@ -693,7 +700,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             />
           ) : (
             <button style={chipStyle(false)} onClick={() => { setCreatingFolder(true); setFolderName('') }}>
-              ＋ 新建文件夹
+              {t('lib.newFolder')}
             </button>
           )}
         </div>
@@ -709,7 +716,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
               autoFocus
               style={{ ...inputStyle, flex: '1 1 180px', minWidth: 140 }}
               value={newTitle}
-              placeholder="标题（留空则使用网址）"
+              placeholder={t('lib.titlePlaceholder')}
               onChange={(e) => setNewTitle(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation()
@@ -719,7 +726,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             <input
               style={{ ...inputStyle, flex: '2 1 240px', minWidth: 180 }}
               value={newUrl}
-              placeholder="网址，例如 https://example.com"
+              placeholder={t('lib.urlExample')}
               onChange={(e) => setNewUrl(e.target.value)}
               onKeyDown={(e) => {
                 e.stopPropagation()
@@ -735,7 +742,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
                 if (e.key === 'Escape') setNewOpen(false)
               }}
             >
-              <option value="">未分类</option>
+              <option value="">{t('lib.uncategorized')}</option>
               {props.data.bookmarkFolders.map((f) => (
                 <option key={f} value={f}>
                   {f}
@@ -743,10 +750,10 @@ export function BrowserPanel(props: Props): React.JSX.Element {
               ))}
             </select>
             <button type="submit" style={plainBtnStyle}>
-              保存
+              {t('lib.save')}
             </button>
             <button type="button" style={plainBtnStyle} onClick={() => setNewOpen(false)}>
-              取消
+              {t('common.cancel')}
             </button>
           </form>
         )}
@@ -757,15 +764,15 @@ export function BrowserPanel(props: Props): React.JSX.Element {
     ) : (
       <>
         <div className="library-tools">
-          <span>{items.length} 项</span>
+          <span>{t('lib.items', { n: items.length })}</span>
           {props.section === 'history' && (
             <button className={clearStage > 0 ? 'danger' : ''} onClick={() => askClear(props.onClearHistory)}>
-              {clearStage > 0 ? '确认清除浏览记录？' : '清除浏览记录'}
+              {clearStage > 0 ? t('lib.clearHistoryConfirm') : t('lib.clearHistory')}
             </button>
           )}
           {props.section === 'downloads' && (
             <button className={clearStage > 0 ? 'danger' : ''} onClick={() => askClear(props.onClearDownloads)}>
-              {clearStage > 0 ? '确认清除列表？' : '清除列表'}
+              {clearStage > 0 ? t('lib.clearListConfirm') : t('lib.clearList')}
             </button>
           )}
         </div>
@@ -776,7 +783,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
               className={yearFilter === 'all' ? 'on' : ''}
               onClick={() => setYearFilter('all')}
             >
-              全部年份
+              {t('lib.allYears')}
             </button>
             {historyYears.map((y) => (
               <button
@@ -788,7 +795,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
                   setMonthFilter((cur) => (cur !== 'all' && cur.startsWith(y) ? cur : 'all'))
                 }}
               >
-                {y}年
+                {t('lib.year', { y })}
               </button>
             ))}
           </div>
@@ -796,7 +803,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
         {props.section === 'history' && historyMonths.length > 0 && (
           <div className="month-chips">
             <button type="button" className={monthFilter === 'all' ? 'on' : ''} onClick={() => setMonthFilter('all')}>
-              全部
+              {t('lib.all')}
             </button>
             {historyMonths
               .filter((m) => yearFilter === 'all' || m.key.startsWith(yearFilter))
@@ -830,7 +837,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
                 >
                   <i>{collapsedGroups.has(g.key) ? '▸' : '▾'}</i>
                   {g.label}
-                  <span>{g.records.length} 条</span>
+                  <span>{t('lib.records', { n: g.records.length })}</span>
                 </button>
                 {!collapsedGroups.has(g.key) && g.records.map(renderHistoryRow)}
               </Fragment>
@@ -840,10 +847,10 @@ export function BrowserPanel(props: Props): React.JSX.Element {
             const pct = row.totalBytes > 0 ? Math.min(100, Math.round(row.receivedBytes / row.totalBytes * 100)) : 0
             const size = (n: number): string => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`
             return <article className="library-row download-row" key={row.id}>
-              <div className="library-file-icon">↓</div><div className="library-row-main"><strong>{row.filename}</strong><small>{row.state === 'progressing' ? `${size(row.receivedBytes)} / ${size(row.totalBytes)}` : row.state === 'completed' ? size(row.totalBytes) : row.state === 'cancelled' ? '已取消' : '下载中断'}</small>
+              <div className="library-file-icon">↓</div><div className="library-row-main"><strong>{row.filename}</strong><small>{row.state === 'progressing' ? `${size(row.receivedBytes)} / ${size(row.totalBytes)}` : row.state === 'completed' ? size(row.totalBytes) : row.state === 'cancelled' ? t('lib.canceled') : t('lib.interrupted')}</small>
                 {row.state === 'progressing' && <div className="download-progress"><i style={{ width: `${pct}%` }} /></div>}
               </div><div className="library-row-actions">
-                {row.state === 'progressing' ? <button onClick={() => props.onCancelDownload(row.id)}>取消</button> : <><button disabled={row.state !== 'completed'} onClick={() => props.onOpenDownload(row.id)}>打开</button><button onClick={() => props.onRevealDownload(row.id)}>文件夹</button></>}
+                {row.state === 'progressing' ? <button onClick={() => props.onCancelDownload(row.id)}>{t('common.cancel')}</button> : <><button disabled={row.state !== 'completed'} onClick={() => props.onOpenDownload(row.id)}>{t('lib.open')}</button><button onClick={() => props.onRevealDownload(row.id)}>{t('lib.folder')}</button></>}
               </div>
             </article>
           })}

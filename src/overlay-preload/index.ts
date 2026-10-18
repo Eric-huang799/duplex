@@ -13,6 +13,12 @@
  */
 import { ipcRenderer } from 'electron'
 import { matchesBinding, parseBinding } from '../shared/hotkeys'
+import { translate, type Lang } from '../shared/i18n'
+
+let uiLang: Lang = 'zh'
+function tr(key: Parameters<typeof translate>[1], vars?: Record<string, string | number>): string {
+  return translate(uiLang, key, vars)
+}
 
 const HOST_ID = '__cobrowse_overlay_host'
 const FONT =
@@ -35,7 +41,7 @@ type OverlayCommand =
   | { kind: 'clearHighlight' }
   | { kind: 'status'; text: string; hint?: string; tone?: 'info' | 'busy' | 'error'; ttl?: number }
   | { kind: 'clearStatus' }
-  | { kind: 'annotationMode'; active?: boolean }
+  | { kind: 'annotationMode'; active?: boolean; lang?: Lang }
   | {
       kind: 'annotationResult'
       annotationId: string
@@ -595,8 +601,34 @@ function setup(): void {
     true
   )
 
+  const applyOverlayLanguage = (): void => {
+    const setTitle = (sel: string, key: Parameters<typeof translate>[1]): void => {
+      const el = root.querySelector(sel)
+      if (el) el.setAttribute('title', tr(key))
+    }
+    setTitle('.cb-annot-tools', 'overlay.toolsTitle')
+    setTitle('[data-tool="rect"]', 'overlay.rect')
+    setTitle('[data-tool="circle"]', 'overlay.circle')
+    setTitle('[data-tool="arrow"]', 'overlay.arrow')
+    setTitle('[data-tool="point"]', 'overlay.point')
+    setTitle('[data-act="clear"]', 'overlay.clearAll')
+    setTitle('[data-act="exit"]', 'overlay.exit')
+    const input = root.querySelector('.cb-card-input') as HTMLTextAreaElement | null
+    if (input) input.placeholder = tr('overlay.askPlaceholder')
+    const hint = root.querySelector('.cb-card-hint')
+    if (hint) hint.textContent = tr('overlay.cardHint')
+    const send = root.querySelector('.cb-send')
+    if (send) send.textContent = tr('overlay.send')
+  }
+  applyOverlayLanguage()
+
   ipcRenderer.on('overlay:cmd', (_e, cmd: OverlayCommand | { kind: 'hotkeys'; keys: string[] }) => {
     try {
+      const cmdLang = (cmd as { lang?: unknown }).lang
+      if (cmdLang === 'zh' || cmdLang === 'en') {
+        uiLang = cmdLang
+        applyOverlayLanguage()
+      }
       if ((cmd as { kind?: string })?.kind === 'hotkeys') {
         const keys = (cmd as { keys?: unknown }).keys
         hotkeys = Array.isArray(keys)
@@ -701,16 +733,16 @@ function apply(cmd: OverlayCommand): void {
           flashStatus(warning, {
             tone: 'warn',
             ttl: 4500,
-            hint: count == null ? undefined : `${count} 个元素`
+            hint: count == null ? undefined : tr('overlay.elements', { n: count })
           })
         } else {
-          flashStatus(count == null ? '已发送给 AI' : `已发送给 AI（${count} 个元素）`, {
+          flashStatus(count == null ? tr('overlay.sent') : tr('overlay.sentCount', { n: count }), {
             tone: 'success',
             ttl: 2500
           })
         }
       } else {
-        const reason = (cmd.error ?? '').trim() || '发送失败'
+        const reason = (cmd.error ?? '').trim() || tr('overlay.sendFailed')
         flashStatus(warning ? `${reason}（${warning}）` : reason, { tone: 'error', ttl: 4000 })
       }
       break
@@ -814,7 +846,7 @@ function setAnnotationActive(active: boolean): void {
     for (const m of markers.values()) if (!m.submitted) unsubmitted++
     clearMarkers()
     if (unsubmitted > 0) {
-      flashStatus(`已退出标注，${unsubmitted} 个未提交标注已清除`, { ttl: 3200 })
+      flashStatus(tr('overlay.exited', { n: unsubmitted }), { ttl: 3200 })
     }
   }
 }
@@ -1001,7 +1033,7 @@ function createMarker(
   const rm = document.createElement('button')
   rm.className = 'remove'
   rm.textContent = '×'
-  rm.title = '撤销此标注'
+  rm.title = tr('overlay.undo')
   rm.addEventListener('mousedown', (ev) => ev.stopPropagation())
   rm.addEventListener('click', (ev) => {
     ev.stopPropagation()
@@ -1125,13 +1157,13 @@ function onAnnotUp(e: MouseEvent): void {
       // An arrow is valid on endpoint distance alone: a vertical arrow's
       // bounding box can be narrower than 8px.
       if (Math.hypot(d.x1 - d.x0, d.y1 - d.y0) < 8) {
-        flashStatus('框选太小，请拖大一点', { ttl: 2200 })
+        flashStatus(tr('overlay.tooSmall'), { ttl: 2200 })
         return
       }
     } else {
       const viewport = normRect(d.x0, d.y0, d.x1, d.y1)
       if (viewport.w < 8 || viewport.h < 8) {
-        flashStatus('框选太小，请拖大一点', { ttl: 2200 })
+        flashStatus(tr('overlay.tooSmall'), { ttl: 2200 })
         return
       }
     }

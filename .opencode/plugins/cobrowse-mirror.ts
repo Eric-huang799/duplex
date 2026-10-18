@@ -19,12 +19,31 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-const ENDPOINT_FILE = path.join(os.homedir(), '.cobrowse', 'endpoint.json')
+const DATA_DIR = (process.env['DUPLEX_DATA_DIR'] ?? '').trim()
+const ENDPOINT_FILE = path.join(
+  DATA_DIR ? path.resolve(DATA_DIR) : path.join(os.homedir(), '.cobrowse'),
+  'endpoint.json'
+)
 const FLUSH_INTERVAL_MS = 2500
 const INJECTION_WAIT_MS = 20000
 const RETRY_DELAY_MS = 2000
 const MAX_BUFFER = 800
 const MAX_BATCH = 40
+
+/**
+ * Duplex-origin prompts run under a dedicated agent. The default agents keep
+ * duplex_* denied, so a standalone opencode session can never open Duplex;
+ * only a message delivered by this plugin switches to the agent and receives
+ * the browser instruction for that turn.
+ */
+const DUPLEX_AGENT = 'duplex'
+const DUPLEX_INSTRUCTION =
+  'This prompt was sent from the Duplex browser panel. For browser or page ' +
+  'actions, including opening URLs, navigation, inspection, clicking, typing, ' +
+  'and screenshots, use the available duplex_* tools, for example ' +
+  'duplex_list_tabs, duplex_navigate, duplex_new_tab, duplex_snapshot, ' +
+  'duplex_click, duplex_type, and duplex_screenshot. Do not use other browser ' +
+  'tooling or launch another browser.'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
@@ -301,7 +320,11 @@ export const CobrowseMirror = async (ctx: {
     if (!sid || !client?.session) return false
     const options = {
       path: { id: sid },
-      body: { parts: [{ type: 'text', text }] }
+      body: {
+        parts: [{ type: 'text', text }],
+        agent: DUPLEX_AGENT,
+        system: DUPLEX_INSTRUCTION
+      }
     }
     try {
       let result: any

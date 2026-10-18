@@ -1,5 +1,6 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useI18n } from '../i18n'
 
 interface Props {
   text: string
@@ -11,6 +12,7 @@ interface Props {
  * never navigate and explain themselves via the title tooltip.
  */
 export function MarkdownProse({ text }: Props): React.JSX.Element {
+  const { t } = useI18n()
   return (
     <div className="md">
       <ReactMarkdown
@@ -21,7 +23,7 @@ export function MarkdownProse({ text }: Props): React.JSX.Element {
             return (
               <a
                 href={href}
-                title={web ? href : '此类型的链接无法在浏览器中打开'}
+                title={web ? href : t('markdown.linkUnavailable')}
                 onClick={(e) => {
                   e.preventDefault()
                   if (web && href) {
