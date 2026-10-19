@@ -22,10 +22,6 @@
 
 ## 演示
 
-![Duplex 演示 —— AI 搜索 B 站论文解读视频、打开并播放，侧栏同步镜像每一步](docs/screenshots/demo.gif)
-
-*短视频循环：AI 搜索 B 站、打开视频并开始播放，侧栏实时镜像每一步。*
-
 **完整演示 —— 2 分钟，带字幕与音乐：**
 
 [![点击播放完整演示](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)
@@ -34,7 +30,7 @@
 
 ![用 Duplex 操控网页版 Excel](docs/screenshots/excel-web-demo.png)
 
-*一次更难的、非脚本化测试：没有安装任何表格专用 skill，内置模型只靠原厂 API 和少量简单自动化 skill，把一整张成绩表写进了网页版 Excel。效果是有的，但过程很慢、消耗了大量 token——这是可行性演示，不是推荐用法。*
+*一次更难的、非脚本化测试：没有安装任何表格专用 skill，内置模型只靠原厂 API 和少量简单自动化 skill，把一整张成绩表写进了网页版 Excel。效果是有的，但过程很慢、消耗了大量 token——这是可行性演示，不是推荐用法。截图为当前界面中的结果表。*
 
 ## 0.2.10：面板驱动的 agent 浏览器控制
 

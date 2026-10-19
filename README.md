@@ -22,10 +22,6 @@
 
 ## Demo
 
-![Duplex demo — the AI searches Bilibili for a paper explainer, opens the video and plays it, while the side panel mirrors every step](docs/screenshots/demo.gif)
-
-*A short loop: the AI searches Bilibili, opens the video and starts playback while the side panel streams every step.*
-
 **Full demo — 2 min, with captions and music:**
 
 [![Click to play the full demo](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)
@@ -34,7 +30,7 @@
 
 ![Controlling Excel for the web with Duplex](docs/screenshots/excel-web-demo.png)
 
-*A harder, unscripted test: with no spreadsheet-specific skill installed, the built-in model used the stock API and a few simple automation skills to push a whole grade sheet into Excel for the web. It worked, but it was slow and token-heavy — a feasibility demo, not a recommended workflow.*
+*A harder, unscripted test: with no spreadsheet-specific skill installed, the built-in model used the stock API and a few simple automation skills to push a whole grade sheet into Excel for the web. It worked, but it was slow and token-heavy — a feasibility demo, not a recommended workflow. The screenshot shows the resulting sheet in the current UI.*
 
 ## 0.2.10: the panel-scoped agent release
 
