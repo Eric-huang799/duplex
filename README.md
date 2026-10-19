@@ -10,15 +10,15 @@
 
 > **Listed in** [awesome-mcp-servers](https://github.com/punkpeye/awesome-mcp-servers) · [awesome-mcp-list](https://github.com/MobinX/awesome-mcp-list) · [TensorBlock](https://github.com/TensorBlock/awesome-mcp-servers) · [Awesome-MCP-ZH](https://github.com/yzfly/Awesome-MCP-ZH) · [freemcp.space](https://freemcp.space/featured/duplex) · [Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex)
 
-<p align="center"><img src="docs/screenshots/mascot.png" width="360" alt="Duplex mascot"></p>
+<p align="center"><img src="docs/screenshots/mascot.png" width="300" alt="Duplex mascot"></p>
 
-**One browser shared by a human and an AI** — the human sees the rendered page, the AI reads the DOM and page source. Same tabs, same live session, at the same time.
+> **One browser shared by a human and an AI.** You see the rendered page; the AI reads the DOM, source and screenshots and can act through browser tools. Same tabs, same live session, at the same time.
 
 **English** | [中文](README.zh-CN.md)
 
-![Duplex start page, dark theme](docs/screenshots/start-page-dark.png)
+![Duplex start page](docs/screenshots/start-page-light.png)
 
-*Duplex start page (dark theme). A [light theme](docs/screenshots/start-page-light.png) is also included.*
+*Duplex start page (light theme). A [dark theme](docs/screenshots/start-page-dark.png) is also included.*
 
 ## Demo
 
@@ -34,109 +34,71 @@
 
 ![Controlling Excel for the web with Duplex](docs/screenshots/excel-web-demo.png)
 
-*Controlling Microsoft Excel for the web — no dedicated spreadsheet-editing skill installed; only the stock API and a few simple automation skills* 
+*A harder, unscripted test: with no spreadsheet-specific skill installed, the built-in model used the stock API and a few simple automation skills to push a whole grade sheet into Excel for the web. It worked, but it was slow and token-heavy — a feasibility demo, not a recommended workflow.*
 
-> **A feasibility demo, not a recommended workflow.** With no task-specific skill to lean on, Duplex worked with the stock API plus a few simple automation skills alone — improvising clipboard read/write channels, DOM probing and the like to push a whole grade sheet into Excel for the web. It got there, but the process wasted a lot of time and tokens. 😅
+## 0.2.10: the panel-scoped agent release
 
-## ⚠️ Usage notes
+0.2.10 makes the boundary between an AI and your browser explicit: **an agent gets browser control only when you start or continue it from Duplex.** Nothing is installed globally behind your back.
 
-- **Security boundaries (high stakes — please read).** Duplex lets the AI drive your **real browser session**, including login state, cookies and local data. Under this architecture, a wrong AI move can touch real accounts and data (sending messages, submitting forms, modifying or deleting content), potentially with serious consequences. Don't leave the agent running unattended in environments where sensitive accounts are signed in. The emergency-stop hotkeys (default `F2` / `Ctrl+Shift+K`, customizable in settings) are a last-resort human brake — they are **no substitute for your own judgement about what the AI should be allowed to touch**.
+- **Bilingual interface** — the renderer, native menus, context menus, dialogs and the annotation overlay switch between Simplified Chinese and English. Follow the system locale or pin a language from the tools menu.
+- **In-app search-engine menu** — the address-bar engine picker is a themed in-app dropdown for Baidu, Bing and Google; it no longer depends on a native popup menu.
+- **Panel-scoped browser control** — Codex, Claude Code and opencode receive Duplex's MCP browser tools only for prompts issued from the panel. Standalone sessions do not get browser control. opencode gets a dedicated `duplex` agent; normal opencode sessions deny `duplex_*` by default.
 
-- **You and the AI share one page — and you come first.** While you are scrolling, typing or interacting, the AI keeps observing but pauses its own modifications on that page instead of fighting you for the same input. A status bar lists the pages under human control, each with a one-click resume for when you're ready. The emergency stop remains the hard brake: one key cuts every AI action, the CLI processes it started, and all queued messages.
+| Agent | Conversation in the panel | Browser control from the panel | Continue from the panel |
+|---|---|---|---|
+| **Built-in model** | Live stream | Built-in browser tools | Session history |
+| **opencode** | Live text + tool calls | `duplex` agent, `duplex_*` allowed | Panel message or plugin |
+| **Codex** | Local transcript | MCP injected for each panel launch/resume | `codex exec resume` |
+| **Claude Code** | Local transcript | MCP via `--mcp-config` for each panel launch/resume | `claude --resume` |
+| **Gemini / Qwen / custom** | Transcript / stream | Depends on the CLI's own tools | CLI-specific |
 
-## What's new in v0.2.10
+## Why Duplex
 
-- **Bilingual interface** — the whole renderer, native menus, context menus, dialogs and annotation overlay switch between Simplified Chinese and English; follow the system locale or pin a language in the tools menu.
-- **In-app search-engine menu** — the address-bar engine picker no longer depends on a native popup menu; choose Baidu, Bing or Google in a themed dropdown.
-- **Panel-driven browser control only** — Codex, Claude Code and opencode receive Duplex's MCP browser tools only for prompts issued from the Duplex panel (a CLI session started or resumed there, or a panel message delivered to an opencode session). Codex and Claude Code get no global MCP server; opencode keeps the server but denies `duplex_*` for normal sessions and enables it only for the dedicated `duplex` agent. Standalone agent sessions never open Duplex on their own.
+Most AI browsing tools fall into one of two camps:
 
-## What's new in v0.2.9
+- **Separate automation instances** run a hidden browser. You cannot see the page, use the same login session, or take over a step when the AI is about to do something wrong.
+- **Chat assistants beside the browser** can discuss a page but cannot reliably act inside the page you are already using.
 
-- **Human-first collaboration** — the AI yields to you. When you scroll, type, tap or focus something, it keeps reading and thinking but pauses its own modifications on that page; a status bar shows which pages are under human control and hands each one back with a click. Your scroll position and focus are preserved even while the AI acts.
-- **Playwright under the hood** — page actions now drive the browser's own Chromium through the debugging protocol: Playwright locators survive DOM changes, iframes and open shadow DOM work, waits and script execution are cancellable, and AI input is marked so the app can tell it apart from yours.
-- **Task-tab binding & message integrity** — each AI task is bound to its tab: switching tabs no longer redirects the AI, and closing the task tab reports an error instead of silently acting on another page. Panel messages and annotations carry their source tab / document / target session; injections are claimed once (60 s lease + renew + ACK), so nothing leaks to the wrong session and retries don't duplicate.
-- **Session restore** — on exit Duplex saves your tabs, their order and the active page; the next launch brings them back (blank pages included; local `file:` / `data:` pages are not persisted).
-- **Sharper stops** — stopping a built-in task cancels its model run, tools and pending confirmations; the emergency stop additionally terminates CLI children started by the app and clears queued injections.
+Duplex is a real desktop browser built for both of you. The AI works in the same tabs and the same logged-in session you see; every action is visible on the page; and when you touch the page, the AI yields instead of fighting you for input.
 
-*Also in this build (from the 0.2.6 batch): fully customizable shortcuts, the complete bookmark manager, native context menus, the in-flow find bar, the `F2` / `Ctrl+Shift+K` emergency stop, and honest annotation delivery.*
-
-## How Duplex compares
-
-| | **Duplex** | browser-use | Browser MCP | Playwright MCP | AI browsers (Atlas / Comet) |
-|---|---|---|---|---|---|
-| Form | Desktop browser (Electron app) | Python automation framework | MCP server (browser extension) | MCP server (Microsoft) | Closed-source product |
-| Who uses the browser | **Human and AI share the same tab and the same live session** | AI only (separate automation instance) | AI drives your current Chrome | AI only (Playwright instance) | AI assistant alongside/operating |
-| What the AI sees | DOM outline snapshot + source + screenshots | Vision + DOM | Screenshots + a11y tree | Accessibility tree | Internal |
-| Human collaboration | **Real-time side-by-side; the emergency-stop key interrupts the AI anytime** | Logs afterwards | Human spectates | Human spectates | Limited intervention |
-| When both act on one page | **The AI yields while you interact; per-page pause + one-click resume** | — | — | — | — |
-| Connectable AI | **Built-in models + panel-driven opencode / Codex / Claude Code; mirrored Gemini / Qwen; any explicit MCP client** | Bring your own LLM | Any MCP client | Any MCP client | Official model only |
-| Conversation visibility | **Live side-panel mirror: opencode text + tool calls; Codex / Claude Code transcript chat** | Logs/terminal | In the client | In the client | In-app |
-| Data | Fully local | Local/cloud | Local | Local | Cloud |
-
-> In one line: browser-use / Playwright MCP let the AI **run a flow for you**; Duplex lets the AI **use the browser together with you** — same tab, same session, and when you both reach for the page, you go first.
+It is not a browser wrapper around a remote agent. It is the browser.
 
 ## Highlights
 
-- **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes, a wallpaper start page, **customizable keyboard shortcuts** and a **full bookmark manager** (folders, edit, sort, search).
-- **Human-first collaboration** — the AI works on its own bound tab, reads while you interact, pauses its page modifications when you take over, and hands pages back one by one. Same tab, same live session — without stepping on each other.
-- **24 browser tools, Playwright-backed** — `snapshot` compresses any page into a compact DOM outline with `[eN]` refs; clicks, typing, drags and reads run through Playwright locators (stable across DOM changes, iframe & open-shadow capable, cancellable waits). The bridge also exposes six skill/file tools used by the built-in agent.
-- **Panel-scoped bridge** — a stdio MCP bridge (`mcp-bridge`) drives the app, but Duplex injects it only into sessions started or resumed from the panel. Standalone Codex / Claude Code / opencode sessions keep Duplex unconfigured, so they never open the browser on their own. Explicit MCP clients can still connect to the bridge directly.
-- **Live session mirror** — opencode replies, reasoning and tool-call cards stream into the side panel in real time; Codex and Claude Code transcripts are mirrored from their local session files. Type in the panel to resume the *same* session.
-- **AI action visualization** — a translucent cursor, element highlight and a status bar ("AI is clicking «…» — F2 to take over") are drawn in a Shadow-DOM overlay, so you always see what the AI is doing on the page.
-- **Emergency stop** — press the configured emergency-stop key (default `F2` / `Ctrl+Shift+K`) or click the status bar to take control instantly: running tool calls are aborted, external processes started from the panel are terminated, pending confirmations are denied and queued messages are dropped. The pause survives a restart — send a message or click "Resume" to continue.
-- **Page annotations** — press `Ctrl+Shift+A` (or the ✎ button in the toolbar, or use `annotation_mode`) to draw a box / circle / arrow / point on any page and attach a question. The annotation is compiled into a structured text brief (DOM outline + visible text + selectors + geometry) and sent to the AI — with delivery receipts, and stale annotations are rejected.
-- **Built-in agent (optional)** — connect any OpenAI-compatible API (DeepSeek, Kimi, Qwen, GLM, Ollama, …) and let the browser drive itself. Provider management supports one-click import from opencode.
-- **Conversation history & session restore** — built-in agent sessions are saved locally and can be reopened any time; browser tabs and the active page come back after a restart.
+- **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes, a wallpaper start page, customizable keyboard shortcuts, a full bookmark manager and session restore.
+- **Human-first collaboration** — each AI task is bound to its tab. While you scroll, type or focus something, the AI keeps reading but pauses its own modifications on that page. A status bar lists human-controlled pages and hands each one back with a click.
+- **24 browser tools** — `snapshot` turns a page into a compact DOM outline with `[eN]` refs; clicks, typing, drags and reads run through Playwright locators over the browser's own Chromium, with iframe and open-shadow support and cancellable waits. The bridge also exposes six skill/file tools for the built-in agent.
+- **Panel-scoped agent control** — Codex and Claude Code get an MCP server only for a panel-driven launch or resume; opencode gets a dedicated `duplex` agent. Standalone agents do not get browser control and do not open Duplex on their own.
+- **Built-in agent** — connect any OpenAI-compatible provider (DeepSeek, Kimi, Qwen, GLM, Ollama, …), import providers from opencode, and let the browser drive itself with tools and skills.
+- **Visible actions** — a cursor ring, element highlight and status bar show what the AI is doing; page annotations let you draw a box, circle, arrow or point and attach a question.
+- **Emergency stop** — press `F2` or `Ctrl+Shift+K` (configurable) at any moment. Running tool calls are aborted, CLI children are terminated, pending confirmations are denied and queued messages are dropped. The pause survives a restart.
+- **Local-first** — settings, history, bookmarks, tabs and session data live on your machine. Prompts go only to the model provider or CLI you configured.
 
 ## Feature tour
 
-### 1. Start page
+### Built-in agent in action
 
-![Dark start page](docs/screenshots/start-page-dark.png)
+![Built-in agent driving Word for the web](docs/screenshots/agent-mode.png)
 
-The start page shows a clock, date and search box over a wallpaper that follows the active theme (light and dark wallpapers switch automatically with the system).
+*The built-in model works through a real Word for the web session; every tool call appears as a card while the page stays visible.*
 
-### 2. Built-in agent drives the browser
+### External agents in the same panel
 
-![Built-in agent in action](docs/screenshots/agent-mode.png)
+![Codex session mirrored in the Duplex panel](docs/screenshots/mirror-panel.png)
 
-Ask the built-in model in the side panel — in Chinese or English. It calls tools (`navigate`, `snapshot`, …), with each call shown as a card, and reports back in the panel while you watch the page change.
+*Codex and Claude Code sessions are mirrored in the same panel. Start or resume them from the tool selector; panel messages continue the same thread.*
 
-### 3. Session mirror
+### Visible AI actions
 
-![Session mirror](docs/screenshots/mirror-panel.png)
+![AI cursor, element highlight and status bar](docs/screenshots/ai-action-visualization.png)
 
-When your AI runs through opencode, its messages and tool calls are mirrored into the panel while it drives the same visible browser. The tool selector at the top of the panel switches between the built-in model and external CLI sessions (opencode, Codex, Claude Code, …).
+*Every AI action is drawn on the page — cursor, element highlight and status bar. Press F2 to take over.*
 
-### 4. Session picker
+### Page annotations
 
-![Session picker](docs/screenshots/session-picker.png)
+![Drawing an annotation and attaching a question](docs/screenshots/annotation-tools.png)
 
-Pick the session the panel should follow — an opencode conversation or a Codex / Claude Code history entry — or keep "Auto" to follow the most recent conversation.
-
-### 5. Model providers
-
-![Model providers](docs/screenshots/providers-panel.png)
-
-Manage OpenAI-compatible providers for the built-in agent: add, edit, delete, or import providers directly from your opencode configuration. Local models via Ollama (`http://localhost:11434/v1`) work out of the box.
-
-### 6. Conversation history
-
-![Conversation history](docs/screenshots/agent-history.png)
-
-Built-in agent conversations are stored locally and can be reopened at any time.
-
-### 7. AI action visualization and emergency stop
-
-![AI action visualization](docs/screenshots/ai-action-visualization.png)
-
-Every AI action is drawn on the page: a cursor ring, an element highlight and a status bar. Press the emergency-stop key (default `F2`) at any moment to take the browser back — the AI stops immediately and waits for your instruction.
-
-### 8. Page annotations
-
-![Page annotations](docs/screenshots/annotation-tools.png)
-
-Draw a box (or circle / arrow / point) around anything and ask a question about it. The annotation is converted into a structured text brief for the AI, including the DOM outline of the region, visible text, selectors and geometry — so even text-only AIs can "see" what you mean.
+*Draw a box, circle, arrow or point and attach a question; Duplex turns it into a structured brief for the AI.*
 
 ## Quick start
 
@@ -164,12 +126,28 @@ npm run dev    # development mode with HMR
 npm start      # preview the production build
 ```
 
-> Running a dev build next to the installed app? Set `DUPLEX_DATA_DIR` to another directory so the two don't share settings and the local endpoint.
+> Running a dev build next to the installed app? Set `DUPLEX_DATA_DIR` to another directory so the two do not share settings or the local endpoint.
 
-### Connect opencode (recommended)
+### First run
 
-1. Install the mirror plugin. Copy `integrations/opencode/plugins/cobrowse-mirror.ts` to your global opencode plugin directory (`~/.config/opencode/plugins/`), or into `.opencode/plugins/` of a project.
-2. Register the MCP server and the `duplex` agent in your opencode config (`opencode.json`), project-level or global — see [`opencode.example.json`](opencode.example.json). Normal sessions keep `duplex_*` denied; only the `duplex` agent allows them.
+1. Open the AI panel with the **AI** button in the toolbar.
+2. Pick **Built-in model** and add an OpenAI-compatible provider, or pick an external CLI from the tool selector.
+3. Ask for something visible: *"Open Hacker News and summarize the top three stories."*
+
+## Connect your agents
+
+The important rule in 0.2.10: **standalone agent sessions do not get Duplex's browser tools.** The tools are injected for a single panel-driven launch or resume. This keeps the default safe: an agent working in a terminal will not silently open a browser or take over your session.
+
+### Built-in model
+
+Panel → **Built-in model** → **Model settings**. Add an OpenAI-compatible provider (base URL, API key, model name), or click **Import from opencode** to reuse an existing provider. Local models work through Ollama, e.g. `http://localhost:11434/v1`.
+
+The built-in agent can load skills, read and write project files, and run commands; file and command actions use confirmation cards.
+
+### opencode
+
+1. Install the mirror plugin: copy `integrations/opencode/plugins/cobrowse-mirror.ts` to `~/.config/opencode/plugins/`, or to `.opencode/plugins/` of a project.
+2. Register the MCP server and a `duplex` agent in `opencode.json` (project or global) — see [`opencode.example.json`](opencode.example.json). Normal sessions deny `duplex_*`; only the `duplex` agent allows them.
 
 ```json
 {
@@ -196,14 +174,38 @@ npm start      # preview the production build
 }
 ```
 
-3. In the Duplex side panel select **opencode** in the tool selector and send the request there. The plugin delivers it to the active opencode session under the `duplex` agent, so browser control is enabled for that panel-originated turn. Normal opencode sessions never open Duplex on their own.
+3. In Duplex, select **opencode** in the tool selector and send the request there. The plugin delivers it to the active opencode session under the `duplex` agent; only that panel-originated turn gets browser control.
 4. To trigger it manually from opencode, select the `duplex` agent explicitly.
 
-Codex and Claude Code follow the same rule: no global MCP server is installed. Duplex injects the server only into sessions it starts or resumes from the panel.
+### Codex
 
-### Use the built-in model (no opencode required)
+Open the Duplex panel, select **Codex** in the tool selector, choose a model and start a session (or open an existing one from the history list).
 
-Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible provider (base URL, API key, model name), or click **Import from opencode** to reuse your existing provider configuration. For local models, point the base URL to Ollama, e.g. `http://localhost:11434/v1`.
+- Duplex passes the MCP server to `codex exec` / `codex exec resume` with `-c` arguments for that invocation only. There is no global `[mcp_servers.duplex]` entry.
+- Codex keeps its own authentication and model configuration from the Codex CLI.
+- Codex transcripts are mirrored into the panel; a message typed there resumes the same thread with `codex exec resume`.
+
+### Claude Code
+
+Open the Duplex panel, select **Claude Code**, choose a model and start or resume a session.
+
+- Duplex writes a temporary MCP config and passes it with `--mcp-config`; it also appends the browser instruction and allows the `mcp__duplex` tools for that invocation.
+- There is no user-level `duplex` MCP server in Claude Code's configuration.
+- Claude Code keeps its own authentication and model configuration; transcripts are mirrored and panel replies use `claude --resume`.
+
+### Gemini, Qwen and custom CLIs
+
+Gemini CLI, Qwen Code and user-defined CLI tools can be listed, started and mirrored in the same panel. They do **not** automatically receive Duplex's MCP server; their browser capability depends on the tools they ship with. If a CLI supports MCP, point it at `dist-bridge/index.cjs` explicitly.
+
+### Explicit MCP clients
+
+Any MCP client can run the stdio bridge directly:
+
+```bash
+node C:\path\to\Duplex\dist-bridge\index.cjs
+```
+
+The bridge proxies tool calls to the running app and can launch it when it is not running. Each bridge process gets its own caller identity. This path is for users who want an explicit MCP integration; it is separate from the panel-scoped Codex / Claude / opencode flow.
 
 ## MCP tools
 
@@ -211,51 +213,75 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 |---|---|
 | `list_tabs` / `new_tab` / `close_tab` / `switch_tab` | Tab management — human and AI share the same tabs |
 | `navigate` / `search` / `history` | Open a URL (auto-searches if not a URL), search (Baidu default, or Bing / Google), back / forward / reload |
-| `snapshot` | **Page as text** — compact DOM outline; interactive elements carry `[eN]` refs |
+| `snapshot` | Page as text — compact DOM outline; interactive elements carry `[eN]` refs |
 | `get_html` / `query` | Raw HTML, or detailed info for elements matching a CSS selector |
 | `screenshot` | PNG screenshot of the visible page (for multimodal models) |
 | `click` / `dblclick` / `hover` | Click / double-click / hover through Playwright; `target` accepts an `eN` ref or a CSS selector, and the action waits for the element to be actionable |
-| `type` / `press` | Type text (optionally submitting) and press keys, incl. combos like `Control+A` |
-| `drag` | Real drag & drop from one point/element to another |
+| `type` / `press` | Type text (optionally submitting) and press keys, including combos like `Control+A` |
+| `drag` | Real drag and drop from one point or element to another |
 | `select_option` / `upload` | Native `<select>` options, and file upload by absolute path |
 | `scroll` | Scroll the page or a specific element into view |
 | `wait` | Wait for time / selector / text — cancellable; yields with a reason while you are interacting |
 | `get_console` | Read page console logs (errors and warnings) |
 | `annotation_mode` | Enter/exit the annotation overlay (human draws a box/circle/arrow/point + question) |
-| `evaluate` | Evaluate JS in the page, returns JSON-serializable results |
+| `evaluate` | Evaluate JS in the page; returns JSON-serializable results |
 
-The same bridge also exposes six skill/file tools used by the built-in agent: `read_skill`, `list_skill_files`, `read_skill_file`, `run_skill_script`, `write_file`, and `run_command`.
+The same bridge also exposes six skill/file tools used by the built-in agent: `read_skill`, `list_skill_files`, `read_skill_file`, `run_skill_script`, `write_file`, `run_command`.
 
 ## How it works
 
 ![Architecture](docs/screenshots/architecture.jpg)
 
-- The Electron main process serves a small local HTTP API on `127.0.0.1` protected by a per-launch bearer token (endpoint info is written to `~/.cobrowse/endpoint.json`).
-- `dist-bridge/index.cjs` is a stdio MCP server that proxies tool calls to that API and auto-launches the app when it is not running. Duplex passes this server to Codex and Claude Code only for panel-driven launches/resumes (via `-c` and `--mcp-config`), and never installs it globally for them.
+- The Electron main process serves a small local HTTP API on `127.0.0.1`, protected by a per-launch bearer token. Endpoint information is written to `~/.cobrowse/endpoint.json` (or `$DUPLEX_DATA_DIR/endpoint.json`).
+- `dist-bridge/index.cjs` is a stdio MCP server that proxies tool calls to that API and can launch the app when it is not running. It is the same bridge used by explicit MCP clients and by panel-driven agents.
 - Page automation is **Playwright over the browser's own Chromium**: the app reads `DevToolsActivePort`, matches `targetId` to each tab and drives locators, iframes, open shadow DOM, cancellable waits and script evaluation — the same page you are looking at, not a separate automation instance.
-- A **collaboration layer** binds every task to its tab, serializes same-page writes, watches for real human input (wheel / touch / keyboard / focus) and pauses AI modifications per page; the status bar reflects it and offers one-click resume per page.
-- The opencode plugin pushes session events (text, reasoning, tool calls) into the panel and long-polls for queued messages. Panel-originated prompts are delivered under a dedicated `duplex` agent; normal opencode sessions keep `duplex_*` denied. Deliveries are claimed once (60 s lease, renewed, ACK'd) and target the bound session rather than "whichever session is active".
-- Panel messages and page annotations are injected with identity: annotations capture the source tab, URL and a document marker, and stale ones are rejected — they cannot cross into the wrong session.
-- Codex and Claude Code are mirrored from their local session transcripts (history + live tail); replies sent from the panel headlessly resume the same session (`codex exec resume` / `claude --resume`) and the new turns stream back through the same tail. Those panel-driven launches also receive Duplex's MCP server for that invocation only; launches are matched by structured session IDs, not "most recently modified file".
-- Browser state (tab order, HTTP(S) URLs, the active page) is saved on exit and restored on the next start.
-- External scripts can also push messages into the session: `POST /api/chat { "text": "..." }`.
+- A **collaboration layer** binds each task to its tab, serializes same-page writes, watches for real human input (wheel / touch / keyboard / focus) and pauses AI modifications per page; the status bar reflects the state and offers one-click resume.
+- **Panel-scoped injection**: for Codex, Duplex adds the MCP server through `-c mcp_servers.duplex...`; for Claude Code, it writes a temporary config and adds `--mcp-config`. Neither CLI is configured globally.
+- The **opencode plugin** pushes session events into the panel and long-polls for queued messages. Panel-originated prompts use the dedicated `duplex` agent; normal sessions keep `duplex_*` denied. Deliveries are claimed once (60 s lease, renewed, ACK'd) and target the bound session.
+- **Codex and Claude Code** are mirrored from their local session transcripts (history + live tail); panel replies resume the same thread and stream back through the same tail. Launches are matched by structured session IDs, not "the most recently modified file".
+- Browser state (tab order, HTTP(S) URLs, the active page) is saved on exit and restored on the next start. External scripts can push messages with `POST /api/chat { "text": "..." }`.
+
+## Security and privacy
+
+Duplex gives an AI access to your **real browser session**, including login state, cookies and local data. Treat that as a high-stakes capability.
+
+- **You are always in control.** The AI yields while you interact with a page; the emergency stop cuts AI actions, CLI children and queued messages. In the built-in agent, tool calls that write files or run commands use confirmation cards.
+- **Local-first.** Settings, browser data, history, bookmarks and sessions are stored locally. Prompts and page content go only to the model provider or CLI you configured; Duplex does not run a cloud relay.
+- **Explicit imports.** Provider credentials imported from opencode or Codex are read-only copies; imported OAuth credentials are restricted to official hosts.
+- **Panel-scoped agents.** Codex and Claude Code receive no global MCP entry; opencode denies `duplex_*` outside the `duplex` agent. A terminal agent cannot silently open Duplex.
+- **Data directory.** Everything lives under `~/.cobrowse` by default; set `DUPLEX_DATA_DIR` to isolate dev builds, tests or multiple profiles.
+
+## How Duplex compares
+
+| | **Duplex** | browser-use | Browser MCP | Playwright MCP | AI browsers (Atlas / Comet) |
+|---|---|---|---|---|---|
+| Form | Desktop browser (Electron app) | Python automation framework | MCP server (browser extension) | MCP server (Microsoft) | Closed-source product |
+| Who uses the browser | **Human and AI share the same tab and the same live session** | AI only (separate automation instance) | AI drives your current Chrome | AI only (Playwright instance) | AI assistant alongside/operating |
+| What the AI sees | DOM outline snapshot + source + screenshots | Vision + DOM | Screenshots + a11y tree | Accessibility tree | Internal |
+| Human collaboration | **Real-time side-by-side; the emergency-stop key interrupts the AI anytime** | Logs afterwards | Human spectates | Human spectates | Limited intervention |
+| When both act on one page | **The AI yields while you interact; per-page pause + one-click resume** | — | — | — | — |
+| Connectable AI | **Built-in models + panel-driven opencode / Codex / Claude Code; mirrored Gemini / Qwen; explicit MCP clients** | Bring your own LLM | Any MCP client | Any MCP client | Official model only |
+| Conversation visibility | **Live side-panel mirror: opencode text + tool calls; Codex / Claude Code transcript chat** | Logs/terminal | In the client | In the client | In-app |
+| Data | Local-first | Local/cloud | Local | Local | Cloud |
+
+> In one line: browser-use / Playwright MCP let the AI **run a flow for you**; Duplex lets the AI **use the browser together with you** — same tab, same session, and when you both reach for the page, you go first.
 
 ## Known limitations
 
-- Primary actions run through Playwright/CDP, but some fallbacks use synthesized DOM events (for example `el.click()` when the actionability check fails). Sites that depend on fully trusted input, `contenteditable`, or custom widgets may need manual coordination — and side effects already applied cannot be undone.
-- Cancellation granularity: in-flight Playwright calls are bounded by 200–250 ms polling — an action that already completed (click, submit, write) cannot be rolled back.
+- Primary actions run through Playwright/CDP, but some fallbacks use synthesized DOM events (for example `el.click()` when the actionability check fails). Sites that depend on fully trusted input, `contenteditable` or custom widgets may need manual coordination; side effects already applied cannot be undone.
+- Cancellation granularity: in-flight Playwright calls are bounded by 200–250 ms polling. A click, submit or write that already completed cannot be rolled back.
 - `evaluate` cleans up timers / RAF / fetch inside its scope, but cannot revoke callbacks registered elsewhere (e.g. via `document.defaultView`); advanced uses are being constrained further.
-- Element refs are snapshot-scoped: after navigation or large DOM changes take a fresh `snapshot` (stale refs fail with a clear message instead of clicking something wrong).
+- Element refs are snapshot-scoped: after navigation or large DOM changes, take a fresh `snapshot` (stale refs fail with a clear message instead of clicking something wrong).
+- Codex / Claude Code sessions are mirrored from local transcripts; their formats are controlled by those CLIs. Ambiguous launch identities are refused rather than guessed.
+- Gemini, Qwen and custom CLIs are mirrored and can be launched, but do not automatically receive Duplex's MCP tools.
+- opencode message de-duplication relies on the plugin; if it stays disconnected longer than the lease, an accepted-but-unacknowledged message may be delivered twice. Exact dedupe needs upstream message IDs.
 - Direct MCP clients each get a per-process caller identity; an explicit task start / end / handoff protocol is planned for 0.3.0.
-- opencode message de-duplication relies on the plugin; if it stays disconnected longer than the lease, an accepted-but-unacknowledged message may be delivered twice — exact dedupe needs upstream message IDs.
-- Custom CLIs without a structured launch identity are accepted only when a unique new transcript appears; ambiguous cases are refused rather than guessed.
-- Built-in multimodal image context, site-specific custom widgets and cross-platform interaction have not been fully verified yet.
-- The built-in agent is a convenience option: local / smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
-- Standalone CLI tools that open pages through the OS still follow the **system default browser**; only sessions started or resumed from the Duplex panel receive Duplex's MCP tools. CLI processes launched *from* Duplex also get a `BROWSER=duplex-open` shim, which covers tools that honour `$BROWSER`. To route an independent CLI to Duplex, pick Duplex once in your OS settings — **⋯ → 设为默认浏览器…** opens that page (it is never forced).
+- Built-in multimodal image context, site-specific custom widgets and cross-platform interaction have not been fully verified. Windows is the primary target; macOS/Linux builds are provided but less tested.
+- The built-in agent is a convenience option: local or smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
 
 ## Roadmap
 
-- **v0.3.0 — collaboration, continued.** Next up:
+- **v0.3.0 — collaboration, continued.**
   - An explicit task-lifecycle / handoff protocol for MCP callers (start, end, restore) and finer-grained cancellable action steps.
   - Fallbacks for `contenteditable` and custom widgets; a richer CLI session lifecycle; multimodal verification.
   - Community backlog: command palette, tab search, reader mode, bookmark HTML import / export, and more — tracked in `docs/待办与用户反馈.md`.
@@ -274,7 +300,7 @@ Self-contained smokes (a hidden Electron plus a temporary data directory — the
 
 ```bash
 node tests/playwright-connection-smoke.mjs   # the Playwright layer against a hidden fixture browser
-node tests/private-029-smoke.mjs             # 11 main-process collaboration scenarios
+node tests/private-029-smoke.mjs             # main-process collaboration scenarios
 ```
 
 Debug helpers:
@@ -282,7 +308,19 @@ Debug helpers:
 - `GET /api/debug/ui-snapshot` — captures the current window to `~/.cobrowse/ui-snapshot.png`.
 - `POST /api/debug/panel-eval` — runs JS in the panel renderer (only when the app is started with `COBROWSE_DEBUG_UI=1`).
 - `POST /api/debug/ui-action` — drives panel actions (used by tests, e.g. `{"action":"panel-mode:opencode"}`).
-- Logs: `~/.cobrowse/app.log` (main + renderer log lines).
+- Logs: `~/.cobrowse/app.log`.
+
+## FAQ
+
+**Does Duplex replace my everyday browser?** It is a separate browser, designed to be the shared browser for you and an AI. It does not load your Chrome profile or Chrome extensions.
+
+**Does it work with a ChatGPT or Claude subscription?** The built-in model uses an OpenAI-compatible API and your API key. Codex and Claude Code use their own CLIs and their own authentication; Duplex does not reuse a ChatGPT web session.
+
+**Does an agent open Duplex automatically?** No. Standalone Codex, Claude Code and opencode sessions do not receive Duplex's MCP tools. Browser control is enabled for a panel-driven launch, resume or opencode message.
+
+**Can I run a dev build beside the installed app?** Yes. Point `DUPLEX_DATA_DIR` at another directory so the two do not share settings, the endpoint or the single-instance lock.
+
+**Where is my data?** `~/.cobrowse` by default: settings, browser data, sessions, skills and logs. Change `DUPLEX_DATA_DIR` to relocate it.
 
 ## A note from the author
 
