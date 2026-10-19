@@ -24,13 +24,13 @@
 
 ![Duplex demo — the AI searches Bilibili for a paper explainer, opens the video and plays it, while the side panel mirrors every step](docs/screenshots/demo.gif)
 
-*The AI drives: it searches Bilibili, opens the video and starts playback — the side panel streams every step.*
+*A short loop: the AI searches Bilibili, opens the video and starts playback while the side panel streams every step.*
 
-**Full demo — 3 min, bilingual subtitles, with music:**
+**Full demo — 2 min, with captions and music:**
 
 [![Click to play the full demo](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)
 
-*One continuous walkthrough: Act 1 — the built-in agent searches Bilibili and plays a paper-explainer video; Act 2 — Kimi browses to Claude and asks what CUDA is, then summarizes the answer; feature highlights — multi-model APIs, skills, external agents, emergency stop; and where to get it.*
+*One continuous walkthrough: the AI opens the first website ever published, plays a Bilibili video, clears a Minesweeper board, writes a sentence in Microsoft Word for the web, and shows bookmarks already on the PC — while the side panel mirrors every decision and the browser stays visible.*
 
 ![Controlling Excel for the web with Duplex](docs/screenshots/excel-web-demo.png)
 
@@ -48,7 +48,7 @@
 
 - **Bilingual interface** — the whole renderer, native menus, context menus, dialogs and annotation overlay switch between Simplified Chinese and English; follow the system locale or pin a language in the tools menu.
 - **In-app search-engine menu** — the address-bar engine picker no longer depends on a native popup menu; choose Baidu, Bing or Google in a themed dropdown.
-- **Panel-driven browser control only** — Codex, Claude Code and opencode receive Duplex's MCP browser tools only for sessions started or resumed from the Duplex panel. No global MCP server is installed, so standalone agent sessions never open Duplex on their own; the opencode integration uses a dedicated `duplex` agent with `duplex_*` denied by default.
+- **Panel-driven browser control only** — Codex, Claude Code and opencode receive Duplex's MCP browser tools only for prompts issued from the Duplex panel (a CLI session started or resumed there, or a panel message delivered to an opencode session). Codex and Claude Code get no global MCP server; opencode keeps the server but denies `duplex_*` for normal sessions and enables it only for the dedicated `duplex` agent. Standalone agent sessions never open Duplex on their own.
 
 ## What's new in v0.2.9
 
@@ -69,8 +69,8 @@
 | What the AI sees | DOM outline snapshot + source + screenshots | Vision + DOM | Screenshots + a11y tree | Accessibility tree | Internal |
 | Human collaboration | **Real-time side-by-side; the emergency-stop key interrupts the AI anytime** | Logs afterwards | Human spectates | Human spectates | Limited intervention |
 | When both act on one page | **The AI yields while you interact; per-page pause + one-click resume** | — | — | — | — |
-| Connectable AI | **Built-in models + opencode / Codex / Claude Code / Gemini / Qwen / any MCP client** | Bring your own LLM | Any MCP client | Any MCP client | Official model only |
-| Conversation visibility | **Live side-panel mirror (including external CLIs' chats and tool calls)** | Logs/terminal | In the client | In the client | In-app |
+| Connectable AI | **Built-in models + panel-driven opencode / Codex / Claude Code; mirrored Gemini / Qwen; any explicit MCP client** | Bring your own LLM | Any MCP client | Any MCP client | Official model only |
+| Conversation visibility | **Live side-panel mirror: opencode text + tool calls; Codex / Claude Code transcript chat** | Logs/terminal | In the client | In the client | In-app |
 | Data | Fully local | Local/cloud | Local | Local | Cloud |
 
 > In one line: browser-use / Playwright MCP let the AI **run a flow for you**; Duplex lets the AI **use the browser together with you** — same tab, same session, and when you both reach for the page, you go first.
@@ -79,9 +79,9 @@
 
 - **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes, a wallpaper start page, **customizable keyboard shortcuts** and a **full bookmark manager** (folders, edit, sort, search).
 - **Human-first collaboration** — the AI works on its own bound tab, reads while you interact, pauses its page modifications when you take over, and hands pages back one by one. Same tab, same live session — without stepping on each other.
-- **24 MCP tools, Playwright-backed** — `snapshot` compresses any page into a compact DOM outline with `[eN]` refs; clicks, typing, drags and reads run through Playwright locators (stable across DOM changes, iframe & open-shadow capable, cancellable waits). The rest covers tabs, navigation, upload, console logs, JS evaluation and page annotations.
-- **Zero-setup bridge** — a stdio MCP bridge (`mcp-bridge`) auto-launches the browser on the first tool call. Works with opencode, Claude Code, or any MCP client.
-- **Live session mirror** — when your AI works through opencode, its replies, reasoning and tool-call cards stream into the side panel in real time. Type in the panel to inject a message into the *same* session.
+- **24 browser tools, Playwright-backed** — `snapshot` compresses any page into a compact DOM outline with `[eN]` refs; clicks, typing, drags and reads run through Playwright locators (stable across DOM changes, iframe & open-shadow capable, cancellable waits). The bridge also exposes six skill/file tools used by the built-in agent.
+- **Panel-scoped bridge** — a stdio MCP bridge (`mcp-bridge`) drives the app, but Duplex injects it only into sessions started or resumed from the panel. Standalone Codex / Claude Code / opencode sessions keep Duplex unconfigured, so they never open the browser on their own. Explicit MCP clients can still connect to the bridge directly.
+- **Live session mirror** — opencode replies, reasoning and tool-call cards stream into the side panel in real time; Codex and Claude Code transcripts are mirrored from their local session files. Type in the panel to resume the *same* session.
 - **AI action visualization** — a translucent cursor, element highlight and a status bar ("AI is clicking «…» — F2 to take over") are drawn in a Shadow-DOM overlay, so you always see what the AI is doing on the page.
 - **Emergency stop** — press the configured emergency-stop key (default `F2` / `Ctrl+Shift+K`) or click the status bar to take control instantly: running tool calls are aborted, external processes started from the panel are terminated, pending confirmations are denied and queued messages are dropped. The pause survives a restart — send a message or click "Resume" to continue.
 - **Page annotations** — press `Ctrl+Shift+A` (or the ✎ button in the toolbar, or use `annotation_mode`) to draw a box / circle / arrow / point on any page and attach a question. The annotation is compiled into a structured text brief (DOM outline + visible text + selectors + geometry) and sent to the AI — with delivery receipts, and stale annotations are rejected.
@@ -102,17 +102,17 @@ The start page shows a clock, date and search box over a wallpaper that follows 
 
 Ask the built-in model in the side panel — in Chinese or English. It calls tools (`navigate`, `snapshot`, …), with each call shown as a card, and reports back in the panel while you watch the page change.
 
-### 3. opencode session mirror
+### 3. Session mirror
 
-![opencode session mirror](docs/screenshots/mirror-panel.png)
+![Session mirror](docs/screenshots/mirror-panel.png)
 
-When your AI runs through opencode, its messages and tool calls are mirrored into the panel while it drives the same visible browser. The "opencode" / "built-in" tabs at the top of the panel switch between the two ways of working.
+When your AI runs through opencode, its messages and tool calls are mirrored into the panel while it drives the same visible browser. The tool selector at the top of the panel switches between the built-in model and external CLI sessions (opencode, Codex, Claude Code, …).
 
 ### 4. Session picker
 
 ![Session picker](docs/screenshots/session-picker.png)
 
-Pick which opencode session the panel is connected to. "Auto" follows the most recent conversation.
+Pick the session the panel should follow — an opencode conversation or a Codex / Claude Code history entry — or keep "Auto" to follow the most recent conversation.
 
 ### 5. Model providers
 
@@ -144,8 +144,6 @@ Draw a box (or circle / arrow / point) around anything and ask a question about 
 
 1. Download the latest installer from [Releases](../../releases): `Duplex Setup x.y.z.exe` (Windows), `.dmg` (macOS, Apple Silicon / Intel) or `.AppImage` (Linux).
 2. Run it and launch Duplex.
-
-> Prefer no installer? A portable **zip** (unzip anywhere, run `Duplex.exe`) is attached to releases as well.
 
 ### Build from source
 
@@ -198,7 +196,7 @@ npm start      # preview the production build
 }
 ```
 
-3. In the Duplex side panel choose the **opencode** tab and send the request there. The plugin delivers it to the active opencode session under the `duplex` agent, so browser control is enabled for that panel-originated turn. Normal opencode sessions never open Duplex on their own.
+3. In the Duplex side panel select **opencode** in the tool selector and send the request there. The plugin delivers it to the active opencode session under the `duplex` agent, so browser control is enabled for that panel-originated turn. Normal opencode sessions never open Duplex on their own.
 4. To trigger it manually from opencode, select the `duplex` agent explicitly.
 
 Codex and Claude Code follow the same rule: no global MCP server is installed. Duplex injects the server only into sessions it starts or resumes from the panel.
@@ -226,32 +224,34 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 | `annotation_mode` | Enter/exit the annotation overlay (human draws a box/circle/arrow/point + question) |
 | `evaluate` | Evaluate JS in the page, returns JSON-serializable results |
 
+The same bridge also exposes six skill/file tools used by the built-in agent: `read_skill`, `list_skill_files`, `read_skill_file`, `run_skill_script`, `write_file`, and `run_command`.
+
 ## How it works
 
 ![Architecture](docs/screenshots/architecture.jpg)
 
 - The Electron main process serves a small local HTTP API on `127.0.0.1` protected by a per-launch bearer token (endpoint info is written to `~/.cobrowse/endpoint.json`).
-- `dist-bridge/index.cjs` is a stdio MCP server that proxies tool calls to that API and auto-launches the app when it is not running.
+- `dist-bridge/index.cjs` is a stdio MCP server that proxies tool calls to that API and auto-launches the app when it is not running. Duplex passes this server to Codex and Claude Code only for panel-driven launches/resumes (via `-c` and `--mcp-config`), and never installs it globally for them.
 - Page automation is **Playwright over the browser's own Chromium**: the app reads `DevToolsActivePort`, matches `targetId` to each tab and drives locators, iframes, open shadow DOM, cancellable waits and script evaluation — the same page you are looking at, not a separate automation instance.
 - A **collaboration layer** binds every task to its tab, serializes same-page writes, watches for real human input (wheel / touch / keyboard / focus) and pauses AI modifications per page; the status bar reflects it and offers one-click resume per page.
-- The opencode plugin pushes session events (text, reasoning, tool calls) into the panel and long-polls for queued messages; deliveries are claimed once (60 s lease, renewed, ACK'd) and target the bound session rather than "whichever session is active".
+- The opencode plugin pushes session events (text, reasoning, tool calls) into the panel and long-polls for queued messages. Panel-originated prompts are delivered under a dedicated `duplex` agent; normal opencode sessions keep `duplex_*` denied. Deliveries are claimed once (60 s lease, renewed, ACK'd) and target the bound session rather than "whichever session is active".
 - Panel messages and page annotations are injected with identity: annotations capture the source tab, URL and a document marker, and stale ones are rejected — they cannot cross into the wrong session.
-- Codex and Claude Code are mirrored from their local session transcripts (history + live tail); replies sent from the panel headlessly resume the same session (`codex exec resume` / `claude --resume`) and the new turns stream back through the same tail. Launches are matched by structured session IDs, not "most recently modified file".
+- Codex and Claude Code are mirrored from their local session transcripts (history + live tail); replies sent from the panel headlessly resume the same session (`codex exec resume` / `claude --resume`) and the new turns stream back through the same tail. Those panel-driven launches also receive Duplex's MCP server for that invocation only; launches are matched by structured session IDs, not "most recently modified file".
 - Browser state (tab order, HTTP(S) URLs, the active page) is saved on exit and restored on the next start.
 - External scripts can also push messages into the session: `POST /api/chat { "text": "..." }`.
 
 ## Known limitations
 
-- While you are interacting with a page, AI input on it is synthesized DOM events (`isTrusted=false`); sites that depend on real key/mouse events, `contenteditable`, or custom widgets may need manual coordination — and side effects already applied cannot be undone.
+- Primary actions run through Playwright/CDP, but some fallbacks use synthesized DOM events (for example `el.click()` when the actionability check fails). Sites that depend on fully trusted input, `contenteditable`, or custom widgets may need manual coordination — and side effects already applied cannot be undone.
 - Cancellation granularity: in-flight Playwright calls are bounded by 200–250 ms polling — an action that already completed (click, submit, write) cannot be rolled back.
 - `evaluate` cleans up timers / RAF / fetch inside its scope, but cannot revoke callbacks registered elsewhere (e.g. via `document.defaultView`); advanced uses are being constrained further.
 - Element refs are snapshot-scoped: after navigation or large DOM changes take a fresh `snapshot` (stale refs fail with a clear message instead of clicking something wrong).
-- Direct MCP clients share a default caller identity; an explicit task start / end / handoff protocol is planned for 0.3.0.
+- Direct MCP clients each get a per-process caller identity; an explicit task start / end / handoff protocol is planned for 0.3.0.
 - opencode message de-duplication relies on the plugin; if it stays disconnected longer than the lease, an accepted-but-unacknowledged message may be delivered twice — exact dedupe needs upstream message IDs.
 - Custom CLIs without a structured launch identity are accepted only when a unique new transcript appears; ambiguous cases are refused rather than guessed.
 - Built-in multimodal image context, site-specific custom widgets and cross-platform interaction have not been fully verified yet.
 - The built-in agent is a convenience option: local / smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
-- CLI tools that open pages through the OS (Claude Code, Codex, …) follow the **system default browser**. To route them to Duplex, pick Duplex once in your OS settings — **⋯ → 设为默认浏览器…** opens that page (it is never forced). CLIs and commands launched *from* Duplex also get a `BROWSER=duplex-open` shim, which covers tools that honour `$BROWSER`.
+- Standalone CLI tools that open pages through the OS still follow the **system default browser**; only sessions started or resumed from the Duplex panel receive Duplex's MCP tools. CLI processes launched *from* Duplex also get a `BROWSER=duplex-open` shim, which covers tools that honour `$BROWSER`. To route an independent CLI to Duplex, pick Duplex once in your OS settings — **⋯ → 设为默认浏览器…** opens that page (it is never forced).
 
 ## Roadmap
 
@@ -265,7 +265,7 @@ Panel → **Built-in** tab → **Model settings** → add an OpenAI-compatible p
 ```bash
 npm run dev        # dev mode (electron-vite, HMR for the renderer)
 npm run typecheck  # TypeScript checks (node + web)
-npm test           # unit tests (vitest, 300+ cases)
+npm test           # unit tests (vitest, 340+ cases)
 npm run smoke      # end-to-end smoke test (launches the bridge and a real browser)
 npm run dist       # build the Windows installer (electron-builder)
 ```

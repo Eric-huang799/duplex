@@ -24,13 +24,13 @@
 
 ![Duplex 演示 —— AI 搜索 B 站论文解读视频、打开并播放，侧栏同步镜像每一步](docs/screenshots/demo.gif)
 
-*AI 在操作：搜索 B 站、打开视频并开始播放，侧栏实时镜像每一步。*
+*短视频循环：AI 搜索 B 站、打开视频并开始播放，侧栏实时镜像每一步。*
 
-**完整演示 —— 3 分钟，中英双语字幕 + 配乐：**
+**完整演示 —— 2 分钟，带字幕与音乐：**
 
 [![点击播放完整演示](docs/screenshots/demo-video-cover.jpg)](docs/videos/duplex-demo.mp4)
 
-*一条完整走查：第一幕 —— 内置模型自主搜索 B 站并播放论文解读视频；第二幕 —— Kimi 打开 Claude 询问「CUDA 是什么」并回来总结答案；功能亮点 —— 多模型协议、Skills 技能、外部 Agent、急停接管；以及获取方式。*
+*一条连续走查：AI 打开世界上第一个网站、播放 B 站视频、通关扫雷、在网页版 Word 里写下一句话，并查看电脑上已有的书签——右侧面板同步展示每一步决策，浏览器画面始终可见。*
 
 ![用 Duplex 操控网页版 Excel](docs/screenshots/excel-web-demo.png)
 
@@ -48,7 +48,7 @@
 
 - **中英双语界面** —— 渲染层、原生菜单、右键菜单、对话框与标注浮层均支持简体中文 / English，可跟随系统或手动固定语言。
 - **应用内搜索引擎下拉** —— 地址栏引擎选择不再依赖系统原生菜单，使用主题化的应用内下拉选择百度 / Bing / Google。
-- **仅面板驱动的浏览器控制** —— Codex、Claude Code、opencode 只在从 Duplex 面板发起或续接会话时临时获得 Duplex 的 MCP 浏览器工具；不再安装全局 MCP，独立 agent 会话不会自行打开 Duplex。opencode 使用专用 `duplex` agent，默认拒绝 `duplex_*`。
+- **仅面板驱动的浏览器控制** —— Codex、Claude Code、opencode 只在从 Duplex 面板发出的提示中获得 Duplex 的 MCP 浏览器工具（在面板中新建/续接的 CLI 会话，或投递给 opencode 会话的面板消息）。Codex 与 Claude Code 不安装全局 MCP；opencode 保留服务，但普通会话默认拒绝 `duplex_*`，仅专用 `duplex` agent 允许。独立 agent 会话不会自行打开 Duplex。
 
 ## v0.2.9 新增
 
@@ -69,8 +69,8 @@
 | AI 的感知 | DOM 大纲快照 + 源码 + 截图 | 视觉 + DOM | 截图 + 可访问性树 | 可访问性树 | 内部实现 |
 | 人机协作 | **同屏实时协作；按急停键即可随时打断 AI 操作** | 事后看日志 | 人旁观 | 人旁观 | 有限人工干预 |
 | 两边同时操作同一页时 | **AI 给人让路：逐页暂停 + 一键交还** | — | — | — | — |
-| 可接入的 AI | **内置模型 + opencode / Codex / Claude Code / Gemini / Qwen / 任意 MCP 客户端** | 需自配 LLM | 任意 MCP 客户端 | 任意 MCP 客户端 | 仅官方模型 |
-| AI 对话可见性 | **侧边面板实时镜像（含外部 CLI 的对话与工具调用）** | 日志/终端 | 客户端内 | 客户端内 | 应用内 |
+| 可接入的 AI | **内置模型 + 面板驱动的 opencode / Codex / Claude Code；镜像 Gemini / Qwen；任意显式 MCP 客户端** | 需自配 LLM | 任意 MCP 客户端 | 任意 MCP 客户端 | 仅官方模型 |
+| AI 对话可见性 | **侧边面板实时镜像：opencode 文本与工具调用；Codex / Claude Code 会话记录** | 日志/终端 | 客户端内 | 客户端内 | 应用内 |
 | 数据 | 完全本地 | 本地/云 | 本地 | 本地 | 云 |
 
 > 一句话：browser-use / Playwright MCP 解决的是"让 AI **替你跑**流程"；Duplex 解决的是"让 AI **和你一起用**你正开着的那一个浏览器"——同一个标签、同一个会话；当你们同时伸手碰页面时，**你先**。
@@ -79,9 +79,9 @@
 
 - **一个真正的浏览器** —— 多标签、地址栏（百度 / Bing / Google 搜索）、前进 / 后退 / 刷新、主题、壁纸起始页，外加**全量可自定义的快捷键**与**完整的书签管理**（文件夹、编辑、排序、搜索）。
 - **人机协作（以人为先）** —— AI 在绑定的标签上工作；你操作时它只观察不抢；你接管后它暂停该页修改，准备好后逐页交还。同一个标签、同一个实时会话，互不踩脚。
-- **24 个 MCP 工具，Playwright 驱动** —— `snapshot` 把任意页面压缩成紧凑 DOM 大纲（可交互元素带 `[eN]` ref）；点击、输入、拖拽与读取走 Playwright locator（DOM 变化后仍稳定、支持 iframe 与开放 shadow DOM、等待可取消）；其余覆盖标签管理、导航、上传、控制台、JS 求值与页面标注。
-- **零配置桥接** —— stdio MCP 桥 `mcp-bridge` 在第一次工具调用时自动拉起浏览器，免手动启动。适用于 opencode、Claude Code 及任意 MCP 客户端。
-- **会话实时镜像** —— AI 通过 opencode 工作时，它的回复、思考与工具调用卡片实时流入侧边面板；在面板里发言可把消息注入同一个会话。
+- **24 个浏览器工具，Playwright 驱动** —— `snapshot` 把任意页面压缩成紧凑 DOM 大纲（可交互元素带 `[eN]` ref）；点击、输入、拖拽与读取走 Playwright locator（DOM 变化后仍稳定、支持 iframe 与开放 shadow DOM、等待可取消）；其余覆盖标签管理、导航、上传、控制台、JS 求值与页面标注。桥接还向内置 agent 提供 6 个 skill/文件工具。
+- **按会话注入的桥接** —— stdio MCP 桥 `mcp-bridge` 负责驱动应用，但 Duplex 只对从面板发起或续接的会话注入它。独立运行的 Codex / Claude Code / opencode 不会配置 Duplex，因此不会自行打开浏览器；显式 MCP 客户端仍可直接连接桥接。
+- **会话实时镜像** —— opencode 的回复、思考与工具调用卡片实时流入侧边面板；Codex 与 Claude Code 的本地会话记录也会镜像进来。在面板里发言可继续同一个会话。
 - **AI 操作可视化** —— 半透明光标、目标元素高亮与底部状态条（"AI 正在点击「…」· F2 急停"）绘制在 Shadow-DOM 覆盖层中，AI 在页面上做什么一目了然。
 - **急停** —— 按配置的急停键（默认 `F2` / `Ctrl+Shift+K`，可在设置中修改）或点击状态条立即接管：正在执行的工具调用被中止、面板发起的外部进程被终止、待确认操作被拒绝、排队消息被清空。挂起状态重启后仍保留——发消息或点「恢复」即可继续。
 - **页面标注** —— 按 `Ctrl+Shift+A`（或工具栏 ✎ 按钮，或调用 `annotation_mode`），在页面上画框 / 圆圈 / 箭头 / 点选并附上问题；标注会被编译成结构化文本（DOM 大纲 + 可见文本 + selector + 几何信息）发送给 AI——带投递回执，过期标注会被拒绝。
@@ -102,17 +102,17 @@
 
 在侧边面板用中文或英文给内置模型下指令。它会调用工具（`navigate`、`snapshot`……），每次调用以卡片展示，并在面板中汇报结果——页面同步发生变化。
 
-### 3. opencode 会话镜像
+### 3. 会话镜像
 
-![opencode 会话镜像](docs/screenshots/mirror-panel.png)
+![会话镜像](docs/screenshots/mirror-panel.png)
 
-当 AI 通过 opencode 工作时，它的消息与工具调用被镜像到面板，同时操控同一个可见的浏览器。面板顶部 "opencode / 内置模型" 两个标签页在两种工作方式间切换。
+当 AI 通过 opencode 工作时，它的消息与工具调用被镜像到面板，同时操控同一个可见的浏览器。面板顶部的工具选择器可在内置模型与外部 CLI 会话（opencode、Codex、Claude Code 等）之间切换。
 
 ### 4. 会话选择
 
 ![会话选择](docs/screenshots/session-picker.png)
 
-选择面板连接的 opencode 会话。"自动"跟随最近的对话。
+选择面板要跟随的会话——opencode 对话，或 Codex / Claude Code 的历史记录——或保持"自动"跟随最近的对话。
 
 ### 5. 模型服务管理
 
@@ -198,7 +198,7 @@ npm start      # 预览生产构建
 }
 ```
 
-3. 在 Duplex 侧边面板选择 **opencode** 标签，直接在那里发送请求。插件会把消息投递给当前 opencode 会话，并切换到 `duplex` agent，因此只有这轮面板消息获得浏览器控制能力；普通 opencode 会话不会自己打开 Duplex。
+3. 在 Duplex 侧边面板的工具选择器中选择 **opencode**，直接在那里发送请求。插件会把消息投递给当前 opencode 会话，并切换到 `duplex` agent，因此只有这轮面板消息获得浏览器控制能力；普通 opencode 会话不会自己打开 Duplex。
 4. 如需从 opencode 手动触发，显式选择 `duplex` agent。
 
 Codex 和 Claude Code 遵循同样的规则：不安装全局 MCP。Duplex 只对从面板发起或续接的会话临时注入 MCP 服务。
@@ -226,32 +226,34 @@ Codex 和 Claude Code 遵循同样的规则：不安装全局 MCP。Duplex 只�
 | `annotation_mode` | 进入 / 退出标注模式（人在页面上画框 / 圈 / 箭头 / 点选并提问） |
 | `evaluate` | 在页面中执行 JS，返回可 JSON 序列化的结果 |
 
+同一个桥接还向内置 agent 提供 6 个 skill/文件工具：`read_skill`、`list_skill_files`、`read_skill_file`、`run_skill_script`、`write_file`、`run_command`。
+
 ## 工作原理
 
 ![架构图](docs/screenshots/architecture.jpg)
 
 - Electron 主进程在 `127.0.0.1` 上提供一个本地 HTTP API，使用每次启动生成的 bearer token 鉴权（端点信息写入 `~/.cobrowse/endpoint.json`）。
-- `dist-bridge/index.cjs` 是一个 stdio MCP 服务，把工具调用代理到该 API，并在应用未运行时自动拉起。
+- `dist-bridge/index.cjs` 是一个 stdio MCP 服务，把工具调用代理到该 API，并在应用未运行时自动拉起。Duplex 只对面板驱动的 Codex / Claude Code 启动或续聊临时传入这个服务（`-c` / `--mcp-config`），不会为它们安装全局 MCP。
 - 页面自动化是**跑在浏览器自己 Chromium 上的 Playwright**：应用读取 `DevToolsActivePort`、按 `targetId` 对应到每个标签，驱动 locator、iframe、开放 shadow DOM、可取消等待与脚本执行——操作的就是你眼前这个页面，而不是另一个自动化实例。
 - **协作层**把每个任务绑定到它的标签、对同页写操作串行化、监听真实的人工输入（滚轮 / 触摸 / 键盘 / 焦点）并逐页暂停 AI 修改；状态条反映这些状态，并提供逐页一键交还。
-- opencode 插件把会话事件（文本、思考、工具调用）推入面板，并长轮询取走排队消息；投递单次领取（60 秒租期、自动续租、ACK 确认），且面向**绑定的会话**而不是"当前活动会话"。
+- opencode 插件把会话事件（文本、思考、工具调用）推入面板，并长轮询取走排队消息。面板来源的提示使用专用 `duplex` agent 投递，普通 opencode 会话默认拒绝 `duplex_*`。投递单次领取（60 秒租期、自动续租、ACK 确认），且面向**绑定的会话**而不是"当前活动会话"。
 - 面板消息与页面标注都带身份注入：标注会记录来源标签、URL 与文档标识，过期即拒绝——不会串进错误的会话。
-- Codex 与 Claude Code 的对话从本地会话记录实时尾随镜像；面板发送的消息以无头模式续接同一会话（`codex exec resume` / `claude --resume`）注入，新回合经同一尾随通道流回面板。启动对象按结构化会话 ID 匹配，而不是"最近被修改的文件"。
+- Codex 与 Claude Code 的对话从本地会话记录实时尾随镜像；面板发送的消息以无头模式续接同一会话（`codex exec resume` / `claude --resume`）注入，新回合经同一尾随通道流回面板。面板驱动的这些调用只在本次调用中获得 Duplex 的 MCP 服务；启动对象按结构化会话 ID 匹配，而不是"最近被修改的文件"。
 - 浏览器状态（标签顺序、HTTP(S) URL、活动页）在退出时保存、下次启动时恢复。
 - 外部脚本也可注入消息：`POST /api/chat { "text": "..." }`。
 
 ## 已知限制
 
-- 你与页面交互期间，AI 在该页面的输入是合成 DOM 事件（`isTrusted=false`）；依赖真实键鼠、`contenteditable` 或自定义控件的站点需要人工协调，且已经发生的副作用无法撤销。
+- 主要操作走 Playwright/CDP，但部分回退路径会使用合成 DOM 事件（例如可交互性检查失败时的 `el.click()`）；依赖完全可信输入、`contenteditable` 或自定义控件的站点需要人工协调，且已经发生的副作用无法撤销。
 - 取消粒度：在途 Playwright 调用以 200–250 ms 轮询为界——已经完成的点击 / 提交 / 写入不能回滚。
 - `evaluate` 会清理其作用域内的计时器 / RAF / fetch，但无法撤销通过 `document.defaultView` 等途径注册的外部回调；该高级能力的使用范围还在进一步收紧。
 - 元素 ref 与快照绑定：导航或 DOM 大改后请重新 `snapshot`（过期 ref 会明确报错，而不是点错元素）。
-- 直接使用 MCP 的客户端共享一个默认调用方身份；明确的任务开始 / 结束 / 交接协议计划在 0.3.0 提供。
+- 直接使用 MCP 的客户端各自拥有按进程生成的调用方身份；明确的任务开始 / 结束 / 交接协议计划在 0.3.0 提供。
 - opencode 的消息去重依赖插件；若其断网超过租期，已接受但未确认的消息可能重复投递——精确去重需要上游提供消息 ID。
 - 缺少结构化启动身份的自定义 CLI，只在出现唯一新记录文件时被接受；同时有多个候选会直接拒绝，而不是乱猜。
 - 内置多模态图片上下文、站点特殊控件与跨平台交互验收尚未完全覆盖。
 - 内置模型是便捷选项：本地 / 小模型在长工具链任务上的可靠性明显低于完整的 opencode 方案。
-- 通过操作系统打开网页的 CLI 工具（Claude Code、Codex 等）跟随**系统默认浏览器**。想让它们落在 Duplex，只需在系统设置里把 Duplex 选为默认一次即可——`⋯ → 设为默认浏览器…` 会帮你打开那个设置页（绝不强迫）。由 Duplex 启动的 CLI / 命令还会带上 `BROWSER=duplex-open` 垫片，可覆盖尊重该环境变量的工具。
+- 独立运行的 CLI 工具通过操作系统打开网页时仍跟随**系统默认浏览器**；只有从 Duplex 面板发起或续接的会话才会获得 Duplex 的 MCP 工具。由 Duplex 启动的 CLI / 命令还会带上 `BROWSER=duplex-open` 垫片，可覆盖尊重该环境变量的工具。若要让独立 CLI 落在 Duplex，只需在系统设置里把 Duplex 选为默认一次——`⋯ → 设为默认浏览器…` 会帮你打开那个设置页（绝不强迫）。
 
 ## 路线图
 
@@ -265,7 +267,7 @@ Codex 和 Claude Code 遵循同样的规则：不安装全局 MCP。Duplex 只�
 ```bash
 npm run dev        # 开发模式（electron-vite，渲染层 HMR）
 npm run typecheck  # TypeScript 检查（node + web）
-npm test           # 单元测试（vitest，300+ 用例）
+npm test           # 单元测试（vitest，340+ 用例）
 npm run smoke      # 端到端冒烟测试（拉起桥接与真实浏览器）
 npm run dist       # 构建 Windows 安装包（electron-builder）
 ```
