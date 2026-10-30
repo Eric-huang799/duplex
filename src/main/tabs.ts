@@ -2,6 +2,7 @@ import { BrowserWindow, WebContentsView } from 'electron'
 import type { ContentBounds, LoadErrorInfo, TabInfo } from '../shared/protocol'
 import { matchesBinding } from '../shared/hotkeys'
 import { DEFAULT_SHORTCUTS, type ShortcutAction } from '../shared/shortcuts'
+import { isAllowedNavigationUrl } from '../shared/url'
 
 export interface ConsoleEntry {
   level: string
@@ -145,7 +146,21 @@ export class TabManager {
     })
 
     if (!options.background || this.activeId == null) this.setActive(tab.id)
-    void view.webContents.loadURL(url ?? 'about:blank')
+    // Only http(s)/about:blank may be loaded: a file URL would let an AI-driven
+    // page read local files (endpoint token, provider keys, SSH keys).
+    const requested = (url ?? 'about:blank').trim() || 'about:blank'
+    const target = isAllowedNavigationUrl(requested) ? requested : 'about:blank'
+    if (target !== requested) {
+      try {
+        this.onLoadError?.({ tabId: tab.id, url: requested, code: -3, desc: 'blocked: unsupported URL scheme' })
+      } catch {
+        /* best effort */
+      }
+    }
+    view.webContents.on('will-navigate', (event, next) => {
+      if (!isAllowedNavigationUrl(next)) event.preventDefault()
+    })
+    void view.webContents.loadURL(target)
     this.emit()
     return tab
   }

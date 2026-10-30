@@ -8,6 +8,7 @@ import {
   nativeTheme,
   session,
   type MenuItemConstructorOptions,
+  type Session,
   type WebContents
 } from 'electron'
 import path from 'node:path'
@@ -123,7 +124,41 @@ import { BrowserSessionStore } from './browser-session'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
-const VERSION = '0.2.10'
+const VERSION = (() => {
+  try {
+    return app.getVersion()
+  } catch {
+    return '0.0.0'
+  }
+})()
+
+/** True only for our own renderer (dev server or packaged file URL). */
+function isAppRendererUrl(target: string): boolean {
+  const dev = process.env['ELECTRON_RENDERER_URL']
+  if (dev && target.startsWith(dev)) return true
+  return /^file:\/\/.*\/out\/renderer\//i.test(target)
+}
+
+/**
+ * Pages get no camera/mic/notification/geolocation by default. Clipboard write is
+ * allowed only for the app window (copy-link / copy-command buttons).
+ */
+function denyPagePermissions(ses: Session): void {
+  const clipboardWrite = (permission: string): boolean =>
+    permission === 'clipboard-write' || permission === 'clipboard-sanitized-write'
+  const isAppWindow = (wc: WebContents | null): boolean => wc != null && wc === win?.webContents
+  try {
+    ses.setPermissionRequestHandler((wc, permission, callback) => {
+      callback(clipboardWrite(permission) && isAppWindow(wc))
+    })
+    ses.setPermissionCheckHandler((wc, permission) => {
+      return clipboardWrite(permission) && isAppWindow(wc)
+    })
+  } catch {
+    /* session may be gone */
+  }
+}
+
 app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
 app.commandLine.appendSwitch('remote-debugging-port', '0')
 const TOKEN = crypto.randomBytes(24).toString('hex')
@@ -971,6 +1006,19 @@ async function start(): Promise<void> {
       }
     }
     const caller = currentCaller()
+    if (name === 'resume_tab') {
+      try {
+        const targetId = collaboration.resolveTab(
+          caller,
+          typeof args.tabId === 'number' ? args.tabId : undefined,
+          tabs?.activeId ?? null
+        )
+        collaboration.resume(targetId, true)
+        return { content: [{ type: 'text', text: JSON.stringify({ tabId: targetId, resumed: true }) }] }
+      } catch (e) {
+        return { isError: true, content: [{ type: 'text', text: (e as Error)?.message ?? String(e) }] }
+      }
+    }
     const tabScoped = !['list_tabs', 'new_tab'].includes(name)
     let tabId: number | undefined
     try {
@@ -1057,6 +1105,9 @@ async function start(): Promise<void> {
     mirror,
     tabs: tabs!,
     executeTool: executeWithWake,
+    abortCaller: (caller: string) => {
+      abortOperation({ owner: caller })
+    },
     sessionBus,
     sendAgent: async (text) => {
       return await agentRuntime?.send(text)
@@ -1257,6 +1308,22 @@ function createWindow(): void {
     }
   })
 
+  // The app window may not navigate away from its own renderer, and page-
+  // initiated window.open is denied; http(s) opens as a managed tab instead.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) {
+      try {
+        tabs?.createTab(url)
+      } catch {
+        /* tabs not ready yet */
+      }
+    }
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (event, target) => {
+    if (!isAppRendererUrl(target)) event.preventDefault()
+  })
+
   win.on('ready-to-show', () => {
     win?.show()
     win?.focus()
@@ -1384,6 +1451,8 @@ function createWindow(): void {
     },
     (tab, info) => showPageContextMenu(tab, info)
   )
+  denyPagePermissions(session.defaultSession)
+  denyPagePermissions(session.fromPartition('persist:cobrowse'))
   restoringBrowserSession = true
   const savedBrowser = browserSession.read()
   if (savedBrowser?.tabs.length) {
@@ -2224,7 +2293,12 @@ function setupIpc(): void {
         const tabId = senderTabId
         if (tabId != null) {
           annotationTabState.set(tabId, active)
-          if (active) { collaboration.humanActivity(tabId, 'annotation'); abortOperation({ tabId, writesOnly: true }) }
+          if (active) {
+            collaboration.humanActivity(tabId, 'annotation')
+            abortOperation({ tabId, writesOnly: true })
+          } else {
+            collaboration.resume(tabId, false)
+          }
         }
         // only mirror the active tab's state into the chrome UI
         if (tabId == null || tabId === tabs?.activeId) sendAnnotationState(active)

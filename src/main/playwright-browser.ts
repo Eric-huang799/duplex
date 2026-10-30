@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { join, resolve, sep } from 'node:path'
 import { chromium, type Browser, type Page, type Locator } from 'playwright-core'
 import type { Tab } from './tabs'
 import * as cdp from './cdp'
@@ -187,6 +188,17 @@ async function showTarget(tab: Tab, locator: Locator, action: string): Promise<v
   } catch { /* a disappeared target does not change the completed action */ }
 }
 
+/** Files the AI may attach: only inside the dedicated uploads directory. */
+function assertUploadAllowed(files: string[]): void {
+  const root = resolve(process.env['DUPLEX_UPLOAD_DIR'] || join(homedir(), '.cobrowse', 'uploads'))
+  for (const f of files) {
+    const abs = resolve(f)
+    if (abs !== root && !abs.startsWith(root + sep)) {
+      throw new Error(`upload 只允许 ${root} 下的文件（收到 ${abs}）；请由用户把文件放入该目录后再试`)
+    }
+  }
+}
+
 export async function performPageAction(tab: Tab, name: string, args: Record<string, unknown>): Promise<unknown> {
   checkCancelled()
   const page = await pageForTab(tab)
@@ -278,6 +290,7 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
     case 'upload': {
       const files = Array.isArray(args.files) ? args.files.map(String) : []
       if (!files.length) throw new Error('files 必须包含文件路径')
+      assertUploadAllowed(files)
       await locator!.setInputFiles(files, { timeout: 250, noWaitAfter: true })
       checkCancelled()
       return { uploaded: files.length, target }

@@ -5,7 +5,7 @@ import { markAiActive, overlaySend, takeoverHint } from './overlay'
 import { currentLang } from './i18n'
 import { operationSignal } from './interrupt'
 import { performPageAction } from './playwright-browser'
-import { resolveAddress } from '../shared/url'
+import { hasExplicitScheme, isAllowedNavigationUrl, resolveAddress } from '../shared/url'
 import { DEFAULT_ENGINE, SEARCH_ENGINES, searchUrl } from '../shared/search'
 
 export type ToolContent =
@@ -76,6 +76,9 @@ async function dispatch(
 
     case 'new_tab': {
       const raw = typeof args.url === 'string' && args.url ? args.url : null
+      if (raw && hasExplicitScheme(raw) && !isAllowedNavigationUrl(raw)) {
+        return errorText(`blocked: 只允许打开 http/https/about:blank（收到 ${raw.slice(0, 60)}）`)
+      }
       const addr = raw ? resolveAddress(raw) : null
       const url = addr
         ? addr.kind === 'url'
@@ -117,7 +120,10 @@ async function dispatch(
 
     case 'navigate': {
       const tab = tabs.requireTab(args.tabId as number | undefined)
-      const raw = String(args.url)
+      const raw = String(args.url ?? '')
+      if (hasExplicitScheme(raw) && !isAllowedNavigationUrl(raw)) {
+        return errorText(`blocked: 只允许打开 http/https/about:blank（收到 ${raw.slice(0, 60)}）`)
+      }
       const addr = resolveAddress(raw)
       const url = addr.kind === 'url' ? addr.url : searchUrl(addr.query, getEngine?.())
       markAiActive(10000)

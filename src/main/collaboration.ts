@@ -9,7 +9,7 @@ export function withCaller<T>(id: string, fn: () => Promise<T>): Promise<T> {
 }
 export function currentCaller(): string { return callers.getStore()?.id ?? 'direct' }
 
-export const PAGE_READ_TOOLS = new Set(['list_tabs', 'snapshot', 'query', 'get_html', 'screenshot', 'get_console', 'wait'])
+export const PAGE_READ_TOOLS = new Set(['list_tabs', 'snapshot', 'query', 'get_html', 'screenshot', 'get_console', 'wait', 'switch_tab'])
 
 interface TabState { owner: string | null; paused: boolean; reason: string | null; scrollingUntil: number }
 
@@ -73,8 +73,8 @@ export class CollaborationCoordinator {
     const check = (): void => {
       if (signal?.aborted) throw new Error('任务已取消')
       const state = this.state(tabId)
-      if (mutates && state.paused) throw new Error(`${state.reason}；请由用户恢复此标签的 AI 操作。读取可继续。`)
-      if (mutates && state.owner && state.owner !== caller) throw new Error('此标签正由其他 AI 任务操作；请使用独立标签，或由用户恢复后交接。')
+      if (mutates && state.paused) throw new Error(`[PAUSED] ${state.reason}；请由用户恢复此标签的 AI 操作。读取可继续。`)
+      if (mutates && state.owner && state.owner !== caller) throw new Error('[LOCKED] 此标签正由其他 AI 任务操作；请使用独立标签，或调用 resume_tab 交接。')
     }
     check()
     if (!mutates) return fn()
@@ -85,6 +85,17 @@ export class CollaborationCoordinator {
       return fn()
     })
     this.tails.set(tabId, run)
-    try { return await run } finally { if (this.tails.get(tabId) === run) this.tails.delete(tabId) }
+    try {
+      return await run
+    } finally {
+      if (this.tails.get(tabId) === run) {
+        this.tails.delete(tabId)
+        const state = this.state(tabId)
+        if (state.owner === caller) {
+          state.owner = null
+          this.changed()
+        }
+      }
+    }
   }
 }

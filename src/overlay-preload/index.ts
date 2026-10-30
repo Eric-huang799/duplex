@@ -450,7 +450,8 @@ function setup(): void {
     pointHint
   }
 
-  status.addEventListener('click', () => {
+  status.addEventListener('click', (e) => {
+    if (!e.isTrusted) return
     ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'statusClick' })
   })
 
@@ -573,7 +574,7 @@ function setup(): void {
       // key is ignored while the page editor has focus so keys like F2 keep
       // working there; modifier combos always fire.
       if (hotkeys.length > 0) {
-        const binding = hotkeys.find((b) => matchesBinding(b, e))
+        const binding = e.isTrusted ? hotkeys.find((b) => matchesBinding(b, e)) : undefined
         if (binding && (!isEditableEventTarget(e) || bindingHasModifier(binding))) {
           e.preventDefault()
           e.stopPropagation()

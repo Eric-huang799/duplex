@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import * as childProcess from 'node:child_process'
-import { normalizeUrl, resolveAddress } from '../src/shared/url'
+import { isAllowedNavigationUrl, normalizeUrl, resolveAddress } from '../src/shared/url'
 import { searchUrl } from '../src/shared/search'
 import { buildAnnotationText, type AnnotateInfo } from '../src/main/annotations'
 import { MirrorStore } from '../src/main/mirror'
@@ -81,12 +81,23 @@ describe('resolveAddress (URL vs search)', () => {
 
   it('keeps protocols, IPs, and localhost as URLs', () => {
     expect(resolveAddress('https://a.com')).toEqual({ kind: 'url', url: 'https://a.com' })
-    expect(resolveAddress('file:///C:/x.html')).toEqual({ kind: 'url', url: 'file:///C:/x.html' })
+    // file: is not a navigation target for the AI-controlled browser
+    expect(resolveAddress('file:///C:/x.html')).toEqual({ kind: 'search', query: 'file:///C:/x.html' })
     expect(resolveAddress('localhost:3000')).toEqual({ kind: 'url', url: 'http://localhost:3000' })
     expect(resolveAddress('127.0.0.1:8080/x')).toEqual({
       kind: 'url',
       url: 'http://127.0.0.1:8080/x'
     })
+  })
+
+  it('only allows http(s) and about:blank as navigation targets', () => {
+    expect(isAllowedNavigationUrl('https://chatgpt.com/')).toBe(true)
+    expect(isAllowedNavigationUrl('http://127.0.0.1:3080/')).toBe(true)
+    expect(isAllowedNavigationUrl('about:blank')).toBe(true)
+    expect(isAllowedNavigationUrl('file:///C:/Users/x/.cobrowse/endpoint.json')).toBe(false)
+    expect(isAllowedNavigationUrl('javascript:alert(1)')).toBe(false)
+    expect(isAllowedNavigationUrl('data:text/html,hi')).toBe(false)
+    expect(isAllowedNavigationUrl('not a url')).toBe(false)
   })
 })
 

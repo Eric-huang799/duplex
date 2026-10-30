@@ -37,6 +37,12 @@ export const toolDefs: ToolDef[] = [
     input: { tabId: z.number().describe('Tab id from list_tabs') }
   },
   {
+    name: 'resume_tab',
+    description:
+      'Clear a stale tab lock ([LOCKED]) or a human-takeover pause ([PAUSED]) so AI work can continue on that tab. Use after those errors; it does not touch the page.',
+    input: { tabId: z.number().describe('Tab id from list_tabs') }
+  },
+  {
     name: 'navigate',
     description: 'Navigate a tab (default: active tab) to a URL.',
     input: {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CollaborationCoordinator } from '../src/main/collaboration'
+import { CollaborationCoordinator, PAGE_READ_TOOLS } from '../src/main/collaboration'
 
 describe('task tab coordination', () => {
   it('keeps the closed task binding until another tab is explicitly selected', () => {
@@ -48,12 +48,27 @@ describe('task tab coordination', () => {
     expect(order).toEqual(['first', 'other tab', 'done', 'second'])
   })
 
-  it('rejects a competing writer and allows it after the task releases its tab', async () => {
+  it('locks the tab while a writer is running, then frees it automatically', async () => {
     const c = new CollaborationCoordinator()
-    await c.run(1, 'a', true, async () => undefined)
-    await expect(c.run(1, 'b', true, async () => undefined)).rejects.toThrow('其他 AI')
-    c.release('a')
+    let finish!: () => void
+    const running = c.run(1, 'a', true, () => new Promise<void>((r) => { finish = r }))
+    await Promise.resolve()
+    await Promise.resolve()
+    await expect(c.run(1, 'b', true, async () => undefined)).rejects.toThrow('[LOCKED]')
+    finish()
+    await running
+    // the owner is released when the run settles: no explicit release() needed
     await c.run(1, 'b', true, async () => undefined)
+    expect(c.snapshot().tabs.find((t) => t.tabId === 1)?.owner ?? null).toBeNull()
+  })
+
+  it('marks human-taken tabs as [PAUSED] and keeps switch_tab read-only', async () => {
+    const c = new CollaborationCoordinator()
+    c.humanActivity(1, 'pointer')
+    await expect(c.run(1, 'a', true, async () => undefined)).rejects.toThrow('[PAUSED]')
+    c.resume(1)
+    await c.run(1, 'a', true, async () => undefined)
+    expect(PAGE_READ_TOOLS.has('switch_tab')).toBe(true)
   })
 
   it('does not execute a queued action cancelled while waiting', async () => {

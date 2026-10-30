@@ -17,6 +17,8 @@ export interface HttpServerDeps {
   mirror: MirrorStore
   tabs: TabManager
   executeTool: ToolExecutor
+  /** Abort in-flight operations owned by a caller (client disconnected). */
+  abortCaller?: (caller: string) => void
   sessionBus: SessionBus
   /** Debug helper: capture the browser UI window, returns the written file path. */
   captureUI?: () => Promise<string | null>
@@ -571,6 +573,15 @@ async function handleMcpPost(
     enableJsonResponse: true
   })
   res.on('close', () => {
+    // Client went away before the response finished: stop the tool that is
+    // still touching the page, otherwise a retry would act twice.
+    if (!res.writableEnded) {
+      try {
+        deps.abortCaller?.(callerID)
+      } catch {
+        /* best effort */
+      }
+    }
     void transport.close().catch(() => undefined)
     void server.close().catch(() => undefined)
   })

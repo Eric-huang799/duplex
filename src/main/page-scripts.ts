@@ -339,6 +339,7 @@ export function buildQueryScript(selector: string, limit: number): string {
     let cls = [];
     if (typeof el.className === 'string') cls = el.className.split(/\\s+/).filter(Boolean).slice(0, 3);
     const isField = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+    const isPassword = el instanceof HTMLInputElement && el.type === 'password';
     return {
       tag: el.tagName.toLowerCase(),
       id: el.id || undefined,
@@ -347,7 +348,7 @@ export function buildQueryScript(selector: string, limit: number): string {
       text: (el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 120) || undefined,
       href: el.getAttribute && el.getAttribute('href') || undefined,
       src: el.getAttribute && el.getAttribute('src') || undefined,
-      value: isField ? String(el.value).slice(0, 80) : undefined,
+      value: isPassword ? (el.value ? '[redacted ' + String(el.value).length + ' chars]' : '') : isField ? String(el.value).slice(0, 80) : undefined,
       rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
       visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none'
     };

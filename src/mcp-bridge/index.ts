@@ -18,14 +18,14 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { readEndpoint } from '../shared/endpoint'
+import { cobrowseDir, readEndpoint } from '../shared/endpoint'
 import { toolDefs } from '../shared/tools'
 import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
-const VERSION = '0.2.10'
-const CALLER_ID = `bridge:${process.pid}:${crypto.randomUUID()}`
+const VERSION = '0.2.11'
+const CALLER_ID = `bridge:${crypto.createHash('sha1').update(cobrowseDir()).digest('hex').slice(0, 12)}`
 
 /**
  * When the bridge runs from an installed (packaged) app it lives inside

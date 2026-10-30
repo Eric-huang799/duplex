@@ -680,7 +680,7 @@ export default function App(): React.JSX.Element {
             {collaboration.tabs.filter((tab) => tab.owner || tab.paused).map((state) => (
               <span key={state.tabId}>
                 {t('app.taskTab', { id: state.tabId })} · {state.paused ? `${t('app.humanTakeover')}${state.reason ? ` (${state.reason})` : ''}` : state.scrolling ? t('app.humanReading') : t('app.aiProcessing')}
-                {state.paused && <button onClick={() => { void window.cobrowse.collaborationResume(state.tabId).then((r) => { if (!r.ok) showToast(r.error || t('app.resumeFailed')) }) }}>{t('app.resumeTabAi')}</button>}
+                {(state.paused || state.owner) && <button onClick={() => { void window.cobrowse.collaborationResume(state.tabId).then((r) => { if (!r.ok) showToast(r.error || t('app.resumeFailed')) }) }}>{t('app.resumeTabAi')}</button>}
               </span>
             ))}
           </div>
