@@ -2310,5 +2310,101 @@
   "overlay.tooSmall": [
     "框选太小，请拖大一点",
     "Selection too small — drag a larger area"
+  ],
+  "perm.bar.title": [
+    "{origin} 想使用你的 {what}",
+    "{origin} wants to use your {what}"
+  ],
+  "perm.bar.fromFrame": [
+    "（内嵌自 {top}）",
+    "(embedded in {top})"
+  ],
+  "perm.bar.allowOnce": [
+    "仅本次允许",
+    "Allow once"
+  ],
+  "perm.bar.allowAlways": [
+    "本次及以后允许",
+    "Always allow"
+  ],
+  "perm.bar.deny": [
+    "拒绝",
+    "Block"
+  ],
+  "perm.bar.ephemeral": [
+    "隐身模式下不会记住这个选择",
+    "Incognito: this choice is not remembered"
+  ],
+  "perm.cat.fullscreen": [
+    "全屏",
+    "full screen"
+  ],
+  "perm.cat.drm": [
+    "受保护媒体（DRM）",
+    "protected media (DRM)"
+  ],
+  "perm.cat.storage": [
+    "站点存储",
+    "site storage"
+  ],
+  "perm.cat.wake": [
+    "保持屏幕唤醒",
+    "keep the screen awake"
+  ],
+  "perm.cat.print": [
+    "打印与窗口管理",
+    "printing and window management"
+  ],
+  "perm.cat.pointer": [
+    "指针锁定",
+    "pointer lock"
+  ],
+  "perm.cat.clipboardWrite": [
+    "剪贴板写入",
+    "clipboard write"
+  ],
+  "perm.cat.media": [
+    "摄像头和麦克风",
+    "camera and microphone"
+  ],
+  "perm.cat.notifications": [
+    "通知",
+    "notifications"
+  ],
+  "perm.cat.geolocation": [
+    "位置",
+    "your location"
+  ],
+  "perm.cat.clipboardRead": [
+    "剪贴板内容",
+    "clipboard contents"
+  ],
+  "perm.cat.displayCapture": [
+    "屏幕共享",
+    "screen sharing"
+  ],
+  "perm.cat.fileSystem": [
+    "本地文件",
+    "local files"
+  ],
+  "perm.cat.sensors": [
+    "传感器与本地字体",
+    "sensors and local fonts"
+  ],
+  "perm.cat.openExternal": [
+    "打开外部应用",
+    "open an external app"
+  ],
+  "perm.cat.device": [
+    "USB、串口等硬件",
+    "USB, serial and other devices"
+  ],
+  "perm.cat.localNetwork": [
+    "内网访问",
+    "local network access"
+  ],
+  "perm.cat.other": [
+    "其他权限",
+    "other permissions"
   ]
 }

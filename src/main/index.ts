@@ -75,6 +75,7 @@ import { SessionBus } from './session-bus'
 import { AgentRuntime } from './agent/runtime'
 import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
+import { createSitePermissionHandlers } from './agent/permission-tools'
 import { importSkillFromFolder, listSkills, removeSkill, setSkillEnabled } from './agent/skills'
 import { importStatus } from './agent/auth-import'
 import { parseNetscapeBookmarks, scanLocalBrowserBookmarks } from './bookmark-import'
@@ -121,6 +122,9 @@ import { duplexShimEnv, ensureOpenShim, extractHttpUrl } from './open-shim'
 import { CollaborationCoordinator, currentCaller, PAGE_READ_TOOLS, withCaller } from './collaboration'
 import { configurePlaywright, closePlaywright } from './playwright-browser'
 import { BrowserSessionStore } from './browser-session'
+import { PermissionStore } from './permission-store'
+import { PermissionRuntime, type PermissionPrompt, type PromptAnswer } from './permission-runtime'
+import { originOfUrl } from '../shared/permissions'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
@@ -143,19 +147,78 @@ function isAppRendererUrl(target: string): boolean {
  * Pages get no camera/mic/notification/geolocation by default. Clipboard write is
  * allowed only for the app window (copy-link / copy-command buttons).
  */
-function denyPagePermissions(ses: Session): void {
-  const clipboardWrite = (permission: string): boolean =>
-    permission === 'clipboard-write' || permission === 'clipboard-sanitized-write'
-  const isAppWindow = (wc: WebContents | null): boolean => wc != null && wc === win?.webContents
+// ─── 站点权限（见 docs/design-site-permissions.md）─────────────────────────
+// 旧实现是"一律拒绝"：全屏、DRM、打印、SSO 存储全被砍掉，且用户无处放行。
+// 现在交给策略内核按类别分级，只有 `ask` 的类别才打扰用户。
+let permissions: PermissionStore | null = null
+let permissionRuntime: PermissionRuntime | null = null
+/** 渲染层是否已声明支持权限提示条。没有它就不弹窗，直接拒绝（fail-closed）。 */
+let permissionUiReady = false
+/** 等待用户回答的询问：id → 结算函数。 */
+const pendingPermissionPrompts = new Map<number, (answer: PromptAnswer) => void>()
+
+/** 把站点权限策略挂到一个 Session 上（隐身分区传 ephemeral: true，规则不落盘）。 */
+function attachPermissionHandlers(ses: Session, ephemeral = false): void {
+  if (!permissionRuntime) {
+    // 初始化顺序被打乱时的兜底：Electron 在"没有处理器"时并不会全拒，
+    // 因此这里显式全拒，绝不把默认值当成安全默认。
+    try {
+      ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+      ses.setPermissionCheckHandler(() => false)
+    } catch {
+      /* session may be gone */
+    }
+    logLine('[permissions] 运行时未就绪，已临时全部拒绝')
+    return
+  }
+  permissionRuntime.attach(ses, { ephemeral })
+}
+
+/** 询问用户。没有提示条 / 窗口不可用 → 立即拒绝，绝不让请求悬着。 */
+function askPermission(prompt: PermissionPrompt): Promise<PromptAnswer> {
+  return new Promise<PromptAnswer>((resolve) => {
+    if (!permissionUiReady || !win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      resolve('deny')
+      return
+    }
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const finish = (answer: PromptAnswer): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      pendingPermissionPrompts.delete(prompt.id)
+      try {
+        win?.webContents.send('permission:cancel', { id: prompt.id })
+      } catch {
+        /* window is going away */
+      }
+      resolve(answer)
+    }
+    pendingPermissionPrompts.set(prompt.id, finish)
+    timer = setTimeout(() => finish('deny'), 30_000)
+    timer.unref?.()
+    try {
+      win.webContents.send('permission:request', {
+        ...prompt,
+        ...(permissionRuntime ? permissionRuntime.describe(prompt.category) : {})
+      })
+    } catch {
+      finish('deny')
+    }
+  })
+}
+
+/** 顶层页面的 origin，用于提示条里显示"谁在要"（跨源 iframe 时与请求方不同）。 */
+function topOriginOfWebContents(wc: WebContents | null): string | null {
+  if (!wc) return null
+  const tabId = findTabIdBySender(wc)
+  if (tabId == null) return originOfUrl(wc.getURL())
   try {
-    ses.setPermissionRequestHandler((wc, permission, callback) => {
-      callback(clipboardWrite(permission) && isAppWindow(wc))
-    })
-    ses.setPermissionCheckHandler((wc, permission) => {
-      return clipboardWrite(permission) && isAppWindow(wc)
-    })
+    const tab = tabs?.getTab(tabId)
+    return tab ? originOfUrl(tab.view.webContents.getURL()) : null
   } catch {
-    /* session may be gone */
+    return null
   }
 }
 
@@ -264,6 +327,8 @@ const confirmScript = (payload: {
     }, 120_000)
   })
 const skillHandlers = createSkillToolHandlers(confirmScript)
+/** 站点权限工具：内置 agent 专用；放宽高危类别时会走 confirmScript 让用户点头。 */
+const permHandlers = createSitePermissionHandlers(confirmScript, () => permissions)
 
 const fsHandlers = createFsToolHandlers((payload) =>
   new Promise<boolean>((resolve) => {
@@ -945,6 +1010,25 @@ async function start(): Promise<void> {
   app.setAppUserModelId('Duplex')
   browserData = new BrowserDataStore(cobrowseDir())
   browserSession = new BrowserSessionStore(cobrowseDir())
+  permissions = new PermissionStore(cobrowseDir())
+  permissionRuntime = new PermissionRuntime({
+    store: permissions,
+    tabIdOf: (wc) => (wc ? findTabIdBySender(wc) : null),
+    topOriginOf: (wc) => topOriginOfWebContents(wc),
+    isAiPaused: () => isAiPaused(),
+    isTabDriven: (tabId) =>
+      tabId != null &&
+      collaboration.snapshot().tabs.some((state) => state.tabId === tabId && state.owner != null),
+    // 只在窗口可见、且请求来自当前标签时打扰用户（后台标签不许刷弹窗）
+    canPrompt: (tabId) =>
+      permissionUiReady &&
+      !!win &&
+      !win.isDestroyed() &&
+      win.isVisible() &&
+      (tabId == null || tabId === tabs?.activeId),
+    ask: askPermission,
+    log: (line) => logLine(line)
+  })
   configurePlaywright(app.getPath('userData'))
   downloads = new DownloadManager(
     session.fromPartition('persist:cobrowse'),
@@ -1050,7 +1134,7 @@ async function start(): Promise<void> {
   // into the built-in agent path; they go through the same emergency-stop gate
   // and run inside an abortable operation context
   const executeWithSkills: ToolExecutor = async (name, args) => {
-    const h = skillHandlers[name] ?? fsHandlers[name]
+    const h = skillHandlers[name] ?? fsHandlers[name] ?? permHandlers[name]
     if (!h) return withCaller('builtin', () => executeWithWake(name, args))
     if (isAiPaused()) {
       logLine('[takeover] AI paused (emergency stop); tool call rejected')
@@ -1449,10 +1533,12 @@ function createWindow(): void {
         /* window is going away */
       }
     },
-    (tab, info) => showPageContextMenu(tab, info)
+    (tab, info) => showPageContextMenu(tab, info),
+    // 隐身标签用各自的内存分区：挂同一套策略，但规则不落盘
+    (ses) => attachPermissionHandlers(ses, true)
   )
-  denyPagePermissions(session.defaultSession)
-  denyPagePermissions(session.fromPartition('persist:cobrowse'))
+  attachPermissionHandlers(session.defaultSession)
+  attachPermissionHandlers(session.fromPartition('persist:cobrowse'))
   restoringBrowserSession = true
   const savedBrowser = browserSession.read()
   if (savedBrowser?.tabs.length) {
@@ -1740,6 +1826,31 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
 }
 
 function setupIpc(): void {
+  // 渲染层的权限提示条挂载完成后调用一次；在此之前主进程一律不弹窗（fail-closed）
+  ipcMain.handle('permission:ui-ready', () => {
+    permissionUiReady = true
+    return { ok: true }
+  })
+  ipcMain.handle('permission:respond', (_e, payload: { id?: number; answer?: string }) => {
+    const finish = pendingPermissionPrompts.get(Number(payload?.id))
+    if (!finish) return { ok: false }
+    const raw = payload?.answer
+    finish(raw === 'allow' || raw === 'allow-session' ? raw : 'deny')
+    return { ok: true }
+  })
+  ipcMain.handle('site-permissions:get', () => ({
+    global: permissions?.globalDecisions() ?? {},
+    origins: (permissions?.list() ?? []).map((rule) => ({
+      origin: rule.origin,
+      decisions: rule.decisions,
+      source: rule.source,
+      updatedAt: rule.updatedAt
+    }))
+  }))
+  ipcMain.handle('site-permissions:clear', () => {
+    permissions?.clearAll()
+    return { ok: true }
+  })
   ipcMain.handle('ui:ready', () => {
     const state = {
       tabs: tabs?.list() ?? [],
@@ -3005,6 +3116,8 @@ app.on('activate', () => {
 app.on('will-quit', () => {
   browserSession?.flushNow()
   browserData?.flushNow()
+  // agent 会话是 800ms 防抖落盘：不在这里 flush，退出瞬间的最后一条消息就丢了
+  agentRuntime?.flushPersistence()
   void closePlaywright()
   for (const entry of liveChildren) {
     killChildTree(entry.child)

@@ -1,0 +1,78 @@
+/* 站点权限提示条：挂在应用窗口顶部、浮在页面视图之上。
+   颜色全部走主题变量并带兜底值，深色/浅色主题都能用。 */
+.perm-bar {
+  position: fixed;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(760px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-raised, #232a36);
+  color: var(--text-strong, #f2f4f8);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  font-size: 12.5px;
+}
+
+.perm-bar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4a9eff;
+  flex: 0 0 auto;
+}
+
+/* 高危类别（摄像头/麦克风、屏幕共享、设备…）给一个更醒目的标记 */
+.perm-bar-dot.warn {
+  background: #ff9f43;
+}
+
+.perm-bar-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.perm-bar-note {
+  margin-left: 6px;
+  color: var(--text-faint, #9aa4b2);
+  font-size: 11.5px;
+}
+
+.perm-bar-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.perm-btn {
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+}
+
+.perm-btn.primary {
+  background: #4a9eff;
+  border-color: #4a9eff;
+  color: #08131f;
+  font-weight: 600;
+}
+
+.perm-btn.ghost {
+  color: var(--text-faint, #9aa4b2);
+}
+
+.perm-btn:hover {
+  filter: brightness(1.12);
+}

@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView } from 'electron'
+import { BrowserWindow, WebContentsView, type Session } from 'electron'
 import type { ContentBounds, LoadErrorInfo, TabInfo } from '../shared/protocol'
 import { matchesBinding } from '../shared/hotkeys'
 import { DEFAULT_SHORTCUTS, type ShortcutAction } from '../shared/shortcuts'
@@ -64,7 +64,9 @@ export class TabManager {
     private onMetadata: (url: string, title: string, favicon?: string, incognito?: boolean) => void,
     private onLoadError?: (info: LoadErrorInfo) => void,
     private onFindResult?: (result: { tabId: number; matches: number; activeMatch: number }) => void,
-    private onPageContextMenu?: (tab: Tab, info: PageContextMenuInfo) => void
+    private onPageContextMenu?: (tab: Tab, info: PageContextMenuInfo) => void,
+    /** 隐身标签的独立内存分区交给主进程挂权限策略（规则不落盘）。 */
+    private onEphemeralSession?: (ses: Session) => void
   ) {
     // Chromium can leave a WebContentsView "hidden" (suspended rendering,
     // rAF stopped) after the window was minimized/occluded. Nudge the active
@@ -138,6 +140,7 @@ export class TabManager {
     this.win.contentView.addChildView(view)
     view.setBounds(this.bounds)
     view.setVisible(false)
+    if (incognito) this.onEphemeralSession?.(view.webContents.session)
     this.wireEvents(tab)
 
     view.webContents.setWindowOpenHandler(({ url: openUrl }) => {

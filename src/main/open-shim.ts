@@ -32,11 +32,21 @@ const SHIM_JS = `#!/usr/bin/env node
 const fs=require('fs'),os=require('os'),path=require('path')
 const url=(process.argv.slice(2).find(a=>/^https?:\\/\\//i.test(a))||'').trim()
 if(!url) process.exit(0)
-try{
-  const ep=JSON.parse(fs.readFileSync(path.join(os.homedir(),'.cobrowse','endpoint.json'),'utf8'))
-  fetch('http://127.0.0.1:'+ep.port+'/api/open',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+ep.token},body:JSON.stringify({url})}).catch(()=>{})
-}catch(e){}
-process.exit(0)
+const endpointFile=process.env.DUPLEX_DATA_DIR
+  ?path.join(process.env.DUPLEX_DATA_DIR,'endpoint.json')
+  :path.join(os.homedir(),'.cobrowse','endpoint.json')
+;(async()=>{
+  try{
+    const ep=JSON.parse(fs.readFileSync(endpointFile,'utf8'))
+    const ac=new AbortController()
+    const timer=setTimeout(()=>ac.abort(),3000)
+    // MUST await: process.exit() on the next tick would kill the request before
+    // the socket is even connected (FB-001 silently did nothing).
+    await fetch('http://127.0.0.1:'+ep.port+'/api/open',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+ep.token},body:JSON.stringify({url}),signal:ac.signal})
+    clearTimeout(timer)
+  }catch(e){}
+  process.exit(0)
+})()
 `
 
 let cachedDir: string | null = null

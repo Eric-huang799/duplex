@@ -11,6 +11,8 @@ import { SidePanel, type PanelMode } from './components/SidePanel'
 import { StartPage } from './components/StartPage'
 import { BrowserPanel } from './components/BrowserPanel'
 import type { BrowserDataSnapshot, DownloadRecord } from '../../shared/protocol'
+import { PermissionBar } from './components/PermissionBar'
+import type { PermissionAnswer, PermissionAskRequest } from '../../shared/permissions'
 
 export interface LocalMessage {
   id: string
@@ -59,6 +61,26 @@ function emergencyStopText(t: TFn, s: EmergencyStopEvent): string {
 
 export default function App(): React.JSX.Element {
   const { t } = useI18n()
+
+  // 站点权限提示条：主进程只在决策为 ask 时推过来，这里只负责显示与回传答案。
+  // origin 一律用主进程给的值，渲染层不推断、不拼接。
+  const [permAsk, setPermAsk] = useState<PermissionAskRequest | null>(null)
+  useEffect(() => {
+    const offReq = window.cobrowse.onPermissionRequest((req) => setPermAsk(req))
+    const offCancel = window.cobrowse.onPermissionCancel(({ id }) =>
+      setPermAsk((cur) => (cur && cur.id === id ? null : cur))
+    )
+    // 声明"提示条已就绪"：主进程在此之前一律不弹窗（fail-closed）
+    void window.cobrowse.permissionUiReady()
+    return () => {
+      offReq()
+      offCancel()
+    }
+  }, [])
+  const answerPermission = useCallback((id: number, answer: PermissionAnswer) => {
+    setPermAsk((cur) => (cur && cur.id === id ? null : cur))
+    void window.cobrowse.respondPermission(id, answer)
+  }, [])
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [browserData, setBrowserData] = useState<BrowserDataSnapshot>({ bookmarks: [], bookmarkFolders: [], history: [], downloads: [] })
@@ -642,6 +664,7 @@ export default function App(): React.JSX.Element {
 
   return (
     <div className="app">
+      {permAsk && <PermissionBar request={permAsk} onAnswer={answerPermission} />}
       <div className="left-col">
         <TabBar
           tabs={tabs}

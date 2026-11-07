@@ -286,6 +286,39 @@ export const toolDefs: ToolDef[] = [
       timeout_ms: z.number().optional().describe('Timeout in ms (default 120000, max 600000)')
     },
     internal: true
+  },
+  {
+    name: 'list_site_permissions',
+    description:
+      'List the per-site permission allowlist: global category overrides plus every origin rule with its source (user or agent) and last update time. Read this before changing anything, so you know what the user already decided.',
+    input: {},
+    internal: true
+  },
+  {
+    name: 'set_site_permission',
+    description:
+      'Set one permission category for one origin. Tightening (deny/ask) applies immediately. Loosening a high-risk category (media, display-capture, file-system, device, local-network) requires the user to confirm first - never assume approval, and never re-ask after a refusal. Only bare origins are accepted (scheme://host[:port], no path or query).',
+    input: {
+      origin: z.string().describe('Bare origin, e.g. https://meeting.tencent.com'),
+      category: z
+        .string()
+        .describe('Permission category, e.g. media / notifications / geolocation / fullscreen'),
+      decision: z.enum(['allow', 'ask', 'deny']).describe('allow = grant, ask = prompt, deny = block')
+    },
+    internal: true
+  },
+  {
+    name: 'remove_site_permission',
+    description:
+      'Remove permission rules for an origin. Omit category to clear every rule for that origin. Removing rules is always safe and needs no confirmation.',
+    input: {
+      origin: z.string().describe('Bare origin'),
+      category: z
+        .string()
+        .optional()
+        .describe('Only this category (omit to clear all rules for the origin)')
+    },
+    internal: true
   }
 ]
 

@@ -39,9 +39,12 @@ export class BrowserSessionStore {
   }
 
   update(tabs: TabInfo[], activeId: number | null): void {
+    // 隐身标签不跨重启：URL 一旦落盘就违背了隐身承诺，而且重启后会变成
+    // 普通持久标签，后续导航还会进历史。这里直接把它们排除掉。
+    const persistable = tabs.filter((tab) => tab.incognito !== true)
     this.current = {
-      tabs: tabs.map((tab) => ({ url: /^https?:\/\//i.test(tab.url) ? tab.url : 'about:blank' })),
-      activeIndex: Math.max(0, tabs.findIndex((tab) => tab.id === activeId))
+      tabs: persistable.map((tab) => ({ url: /^https?:\/\//i.test(tab.url) ? tab.url : 'about:blank' })),
+      activeIndex: Math.max(0, persistable.findIndex((tab) => tab.id === activeId))
     }
     if (!this.timer) this.timer = setTimeout(() => this.flushNow(), 500)
   }

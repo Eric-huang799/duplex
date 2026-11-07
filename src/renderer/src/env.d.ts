@@ -1,4 +1,5 @@
 import type { BrowserDataSnapshot, ChatSendResult, CollaborationState, ContentBounds, DownloadRecord, ExternalSessionState, LoadErrorInfo, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
+import type { PermissionAnswer, PermissionAskRequest } from '../../shared/permissions'
 import type { LlmProtocol } from '../../shared/llm'
 
 interface CobrowseApi {
@@ -56,6 +57,21 @@ interface CobrowseApi {
   onLoadError(cb: (info: LoadErrorInfo) => void): () => void
   setPanelMode(mode: 'opencode' | 'agent' | 'external'): Promise<{ ok: boolean }>
   onMirror(cb: (ev: MirrorEvent) => void): () => void
+  /** 告诉主进程提示条已就绪；在此之前主进程不会弹任何权限询问。 */
+  permissionUiReady(): Promise<{ ok: boolean }>
+  onPermissionRequest(cb: (req: PermissionAskRequest) => void): () => void
+  onPermissionCancel(cb: (payload: { id: number }) => void): () => void
+  respondPermission(id: number, answer: PermissionAnswer): Promise<{ ok: boolean }>
+  sitePermissions(): Promise<{
+    global: Record<string, string>
+    origins: Array<{
+      origin: string
+      decisions: Record<string, string>
+      source: string
+      updatedAt: number
+    }>
+  }>
+  sitePermissionsClear(): Promise<{ ok: boolean }>
   setContentBounds(b: ContentBounds): void
   setChromeOverlay(id: string, open: boolean): void
   tabAction(a: { type: string; url?: string; tabId?: number; value?: number }): Promise<unknown>

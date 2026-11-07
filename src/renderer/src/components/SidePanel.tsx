@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type {
   MirrorAnnotationEvent,
   MirrorEvent,
@@ -125,6 +125,22 @@ function MirrorItem({ ev, pendingToolId }: { ev: MirrorEvent; pendingToolId?: nu
   }
   return null
 }
+
+/**
+ * 流式快照每来一次都会生成**新的** `ev.id`，而 `partID` 才是"同一条消息"的
+ * 稳定身份。用 id 当 key 会让 React 每次卸载重建这个组件——展开的工具卡自动
+ * 收起、思考块闪断、整段 Markdown 重新解析。长会话里这就是"卡"的主要来源。
+ */
+function mirrorKey(ev: MirrorEvent): string {
+  const partID = (ev as { partID?: string }).partID
+  return partID ? `${ev.kind}:${partID}` : `${ev.kind}:${ev.id}`
+}
+
+/**
+ * 未变化的条目 `ev` 引用保持不变（`mergeMirror` 只替换命中的那一条），
+ * 所以 memo 能真正跳过它们的重新渲染（含 Markdown 重解析）。
+ */
+const MirrorItemRow = memo(MirrorItem)
 
 export function SidePanel({
   width,
@@ -767,7 +783,7 @@ export function SidePanel({
               </div>
             )}
             {agentVisible.map((ev) => (
-              <MirrorItem key={ev.id} ev={ev} pendingToolId={pendingToolId} />
+              <MirrorItemRow key={mirrorKey(ev)} ev={ev} pendingToolId={pendingToolId} />
             ))}
           </>
         ) : (
@@ -780,7 +796,7 @@ export function SidePanel({
               </div>
             )}
             {visibleEvents.map((ev) => (
-              <MirrorItem key={ev.id} ev={ev} pendingToolId={pendingToolId} />
+              <MirrorItemRow key={mirrorKey(ev)} ev={ev} pendingToolId={pendingToolId} />
             ))}
             {localMsgs.map((lm) => (
               <div key={lm.id} className="msg user pending-send">

@@ -189,7 +189,9 @@ export function saveAgentSessions(sessions: AgentSession[]): void {
     const trimmed = trimSessionsForSave(sessions)
     refreshBackup(file)
     atomicWrite(file, JSON.stringify(trimmed))
-  } catch {
-    /* persistence must never crash the agent */
+  } catch (error) {
+    // Disk-full / permission / lock failures used to be swallowed whole: the
+    // user saw a healthy UI and lost the session on the next restart.
+    console.error('[agent-store] 会话保存失败：', (error as Error)?.message ?? error)
   }
 }

@@ -24,7 +24,7 @@ import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
-const VERSION = '0.2.11'
+const VERSION = '0.3.0'
 const CALLER_ID = `bridge:${crypto.createHash('sha1').update(cobrowseDir()).digest('hex').slice(0, 12)}`
 
 /**

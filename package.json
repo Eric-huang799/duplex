@@ -1,6 +1,6 @@
 {
   "name": "duplex",
-  "version": "0.2.11",
+  "version": "0.3.0",
   "private": true,
   "description": "Duplex - one browser shared by a human and an AI: visual for the human, source-level for the AI",
   "main": "./out/main/index.js",
@@ -15,6 +15,8 @@
     "test": "vitest run",
     "smoke": "node tests/smoke.mjs",
     "predist": "npm run build:bridge && npm run build",
+    "predist:mac": "npm run build:bridge && npm run build",
+    "predist:linux": "npm run build:bridge && npm run build",
     "dist": "electron-builder --win --publish never",
     "dist:mac": "electron-builder --mac --publish never",
     "dist:linux": "electron-builder --linux --publish never"
@@ -47,6 +49,10 @@
     "directories": {
       "output": "release"
     },
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
     "files": [
       "out/**/*",
       "package.json",

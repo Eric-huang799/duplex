@@ -18,6 +18,8 @@ export class CollaborationCoordinator {
   private bindings = new Map<string, number>()
   private states = new Map<number, TabState>()
   private tails = new Map<number, Promise<unknown>>()
+  /** 每个标签上正在运行的写操作数量（同一 caller 重入时不至于过早清 owner）。 */
+  private depths = new Map<number, number>()
   private scrollTimer: ReturnType<typeof setTimeout> | null = null
   onChanged: ((state: CollaborationState) => void) | null = null
 
@@ -78,9 +80,16 @@ export class CollaborationCoordinator {
     }
     check()
     if (!mutates) return fn()
+    // Owner release must NOT depend on being the current tail: a second caller
+    // queuing behind this run replaces `tails`, and the old code then skipped
+    // its entire cleanup — leaving `owner` set forever ([LOCKED] for everyone).
+    // Track nesting depth so same-caller overlaps do not clear early either.
+    let owned = false
     const run = (this.tails.get(tabId) ?? Promise.resolve()).catch(() => undefined).then(async () => {
       check()
       this.state(tabId).owner = caller
+      this.depths.set(tabId, (this.depths.get(tabId) ?? 0) + 1)
+      owned = true
       this.changed()
       return fn()
     })
@@ -88,10 +97,13 @@ export class CollaborationCoordinator {
     try {
       return await run
     } finally {
-      if (this.tails.get(tabId) === run) {
-        this.tails.delete(tabId)
+      if (this.tails.get(tabId) === run) this.tails.delete(tabId)
+      if (owned) {
+        const left = Math.max(0, (this.depths.get(tabId) ?? 1) - 1)
+        if (left === 0) this.depths.delete(tabId)
+        else this.depths.set(tabId, left)
         const state = this.state(tabId)
-        if (state.owner === caller) {
+        if (left === 0 && state.owner === caller) {
           state.owner = null
           this.changed()
         }

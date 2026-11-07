@@ -89,12 +89,33 @@ export class BrowserDataStore {
    * `browser-data.json.corrupt-<stamp>` so it is kept for inspection and the
    * next write cannot silently reuse it.
    */
+  /**
+   * 读失败（磁盘 EIO / 被占 / ACL 只写 / 主文件被删而备份还在）**不等于**全新安装。
+   * 这里必须先把备份救回来；连备份都没有时进入只读降级并拒绝写盘——
+   * 否则下一次写盘就会用"空库 + 一条新记录"覆盖掉真实数据，第二次写盘
+   * 再把这个近空的主文件复制进 .bak，书签/历史/下载就永久没了。
+   */
+  private degraded = false
+  private degradedReason: string | null = null
+  private degradedLogged = false
+
   private load(): BrowserData {
     const file = this.file
     let raw: string
     try {
       raw = fs.readFileSync(file, 'utf8')
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code ?? 'unknown'
+      const recovered = this.loadBackup(`读取 ${path.basename(file)} 失败（${code}）`)
+      if (recovered) return recovered
+      // 只有"文件确实不存在"才算全新安装；其余一律降级，绝不空库覆盖。
+      if (code === 'ENOENT') return empty()
+      this.degraded = true
+      this.degradedReason = code
+      this.degradedLogged = true
+      console.error(
+        `[browser-data] 无法读取 ${file}（${code}）且备份不可用：进入只读降级，本次运行不再写盘，以免覆盖现有数据`
+      )
       return empty()
     }
     try {
@@ -102,16 +123,42 @@ export class BrowserDataStore {
     } catch {
       /* the main file is corrupt: try the backup */
     }
+    const recovered = this.loadBackup('browser-data.json 解析失败')
+    if (recovered) return recovered
+    this.quarantineCorrupt(file)
+    return empty()
+  }
+
+  /** 从 .bak 恢复；不可用时返回 null（由调用方决定降级还是留档）。 */
+  private loadBackup(reason: string): BrowserData | null {
     try {
       const data = this.normalize(
-        JSON.parse(fs.readFileSync(`${file}.bak`, 'utf8')) as Partial<BrowserData>
+        JSON.parse(fs.readFileSync(`${this.file}.bak`, 'utf8')) as Partial<BrowserData>
       )
-      console.error('[browser-data] browser-data.json 解析失败，已回退读取 browser-data.json.bak')
+      console.error(`[browser-data] ${reason}，已从 browser-data.json.bak 恢复`)
       return data
     } catch {
-      this.quarantineCorrupt(file)
-      return empty()
+      return null
     }
+  }
+
+  /** 只读降级中（读不到现有数据，本次运行不会写盘）。用于诊断与测试。 */
+  isDegraded(): boolean {
+    return this.degraded
+  }
+
+  degradedCause(): string | null {
+    return this.degradedReason
+  }
+
+  /** 降级期间拒绝一切写盘，并在第一次拒绝时记一行日志。 */
+  private refuseWhenDegraded(where: string): boolean {
+    if (!this.degraded) return false
+    if (!this.degradedLogged) {
+      this.degradedLogged = true
+      console.error(`[browser-data] 只读降级中（${this.degradedReason ?? 'unknown'}），跳过${where}`)
+    }
+    return true
   }
 
   /** Rename an unusable browser-data.json aside (unique name per second). */
@@ -146,6 +193,7 @@ export class BrowserDataStore {
   }
 
   private async writeAsync(): Promise<void> {
+    if (this.refuseWhenDegraded('异步写盘')) return
     const seq = ++this.writeSeq
     const file = this.file
     const tmp = `${file}.${process.pid}-${Date.now().toString(36)}.tmp`
@@ -174,11 +222,12 @@ export class BrowserDataStore {
 
   /** Cancel any pending debounce and persist the current snapshot synchronously. */
   flushNow(): void {
-    this.writeSeq++ // invalidate any in-flight async write
     if (this.saveTimer) {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
+    if (this.refuseWhenDegraded('同步写盘')) return
+    this.writeSeq++ // invalidate any in-flight async write
     // keep the previous on-disk version as .bak before replacing it (this is
     // what clearHistory/clearDownloads rely on)
     this.refreshBackup()

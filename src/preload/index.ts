@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { BrowserDataSnapshot, ChatSendResult, CollaborationState, ContentBounds, DownloadRecord, ExternalSessionState, LoadErrorInfo } from '../shared/protocol'
+import type { PermissionAnswer, PermissionAskRequest } from '../shared/permissions'
 
 type TabAction = { type: string; url?: string; tabId?: number; value?: number }
 
@@ -16,6 +17,32 @@ const api = {
     ipcRenderer.on('mirror:event', listener)
     return () => ipcRenderer.removeListener('mirror:event', listener)
   },
+  // ── 站点权限（提示条 + 设置页）─────────────────────────────────────────
+  // 渲染层挂载完提示条后必须调用一次；主进程在此之前一律不弹窗（fail-closed）。
+  permissionUiReady: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('permission:ui-ready'),
+  onPermissionRequest: (cb: (req: PermissionAskRequest) => void): (() => void) => {
+    const listener = (_e: unknown, req: unknown): void => cb(req as PermissionAskRequest)
+    ipcRenderer.on('permission:request', listener)
+    return () => ipcRenderer.removeListener('permission:request', listener)
+  },
+  onPermissionCancel: (cb: (payload: { id: number }) => void): (() => void) => {
+    const listener = (_e: unknown, payload: unknown): void => cb(payload as { id: number })
+    ipcRenderer.on('permission:cancel', listener)
+    return () => ipcRenderer.removeListener('permission:cancel', listener)
+  },
+  respondPermission: (id: number, answer: PermissionAnswer): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('permission:respond', { id, answer }),
+  sitePermissions: (): Promise<{
+    global: Record<string, string>
+    origins: Array<{
+      origin: string
+      decisions: Record<string, string>
+      source: string
+      updatedAt: number
+    }>
+  }> => ipcRenderer.invoke('site-permissions:get'),
+  sitePermissionsClear: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('site-permissions:clear'),
   setContentBounds: (b: ContentBounds): void => {
     ipcRenderer.send('ui:bounds', b)
   },

@@ -268,9 +268,19 @@ export class AgentRuntime {
     if (cur) cur.updatedAt = Date.now()
     try {
       this.saveFn(this.sessions)
-    } catch {
-      /* persistence must never crash the agent */
+    } catch (error) {
+      // Never crash the agent, but never hide it either: a silent failure here
+      // means the user sees a normal UI and loses the conversation on restart.
+      console.error('[agent] 会话落盘失败：', (error as Error)?.message ?? error)
     }
+  }
+
+  /**
+   * 退出前同步落盘。会话持久化是 800ms 防抖，不 flush 就会丢掉窗口内的
+   * 最后一条消息/整个进行中的会话（will-quit 只 flush 浏览器数据的旧行为）。
+   */
+  flushPersistence(): void {
+    this.persistNow()
   }
 
   get isRunning(): boolean {
@@ -486,13 +496,35 @@ export class AgentRuntime {
     return { ok: false, error }
   }
 
-  /** Race a tool call against the run signal so abort/watchdog always release the panel. */
+  /**
+   * Race a tool call against the run signal so abort/watchdog always release the panel.
+   *
+   * 旧实现是 `const result = await p`（注释自认"keep the run active until it
+   * settles"）。后果是一个永不 settle 的工具（例如 evaluate 里 `new Promise(()=>{})`、
+   * 页面主线程死循环）会把整个 run 永久挂住：finally 不执行 → running 永远 true →
+   * 后续消息只排队、切会话被拒、**tab owner 永不释放**，只能重启应用；
+   * 而 watchdog 那段"面板状态已复位"在 catch 里，promise 不 settle 就永远到不了。
+   *
+   * 现在改为 race：abort 一响就抛 AbortedOperationError，由 cancelTools() 负责
+   * 停掉具体操作。牺牲了"等它自己结束"的严格性，换回"锁一定会释放"。
+   */
   private async awaitWithAbort<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-    // cancelTools stops the concrete operation. Keep the run active until it
-    // settles so a replacement instruction cannot overlap its dispatch.
-    const result = await p
-    if (signal.aborted) throw new AbortedOperationError()
-    return result
+    if (signal.aborted) {
+      void p.catch(() => undefined)
+      throw new AbortedOperationError()
+    }
+    let onAbort: (() => void) | null = null
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = (): void => reject(new AbortedOperationError())
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
+    try {
+      return await Promise.race([p, aborted])
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort)
+      // 走开时不要留下未处理的 rejection（工具可能在我们放弃后才失败）
+      void p.catch(() => undefined)
+    }
   }
 
   /**
@@ -777,6 +809,11 @@ export class AgentRuntime {
       } else if (err?.name === 'AbortError' || ctl.signal.aborted) {
         this.patchIncompleteToolCalls()
       } else if (e instanceof ToolArgsAbortError) {
+        // The turn dies mid-tool-call: without patching, the assistant message
+        // keeps `tool_calls` with no matching `tool` messages, which is an
+        // invalid history — the next request 400s AND the bad state has already
+        // been persisted, bricking the session.
+        this.patchIncompleteToolCalls()
         // already a user-facing explanation — emit as-is
         this.emit({ kind: 'session', status: 'error', error: err.message })
         sessionError = true
