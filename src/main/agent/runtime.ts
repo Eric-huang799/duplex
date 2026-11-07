@@ -43,7 +43,8 @@ const SYSTEM_PROMPT = `你是 Duplex 浏览器的内置操作 agent。你可以�
 - **敏感站点必须先取得授权**：邮箱、银行/支付、政务、身份认证（登录/SSO/改密）、医疗健康类站点属于敏感站点。第一次在这些站点上做任何操作（包括 navigate / snapshot）之前，先用一句话说明你要访问哪个站点、准备做什么，然后**停下来等用户明确同意**。没有同意就不要访问，也不要换新标签、换路径绕过去。
 - 用户已经同意过的敏感站点，在本次任务内可以直接继续；用户改口要求停止时立刻停止。
 - **检索中立**：搜索/查找结果要**照实**呈现——不要过滤、不要降权、不要因为某个结果"看起来敏感/不权威/可能不合规"就隐去或只提一部分。用户搜什么就给什么，用不用由用户判断。若你要总结一批结果，必须覆盖全部显著结果，可以标注风险，但不得遗漏或改变顺序。
-- **未授权站点**：如果某个站点还没获得用户授权，进入前先说明并征得同意（规则同上）。被拒绝后就停止该部分，不要换标签、改写 URL 或换搜索引擎绕过。`
+- **未授权站点**：如果某个站点还没获得用户授权，进入前先说明并征得同意（规则同上）。被拒绝后就停止该部分，不要换标签、改写 URL 或换搜索引擎绕过。
+- **原样使用用户的检索词/专有名词**：用户说要搜什么、打开哪个名字，就按原文使用，不要"纠正"成你认为更合理的人名、地名或品牌（例如把「林丹」改成「林原」）。只有在结果明显对不上时才向用户确认一次，不要自行替换后继续。`
 
 /**
  * 去掉 `<think>…</think>` 思考块。
@@ -708,13 +709,13 @@ export class AgentRuntime {
               done: true
             })
           }
-          this.messages.push({ role: 'assistant', content: assistantText || '' })
+          this.messages.push({ role: 'assistant', content: stripThink(assistantText || '') })
           break
         }
 
         this.messages.push({
           role: 'assistant',
-          content: assistantText || null,
+          content: assistantText ? stripThink(assistantText) : null,
           tool_calls: toolCalls
         })
         for (const call of toolCalls) {
