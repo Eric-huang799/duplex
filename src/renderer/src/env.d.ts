@@ -105,6 +105,8 @@ interface CobrowseApi {
   settingsAdblockStatus(): Promise<{ enabled: boolean; domains: number; regex: number; cosmetic: number }>
   settingsAdblockSet(enabled: boolean): Promise<{ ok: boolean; error?: string }>
   settingsRestorePreAi(): Promise<{ ok: boolean; error?: string }>
+  settingsConsents(): Promise<{ origins: string[] }>
+  settingsConsentRevoke(origin: string): Promise<{ ok: boolean; removed: boolean }>
   onSiteRisk(
     cb: (payload: { url: string; level: 'notice' | 'warn'; reasons: string[] }) => void
   ): () => void

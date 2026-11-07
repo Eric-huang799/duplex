@@ -96,3 +96,36 @@
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
   padding: 6px;
 }
+
+.setp-consents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.setp-consent {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
+  color: var(--text-faint, #9aa4b2);
+}
+
+.setp-consent-x {
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0 1px;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.setp-consent-x:hover {
+  opacity: 1;
+}

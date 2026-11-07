@@ -136,6 +136,7 @@ import { PermissionRuntime, type PermissionPrompt, type PromptAnswer } from './p
 import { originOfUrl, type Decision, type PermissionCategory } from '../shared/permissions'
 import { DENIED_GUIDANCE, accessOrigin, decideAccess } from '../shared/access-policy'
 import { assessSiteRisk, shouldWarn } from '../shared/site-risk'
+import { classifySite } from '../shared/sensitive-sites'
 import { SiteConsentStore } from './site-consent'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
@@ -311,6 +312,26 @@ function tabUrlOf(tabId: number | null | undefined): string {
   }
 }
 
+/**
+ * 命令/脚本里出现敏感站点时，在确认卡上点明。
+ *
+ * 堵一个真实的绕过口：AI 拿到命令执行权后可以用 curl 直接抓邮箱页面，
+ * 完全绕过浏览器那层站点闸门。这里不阻断（命令本来就要确认），
+ * 但把"这条命令会碰到敏感站点"明确写在确认卡上，让用户的同意是有信息的同意。
+ */
+function withSensitiveHint(text: string): string {
+  const hosts = [...text.matchAll(/\b([a-z0-9][a-z0-9-]*(?:\.[a-z0-9][a-z0-9-]*)+)\b/gi)].map(
+    (match) => match[1] ?? ''
+  )
+  const hits = new Set<string>()
+  for (const host of hosts) {
+    if (!host || hits.size >= 3) continue
+    const verdict = classifySite(`https://${host}/`)
+    if (verdict.sensitive) hits.add(`${host}（${verdict.reason ?? '敏感'}）`)
+  }
+  return hits.size > 0 ? `${text}\n\n⚠ 目标包含敏感站点：${[...hits].join('、')}` : text
+}
+
 /** 把站点权限策略挂到一个 Session 上（隐身分区传 ephemeral: true，规则不落盘）。 */
 function attachPermissionHandlers(ses: Session, ephemeral = false): void {
   if (!permissionRuntime) {
@@ -469,6 +490,7 @@ const confirmScript = (payload: {
     win?.webContents.send('agent:confirm-request', {
       id,
       ...payload,
+      command: withSensitiveHint(payload.command),
       expiresAt: Date.now() + 120_000
     })
     setTimeout(() => {
@@ -508,7 +530,9 @@ const fsHandlers = createFsToolHandlers((payload) =>
     pendingConfirms.set(id, { resolve, owner: currentCaller() })
     win?.webContents.send('agent:confirm-request', {
       id,
-      command: payload.kind === 'write' ? mt('app.permDetailWrite', { detail: payload.detail }) : payload.detail,
+      command: withSensitiveHint(
+        payload.kind === 'write' ? mt('app.permDetailWrite', { detail: payload.detail }) : payload.detail
+      ),
       cwd: payload.cwd,
       skill: payload.kind === 'write' ? mt('app.permSkillWrite') : mt('app.permSkillRun'),
       tool: payload.kind === 'write' ? 'write_file' : 'run_command',
@@ -2300,6 +2324,14 @@ function setupIpc(): void {
   })
   ipcMain.handle('settings:restore-pre-ai', () => {
     const result = restorePreAiSettings()
+    return result
+  })
+  // AI 访问授权：让用户看得见、撤得掉（只有能授权没有能撤销是不对称的）
+  ipcMain.handle('settings:consents', () => ({ origins: siteConsent?.list() ?? [] }))
+  ipcMain.handle('settings:consent-revoke', (_e, origin: unknown) => {
+    if (typeof origin !== 'string' || !siteConsent) return { ok: false, removed: false }
+    const result = siteConsent.revoke(origin)
+    if (result.removed) logLine(`[consent] 用户撤销了对 ${origin} 的授权`)
     return result
   })
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })

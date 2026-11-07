@@ -107,6 +107,9 @@ const api = {
     ipcRenderer.invoke('settings:adblock-set', enabled),
   settingsRestorePreAi: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:restore-pre-ai'),
+  settingsConsents: (): Promise<{ origins: string[] }> => ipcRenderer.invoke('settings:consents'),
+  settingsConsentRevoke: (origin: string): Promise<{ ok: boolean; removed: boolean }> =>
+    ipcRenderer.invoke('settings:consent-revoke', origin),
   // 真人浏览的可疑站点预警（提示，不拦截）
   onSiteRisk: (
     cb: (payload: { url: string; level: 'notice' | 'warn'; reasons: string[] }) => void

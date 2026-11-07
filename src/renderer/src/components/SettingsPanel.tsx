@@ -20,10 +20,12 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
   const [adblock, setAdblock] = useState<AdblockStatus | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [consents, setConsents] = useState<string[]>([])
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
       setAdblock(await window.cobrowse.settingsAdblockStatus())
+      setConsents((await window.cobrowse.settingsConsents()).origins ?? [])
     } catch {
       setAdblock(null)
     }
@@ -99,6 +101,42 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
         <button className="setp-btn" disabled={busy} onClick={() => void restore()}>
           ↺
         </button>
+      </div>
+
+      <div className="setp-row">
+        <div className="setp-main">
+          <div className="setp-label">{t('settings.consents')}</div>
+          <div className="setp-hint">{t('settings.consentsHint')}</div>
+          {consents.length === 0 ? (
+            <div className="setp-hint">{t('settings.consentsEmpty')}</div>
+          ) : (
+            <div className="setp-consents">
+              {consents.map((origin) => (
+                <span className="setp-consent" key={origin}>
+                  {origin}
+                  <button
+                    className="setp-consent-x"
+                    disabled={busy}
+                    title={t('settings.revoke')}
+                    onClick={() => {
+                      void (async () => {
+                        setBusy(true)
+                        try {
+                          await window.cobrowse.settingsConsentRevoke(origin)
+                          await refresh()
+                        } finally {
+                          setBusy(false)
+                        }
+                      })
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {note && <div className="setp-note">{note}</div>}

@@ -2622,5 +2622,21 @@
   "risk.unknown": [
     "存在值得注意的技术特征",
     "Has a technical characteristic worth noting"
+  ],
+  "settings.consents": [
+    "AI 已获准访问的站点",
+    "Sites the AI is allowed to visit"
+  ],
+  "settings.consentsHint": [
+    "AI 第一次进入敏感站点前会问你；同意过的站点会列在这里，可随时撤销。",
+    "The AI asks before entering a sensitive site; sites you approved are listed here and can be revoked at any time."
+  ],
+  "settings.consentsEmpty": [
+    "还没有授权任何站点",
+    "No site has been approved yet"
+  ],
+  "settings.revoke": [
+    "撤销",
+    "Revoke"
   ]
 }
