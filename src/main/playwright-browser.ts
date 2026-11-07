@@ -25,6 +25,30 @@ function checkCancelled(): void {
   if (operationSignal()?.aborted) throw new Error('操作已被用户中断，请等待下一步指示')
 }
 
+function isCancelled(): boolean {
+  return operationSignal()?.aborted === true
+}
+
+/**
+ * 动作**已经发出去之后**才发现被取消：绝不能说"没执行"。
+ *
+ * 原来的实现统一在动作后调 `checkCancelled()` 抛"操作已被用户中断"，
+ * 调用方（AI / MCP 客户端）据此认为什么都没发生并重试——于是提交/购买/删除
+ * 按钮被点两次。取消只应阻止**尚未发出**的动作；已经落地的动作必须如实报告。
+ */
+function performedButCancelled(
+  what: string,
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...payload,
+    performed: true,
+    cancelled: true,
+    retryable: false,
+    note: `${what}已经执行（页面状态可能已改变）。取消发生在动作之后，请先重新 observe 页面，不要重试这个动作。`
+  }
+}
+
 async function browser(): Promise<Browser> {
   checkCancelled()
   if (!connection) {
@@ -223,9 +247,14 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
         else if (name === 'dblclick') await locator!.dblclick({ timeout: 200, noWaitAfter: true })
         else await locator!.hover({ timeout: 200 })
       })
-      checkCancelled()
+      const cancelledAfterDispatch = isCancelled()
       await showTarget(tab, locator!, name)
-      return { [name === 'click' ? 'clicked' : name === 'dblclick' ? 'doubleClicked' : 'hovered']: true, target, mode: 'playwright' }
+      const payload = {
+        [name === 'click' ? 'clicked' : name === 'dblclick' ? 'doubleClicked' : 'hovered']: true,
+        target,
+        mode: 'playwright'
+      }
+      return cancelledAfterDispatch ? performedButCancelled('该点击/悬停动作', payload) : payload
     }
     case 'type': {
       const value = String(args.text ?? '')
@@ -254,9 +283,18 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
       if (/^e\d+$/.test(target)) await locatorForTarget(page, target)
       if (!clear) next = (await locator!.inputValue({ timeout: 200 })) + value
       await withAiInput(page, { kind: 'type', text: next }, () => locator!.fill(next, { timeout: 200 }))
-      checkCancelled()
-      if (args.submit) await withAiInput(page, { kind: 'key', key: 'Enter' }, () => locator!.press('Enter', { timeout: 200, noWaitAfter: true }))
-      return { filled: true, target, length: next.length, submitted: args.submit === true, mode: 'playwright' }
+      // 文本已经进了输入框：取消只阻止后续的 Enter，不能说"没填"
+      const cancelledAfterFill = isCancelled()
+      if (!cancelledAfterFill && args.submit)
+        await withAiInput(page, { kind: 'key', key: 'Enter' }, () => locator!.press('Enter', { timeout: 200, noWaitAfter: true }))
+      const payload = {
+        filled: true,
+        target,
+        length: next.length,
+        submitted: args.submit === true && !cancelledAfterFill,
+        mode: 'playwright'
+      }
+      return cancelledAfterFill ? performedButCancelled('文本已填入输入框', payload) : payload
     }
     case 'drag': {
       if (await humanScrolling(page)) throw new Error('用户正在滚动；拖拽需要鼠标位置协调。请继续读取，不要反复重试')
@@ -268,8 +306,8 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
       const inputTarget = `${Date.now()}-${Math.random()}`
       await from.evaluate((el, id) => el.setAttribute('data-duplex-ai-target', id), inputTarget, { timeout: 200 })
       await withAiInput(page, { kind: 'drag', target: inputTarget, x: fromBox ? fromBox.x + fromBox.width / 2 : undefined, y: fromBox ? fromBox.y + fromBox.height / 2 : undefined }, () => from.dragTo(to, { timeout: 250, noWaitAfter: true }))
-      checkCancelled()
-      return { dragged: true, from: args.from, to: args.to }
+      const draggedPayload = { dragged: true, from: args.from, to: args.to }
+      return isCancelled() ? performedButCancelled('拖拽动作', draggedPayload) : draggedPayload
     }
     case 'select_option': {
       const wanted = String(args.option)
@@ -292,14 +330,14 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
       if (!files.length) throw new Error('files 必须包含文件路径')
       assertUploadAllowed(files)
       await locator!.setInputFiles(files, { timeout: 250, noWaitAfter: true })
-      checkCancelled()
-      return { uploaded: files.length, target }
+      const uploadPayload = { uploaded: files.length, target }
+      return isCancelled() ? performedButCancelled('文件已交给上传控件', uploadPayload) : uploadPayload
     }
     case 'press': {
       if (await humanScrolling(page)) throw new Error('用户正在滚动；按键需要焦点协调，请使用元素点击或标准输入')
       await withAiInput(page, { kind: 'key', keys: chordEventKeys(String(args.key)) }, () => page.keyboard.press(String(args.key)))
-      checkCancelled()
-      return { pressed: args.key }
+      const pressPayload = { pressed: args.key }
+      return isCancelled() ? performedButCancelled('按键', pressPayload) : pressPayload
     }
     case 'scroll': {
       if (await humanScrolling(page)) return { scrolled: false, note: '用户正在阅读滚动，已保留用户位置；请用 snapshot/query/get_html 继续读取' }

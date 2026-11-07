@@ -147,6 +147,43 @@ function refreshBackup(): void {
   }
 }
 
+/** 收集一份设置里所有非空的 apiKey，用于判断"密钥是否被清除/轮换"。 */
+function collectApiKeys(data: Record<string, unknown> | null): Set<string> {
+  const out = new Set<string>()
+  if (!data) return out
+  const providers = Array.isArray(data.agentProviders)
+    ? (data.agentProviders as Array<Record<string, unknown>>)
+    : []
+  for (const provider of providers) {
+    const key = provider?.apiKey
+    if (typeof key === 'string' && key.trim()) out.add(key.trim())
+  }
+  return out
+}
+
+/**
+ * 清除/轮换密钥后，旧密钥不能继续躺在 `settings.json.bak` 里。
+ *
+ * `refreshBackup()` 是在写新文件**之前**把旧文件复制成备份的，所以用户
+ * "清除 API Key / 删除 provider"之后，被清掉的那个密钥会留在备份里；若之后
+ * 不再改设置，它就永久保留——用户以为清理干净了，实际泄漏面翻倍。
+ * 这里在写盘成功后检查一次：备份里存在"新设置已经没有"的密钥 → 直接用新内容
+ * 覆盖备份（备份的意义是能回滚到可用状态，而不是保留已作废的凭据）。
+ */
+function scrubBackupSecrets(next: Record<string, unknown>): void {
+  try {
+    const bak = parseObject(fs.readFileSync(backupPath(), 'utf8'))
+    if (!bak) return
+    const nextKeys = collectApiKeys(next)
+    const stale = [...collectApiKeys(bak)].filter((key) => !nextKeys.has(key))
+    if (stale.length === 0) return
+    fs.writeFileSync(backupPath(), JSON.stringify(next, null, 2), 'utf8')
+    console.error(`[settings] 已从 settings.json.bak 清除 ${stale.length} 个不再使用的密钥`)
+  } catch {
+    /* 没有备份 / 写失败都不该影响保存本身 */
+  }
+}
+
 /** Atomic write: same-directory tmp file + rename. */
 function writeRaw(data: Record<string, unknown>): void {
   const p = settingsPath()
@@ -175,7 +212,9 @@ function savePatch(patch: Record<string, unknown>): SaveResult {
   }
   try {
     refreshBackup()
-    writeRaw({ ...current, ...patch })
+    const next = { ...current, ...patch }
+    writeRaw(next)
+    scrubBackupSecrets(next)
     return { ok: true }
   } catch {
     return { ok: false, error: mt('settings.saveFailed') }
@@ -349,6 +388,7 @@ export function saveProviders(
     }
     delete next.agent
     writeRaw(next)
+    scrubBackupSecrets(next)
     cache.agentProviders = providers
     cache.activeProviderId = activeProviderId
     return { ok: true }
