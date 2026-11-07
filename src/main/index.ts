@@ -1333,8 +1333,15 @@ async function start(): Promise<void> {
     let tabId: number | undefined
     try {
       if (tabScoped) {
-        tabId = collaboration.resolveTab(caller, typeof args.tabId === 'number' ? args.tabId : undefined, tabs?.activeId ?? null)
-        if (!tabs?.getTab(tabId)) throw new Error(`任务标签 ${tabId} 已关闭，请明确选择新的标签`)
+        // 本地小模型经常把 tabId 写成 0 / 已关闭的标签，甚至凭空编号。
+        // 这不是"错误用法"而是能力限制：回落到底层绑定或当前活动标签，
+        // 比直接失败有用得多（原来会报"任务标签 0 已关闭"然后整轮白跑）。
+        const requested = typeof args.tabId === 'number' ? args.tabId : undefined
+        const usable = requested != null && tabs?.getTab(requested) ? requested : undefined
+        tabId = collaboration.resolveTab(caller, usable, tabs?.activeId ?? null)
+        if (!tabs?.getTab(tabId)) {
+          throw new Error('当前没有可用的标签页：请先用 new_tab 打开一个页面，再重试。')
+        }
       }
     } catch (e) { return { isError: true, content: [{ type: 'text', text: (e as Error).message }] } }
     const mutates = !PAGE_READ_TOOLS.has(name)

@@ -45,8 +45,22 @@ const SYSTEM_PROMPT = `你是 Duplex 浏览器的内置操作 agent。你可以�
 - **检索中立**：搜索/查找结果要**照实**呈现——不要过滤、不要降权、不要因为某个结果"看起来敏感/不权威/可能不合规"就隐去或只提一部分。用户搜什么就给什么，用不用由用户判断。若你要总结一批结果，必须覆盖全部显著结果，可以标注风险，但不得遗漏或改变顺序。
 - **未授权站点**：如果某个站点还没获得用户授权，进入前先说明并征得同意（规则同上）。被拒绝后就停止该部分，不要换标签、改写 URL 或换搜索引擎绕过。`
 
-/** Base prompt plus the currently enabled skills (progressive disclosure:
- *  only name + description here; full instructions come from read_skill). */
+/**
+ * 去掉 `<think>…</think>` 思考块。
+ *
+ * Qwen3 这类本地模型会把思考过程按标签输出；原样渲染会变成面板里一段
+ * 莫名其妙的 `<think></think>` 文本。流式过程中可能只有半个标签，所以
+ * 未闭合的开标签之后的内容也一并丢掉。
+ */
+function stripThink(text: string): string {
+  if (!text.includes('<think')) return text
+  return text
+    .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '')
+    .replace(/<think[^>]*>[\s\S]*$/i, '')
+    .trim()
+}
+
+/** Base prompt plus the currently enabled skills (progressive disclosure: only name + description here; full instructions come from read_skill). */
 function buildSystemPrompt(): string {
   const base = SYSTEM_PROMPT
   try {
@@ -659,13 +673,13 @@ export class AgentRuntime {
           allowCustomHost: cfg.allowCustomHost,
           onTextDelta: (d) => {
             acc += d
-            this.emit({ kind: 'text', role: 'assistant', partID, text: acc, done: false })
+            this.emit({ kind: 'text', role: 'assistant', partID, text: stripThink(acc), done: false })
           }
         })
         if (assistantText && assistantText !== acc) {
           acc = assistantText
         }
-        if (acc) this.emit({ kind: 'text', role: 'assistant', partID, text: acc, done: true })
+        if (acc) this.emit({ kind: 'text', role: 'assistant', partID, text: stripThink(acc), done: true })
 
         if (toolCalls.length === 0) {
           if (!assistantText || !assistantText.trim()) {
