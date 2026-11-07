@@ -68,6 +68,11 @@ const api = {
     model: string
   }): Promise<{ tools: boolean; contextLength: number | null } | null> =>
     ipcRenderer.invoke('provider:capabilities', payload),
+  timelineRecent: (limit?: number): Promise<
+    Array<{ ts: number; kind: string; tabId?: number; name?: string; ok?: boolean; detail?: string }>
+  > => ipcRenderer.invoke('timeline:recent', limit),
+  timelineExport: (): Promise<{ ok: boolean; file?: string; error?: string }> =>
+    ipcRenderer.invoke('timeline:export'),
   setContentBounds: (b: ContentBounds): void => {
     ipcRenderer.send('ui:bounds', b)
   },

@@ -86,6 +86,10 @@ interface CobrowseApi {
     baseUrl: string
     model: string
   }): Promise<{ tools: boolean; contextLength: number | null } | null>
+  timelineRecent(limit?: number): Promise<
+    Array<{ ts: number; kind: string; tabId?: number; name?: string; ok?: boolean; detail?: string }>
+  >
+  timelineExport(): Promise<{ ok: boolean; file?: string; error?: string }>
   setContentBounds(b: ContentBounds): void
   setChromeOverlay(id: string, open: boolean): void
   tabAction(a: { type: string; url?: string; tabId?: number; value?: number }): Promise<unknown>

@@ -2506,5 +2506,25 @@
   "app.takeOver": [
     "我来接管",
     "Take over"
+  ],
+  "timeline.title": [
+    "AI 操作时间线",
+    "AI activity timeline"
+  ],
+  "timeline.empty": [
+    "还没有记录。AI 每次操作页面都会记在这里，可回看、可导出。",
+    "Nothing yet. Every action the AI takes on a page is recorded here, reviewable and exportable."
+  ],
+  "timeline.export": [
+    "导出 Markdown",
+    "Export Markdown"
+  ],
+  "timeline.exported": [
+    "已导出到 {path}",
+    "Exported to {path}"
+  ],
+  "timeline.failed": [
+    "导出失败：{err}",
+    "Export failed: {err}"
   ]
 }

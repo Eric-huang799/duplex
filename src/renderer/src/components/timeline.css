@@ -1,0 +1,116 @@
+/* AI 操作时间线面板：紧凑一行一条，颜色走主题变量。 */
+.tlp {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  font-size: 12.5px;
+  color: var(--text-strong, #f2f4f8);
+}
+
+.tlp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tlp-title {
+  font-weight: 600;
+}
+
+.tlp-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.tlp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.tlp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 5px;
+  font-size: 11.5px;
+}
+
+.tlp-row:hover {
+  background: var(--surface-raised, rgba(255, 255, 255, 0.05));
+}
+
+.tlp-time {
+  flex: 0 0 auto;
+  width: 68px;
+  color: var(--text-faint, #9aa4b2);
+  font-variant-numeric: tabular-nums;
+}
+
+.tlp-kind {
+  flex: 0 0 auto;
+  min-width: 64px;
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tlp-kind.takeover {
+  color: #ff9f43;
+}
+
+.tlp-kind.resume {
+  color: #4ac97e;
+}
+
+.tlp-kind.emergency {
+  color: #ff6b6b;
+}
+
+.tlp-res {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint, #9aa4b2);
+}
+
+.tlp-res.bad {
+  color: #ff9f43;
+}
+
+.tlp-note {
+  font-size: 11px;
+  color: var(--text-faint, #9aa4b2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tlp-empty {
+  color: var(--text-faint, #9aa4b2);
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.tlp-btn {
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+}
+
+.tlp-btn.ghost {
+  color: var(--text-faint, #9aa4b2);
+}

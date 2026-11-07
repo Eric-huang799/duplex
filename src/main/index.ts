@@ -123,6 +123,7 @@ import { duplexShimEnv, ensureOpenShim, extractHttpUrl } from './open-shim'
 import { CollaborationCoordinator, currentCaller, PAGE_READ_TOOLS, withCaller } from './collaboration'
 import { configurePlaywright, closePlaywright } from './playwright-browser'
 import { BrowserSessionStore } from './browser-session'
+import { TimelineStore } from './timeline'
 import { PermissionStore } from './permission-store'
 import { PermissionRuntime, type PermissionPrompt, type PromptAnswer } from './permission-runtime'
 import { originOfUrl, type Decision, type PermissionCategory } from '../shared/permissions'
@@ -249,6 +250,8 @@ let annotationSubmitHandler: AnnotationSubmitHandler | null = null
 let browserData: BrowserDataStore
 let downloads: DownloadManager
 let browserSession: BrowserSessionStore
+/** AI 操作时间线（旁路审计，写失败不影响任何功能）。 */
+let timeline: TimelineStore | null = null
 let restoringBrowserSession = false
 const collaboration = new CollaborationCoordinator()
 collaboration.onChanged = (state) => { if (win && !win.isDestroyed()) win.webContents.send('collaboration:state', state) }
@@ -1011,6 +1014,7 @@ async function start(): Promise<void> {
   app.setAppUserModelId('Duplex')
   browserData = new BrowserDataStore(cobrowseDir())
   browserSession = new BrowserSessionStore(cobrowseDir())
+  timeline = new TimelineStore(cobrowseDir())
   permissions = new PermissionStore(cobrowseDir())
   permissionRuntime = new PermissionRuntime({
     store: permissions,
@@ -1117,6 +1121,20 @@ async function start(): Promise<void> {
     try {
       const invoke = () => execute(name, tabId == null ? args : { ...args, tabId })
       const result = await runInOperation(ac, () => tabId == null ? invoke() : collaboration.run(tabId, caller, mutates, invoke, ac.signal))
+      // 旁路审计：AI 在页面上做过什么，落到时间线（写失败不影响调用）
+      timeline?.record({
+        kind: 'tool',
+        name,
+        ...(tabId != null ? { tabId } : {}),
+        ok: !result.isError,
+        ...(result.isError
+          ? {
+              detail: (
+                result.content?.find((c) => c.type === 'text') as { text?: string } | undefined
+              )?.text
+            }
+          : {})
+      })
       if (name === 'new_tab' && !result.isError) {
         const item = result.content.find(c => c.type === 'text')
         if (item?.type === 'text') {
@@ -2391,6 +2409,7 @@ function setupIpc(): void {
     if (!tabs?.getTab(tabId)) return { ok: false, error: mt('app.tabClosed') }
     if (annotationTabState.get(tabId)) return { ok: false, error: mt('app.annotationAiPaused') }
     collaboration.resume(tabId)
+    timeline?.record({ kind: 'resume', tabId, detail: '用户交回 AI' })
     return { ok: true }
   })
   /**
@@ -2405,7 +2424,22 @@ function setupIpc(): void {
     if (!tabs?.getTab(id)) return { ok: false, error: mt('app.tabClosed') }
     collaboration.humanActivity(id, 'manual')
     abortOperation({ tabId: id, writesOnly: true })
+    timeline?.record({ kind: 'takeover', tabId: id, detail: '界面点击「我来接管」' })
     return { ok: true }
+  })
+  ipcMain.handle('timeline:recent', (_e, limit?: number) =>
+    (timeline?.recent(Number(limit) || 120) ?? [])
+  )
+  ipcMain.handle('timeline:export', () => {
+    if (!timeline) return { ok: false, error: 'not-ready' }
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const file = path.join(app.getPath('downloads'), `duplex-timeline-${stamp}.md`)
+      fs.writeFileSync(file, timeline.toMarkdown(300), 'utf8')
+      return { ok: true, file }
+    } catch (error) {
+      return { ok: false, error: (error as Error)?.message ?? String(error) }
+    }
   })
 
   ipcMain.on(

@@ -10,6 +10,7 @@ import { PermissionCard, type PermissionRequest } from './PermissionCard'
 import { MarkdownProse } from './Markdown'
 import { ProvidersPanel } from './ProvidersPanel'
 import { SitePermissionsPanel } from './SitePermissionsPanel'
+import { TimelinePanel } from './TimelinePanel'
 import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 import { useI18n } from '../i18n'
@@ -170,6 +171,7 @@ export function SidePanel({
   const [sessionMenu, setSessionMenu] = useState(false)
   const [showProviders, setShowProviders] = useState(initialShowProviders ?? false)
   const [showSitePermissions, setShowSitePermissions] = useState(false)
+  const [showTimeline, setShowTimeline] = useState(false)
   const [showSkills, setShowSkills] = useState(false)
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
@@ -672,6 +674,14 @@ export function SidePanel({
           >
             🛡
           </button>
+          <button
+            className="session-btn"
+            data-panel-toggle="timeline"
+            onClick={() => setShowTimeline((v) => !v)}
+            title={t('timeline.title')}
+          >
+            🕒
+          </button>
           <button className="session-btn" onClick={toggleAgentSessions} title={t('panel.historyChats')}>
             ☰
           </button>
@@ -796,6 +806,8 @@ export function SidePanel({
       {showSitePermissions && (
         <SitePermissionsPanel onClose={() => setShowSitePermissions(false)} />
       )}
+
+      {showTimeline && <TimelinePanel onClose={() => setShowTimeline(false)} />}
 
       <div className="panel-list" ref={listRef} onScroll={onScroll}>
         {isAgent ? (
