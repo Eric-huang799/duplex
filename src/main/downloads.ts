@@ -13,6 +13,8 @@ export interface DownloadActionResult {
 export class DownloadManager {
   private active = new Map<string, DownloadItem>()
   private rows: DownloadRecord[]
+  /** 每个下载的自动续传尝试次数（上限 2 次，避免对不支持 Range 的服务端反复重试）。 */
+  private resumeAttempts = new Map<string, number>()
 
   constructor(
     private session: Session,
@@ -64,12 +66,17 @@ export class DownloadManager {
       if (chosen) row.path = chosen
       row.receivedBytes = item.getReceivedBytes()
       row.totalBytes = item.getTotalBytes()
-      if (state === 'interrupted') row.state = 'interrupted'
+      if (state === 'interrupted') {
+        row.state = 'interrupted'
+        // 原生续传：Chromium 自己按 Range 续，条件是服务端支持分段
+        this.scheduleAutoResume(id, item)
+      }
       this.upsert(row, false)
       if (!persistTimer) persistTimer = setTimeout(() => { persistTimer = null; this.persist(row) }, 500)
     })
     item.once('done', (_event, state) => {
       this.active.delete(id)
+      this.resumeAttempts.delete(id)
       if (persistTimer) clearTimeout(persistTimer)
       const chosen = item.getSavePath()
       if (chosen) row.path = chosen
@@ -90,6 +97,58 @@ export class DownloadManager {
   }
 
   private persist(row: DownloadRecord): void { this.store.addDownload(row) }
+
+  /**
+   * 中断后自动续传（退避 1s → 3s，最多 2 次）。
+   * `canResume()` 为 false 时说明服务端不支持分段请求或已无法续传，直接放弃。
+   */
+  private scheduleAutoResume(id: string, item: DownloadItem): void {
+    const attempts = this.resumeAttempts.get(id) ?? 0
+    if (attempts >= 2) return
+    let canResume = false
+    try {
+      canResume = item.canResume()
+    } catch {
+      canResume = false
+    }
+    if (!canResume) return
+    this.resumeAttempts.set(id, attempts + 1)
+    const timer = setTimeout(
+      () => {
+        try {
+          if (item.canResume()) item.resume()
+        } catch {
+          /* 续传失败会再次进入 interrupted，本轮到此为止 */
+        }
+      },
+      attempts === 0 ? 1000 : 3000
+    )
+    timer.unref?.()
+  }
+
+  /** 手动续传一个中断的下载；服务端不支持 Range 请求时返回失败原因。 */
+  resume(id: string): DownloadActionResult {
+    const item = this.active.get(id)
+    if (!item) return { ok: false, error: mt('dl.notFound') }
+    try {
+      if (!item.canResume()) return { ok: false, error: mt('dl.cannotResume') }
+      item.resume()
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: (e as Error)?.message ?? mt('dl.resumeFailed') }
+    }
+  }
+
+  /** 该下载当前是否可续传（界面据此决定是否显示"继续"）。 */
+  canResume(id: string): boolean {
+    const item = this.active.get(id)
+    if (!item) return false
+    try {
+      return item.canResume()
+    } catch {
+      return false
+    }
+  }
 
   list(): DownloadRecord[] { return this.rows.map((row) => ({ ...row })) }
   cancel(id: string): boolean { const item = this.active.get(id); if (!item) return false; item.cancel(); return true }

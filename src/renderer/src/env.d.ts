@@ -100,6 +100,8 @@ interface CobrowseApi {
   historyClear(): Promise<{ ok: boolean }>
   downloadsList(): Promise<DownloadRecord[]>
   downloadsCancel(id: string): Promise<{ ok: boolean }>
+  downloadsResume(id: string): Promise<{ ok: boolean; error?: string }>
+  downloadsCanResume(id: string): Promise<boolean>
   downloadsClear(): Promise<{ ok: boolean }>
   downloadsOpen(id: string): Promise<{ ok: boolean; error?: string }>
   downloadsReveal(id: string): Promise<{ ok: boolean; error?: string }>

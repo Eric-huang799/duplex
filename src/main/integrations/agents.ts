@@ -16,6 +16,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { cobrowseDir } from '../../shared/endpoint'
+import { writeFileAtomic } from '../../shared/atomic'
 
 export type AgentKind = 'opencode' | 'codex' | 'claude' | 'gemini' | 'qwen' | 'custom'
 
@@ -404,8 +405,9 @@ function readAgentsFile(): AgentsFile {
 }
 
 function writeAgentsFile(file: AgentsFile): void {
-  fs.mkdirSync(cobrowseDir(), { recursive: true })
-  fs.writeFileSync(agentsJsonPath(), JSON.stringify(file, null, 2), 'utf8')
+  // 原子写：原来直接覆盖，崩溃会把这个文件写成半截，下次读取静默变 {}，
+  // 自定义 agent 与每工具的模型选择就一起丢了。
+  writeFileAtomic(agentsJsonPath(), JSON.stringify(file, null, 2))
 }
 
 function readCustom(): CustomAgent[] {

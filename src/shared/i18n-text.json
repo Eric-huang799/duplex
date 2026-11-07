@@ -2526,5 +2526,13 @@
   "timeline.failed": [
     "导出失败：{err}",
     "Export failed: {err}"
+  ],
+  "dl.cannotResume": [
+    "这个下载无法续传：服务器不支持分段请求，或下载已结束",
+    "This download cannot be resumed: the server does not support range requests, or it already ended"
+  ],
+  "dl.resumeFailed": [
+    "续传失败",
+    "Resume failed"
   ]
 }

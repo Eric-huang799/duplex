@@ -2054,6 +2054,9 @@ function setupIpc(): void {
   ipcMain.handle('browser:history-clear', () => { browserData.clearHistory(); emitBrowserData(); return { ok: true } })
   ipcMain.handle('downloads:list', () => downloads.list())
   ipcMain.handle('downloads:cancel', (_e, id: string) => ({ ok: downloads.cancel(id) }))
+  // 原生续传：Chromium 按 Range 续传，服务端不支持时 canResume() 为 false
+  ipcMain.handle('downloads:resume', (_e, id: string) => downloads.resume(id))
+  ipcMain.handle('downloads:can-resume', (_e, id: string) => downloads.canResume(id))
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })
   ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id))
   ipcMain.handle('downloads:reveal', (_e, id: string) => downloads.reveal(id))

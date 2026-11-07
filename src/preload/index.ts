@@ -93,6 +93,9 @@ const api = {
   historyClear: () => ipcRenderer.invoke('browser:history-clear') as Promise<{ ok: boolean }>,
   downloadsList: () => ipcRenderer.invoke('downloads:list') as Promise<DownloadRecord[]>,
   downloadsCancel: (id: string) => ipcRenderer.invoke('downloads:cancel', id) as Promise<{ ok: boolean }>,
+  downloadsResume: (id: string) =>
+    ipcRenderer.invoke('downloads:resume', id) as Promise<{ ok: boolean; error?: string }>,
+  downloadsCanResume: (id: string) => ipcRenderer.invoke('downloads:can-resume', id) as Promise<boolean>,
   downloadsClear: () => ipcRenderer.invoke('downloads:clear') as Promise<{ ok: boolean }>,
   downloadsOpen: (id: string) =>
     ipcRenderer.invoke('downloads:open', id) as Promise<{ ok: boolean; error?: string }>,

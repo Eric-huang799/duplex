@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { EndpointInfo } from './protocol'
+import { writeFileAtomic } from './atomic'
 
 export function cobrowseDir(): string {
   return process.env['DUPLEX_DATA_DIR']
@@ -28,9 +29,9 @@ export function readEndpoint(): EndpointInfo | null {
 }
 
 export function writeEndpoint(info: EndpointInfo): void {
-  const dir = cobrowseDir()
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(endpointFilePath(), JSON.stringify(info, null, 2), 'utf8')
+  // 这个文件里是本地 MCP/HTTP 的 Bearer token：原子写 + 0600（Windows 走 ACL）。
+  // 原来直接 writeFileSync，崩溃可能留下截断的 JSON，bridge 会读不到端点。
+  writeFileAtomic(endpointFilePath(), JSON.stringify(info, null, 2), { mode: 0o600 })
 }
 
 export function removeEndpoint(pid: number): void {
