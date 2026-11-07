@@ -2538,5 +2538,49 @@
   "lib.resume": [
     "继续",
     "Resume"
+  ],
+  "settings.title": [
+    "浏览器设置",
+    "Browser settings"
+  ],
+  "settings.adblock": [
+    "广告拦截",
+    "Ad blocking"
+  ],
+  "settings.adblockHint": [
+    "拦截广告与追踪请求。本地回环地址（AI 面板、MCP 桥）永不被拦截。",
+    "Blocks ad and tracking requests. Loopback addresses (the AI panel and MCP bridge) are never blocked."
+  ],
+  "settings.adblockRules": [
+    "已加载 {domains} 条域名规则、{regex} 条正则规则",
+    "{domains} domain rules and {regex} regex rules loaded"
+  ],
+  "settings.adblockEmpty": [
+    "还没有规则文件，因此当前不拦截任何请求",
+    "No filter list is bundled yet, so nothing is being blocked"
+  ],
+  "settings.restore": [
+    "恢复 AI 改动前的设置",
+    "Restore settings from before the AI changed them"
+  ],
+  "settings.restoreHint": [
+    "把设置恢复到 AI 第一次改动之前的快照；恢复前的状态会另存为 settings.before-restore.json。",
+    "Restores the snapshot taken before the AI first changed a setting; the pre-restore state is kept as settings.before-restore.json."
+  ],
+  "settings.restoreDone": [
+    "已恢复",
+    "Restored"
+  ],
+  "settings.restoreFailed": [
+    "恢复失败：{err}",
+    "Restore failed: {err}"
+  ],
+  "settings.on": [
+    "已开启",
+    "On"
+  ],
+  "settings.off": [
+    "已关闭",
+    "Off"
   ]
 }

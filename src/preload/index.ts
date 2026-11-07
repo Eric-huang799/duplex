@@ -96,6 +96,17 @@ const api = {
   downloadsResume: (id: string) =>
     ipcRenderer.invoke('downloads:resume', id) as Promise<{ ok: boolean; error?: string }>,
   downloadsCanResume: (id: string) => ipcRenderer.invoke('downloads:can-resume', id) as Promise<boolean>,
+  // ── 浏览器设置 ──────────────────────────────────────────────────────────
+  settingsAdblockStatus: (): Promise<{
+    enabled: boolean
+    domains: number
+    regex: number
+    cosmetic: number
+  }> => ipcRenderer.invoke('settings:adblock-status'),
+  settingsAdblockSet: (enabled: boolean): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:adblock-set', enabled),
+  settingsRestorePreAi: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('settings:restore-pre-ai'),
   downloadsClear: () => ipcRenderer.invoke('downloads:clear') as Promise<{ ok: boolean }>,
   downloadsOpen: (id: string) =>
     ipcRenderer.invoke('downloads:open', id) as Promise<{ ok: boolean; error?: string }>,

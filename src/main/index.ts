@@ -203,6 +203,17 @@ function applyAdblockEnabled(enabled: boolean): { ok: boolean; error?: string } 
   return saved.ok ? { ok: true } : { ok: false, error: saved.error }
 }
 
+/** 恢复到 AI 改动设置之前的快照，并把运行时状态重新对齐。 */
+function restorePreAiSettings(): { ok: boolean; error?: string } {
+  const result = restoreFromPoint(cobrowseDir())
+  if (!result.ok) return result
+  adblockEnabled = loadSettings().adblockEnabled !== false
+  if (adblockEnabled) loadAdblockList()
+  else adblock = new AdblockEngine(parseFilterList(''))
+  permissions = new PermissionStore(cobrowseDir())
+  return { ok: true }
+}
+
 function attachAdblock(ses: Session): void {
   // 每个 session 的 onBeforeRequest 只能挂一个监听器；将来别的功能也要用时在此合并
   ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
@@ -434,12 +445,7 @@ const settingHandlers = createSettingToolHandlers({
   }),
   setAdblock: (enabled) => applyAdblockEnabled(enabled),
   restore: () => {
-    const result = restoreFromPoint(cobrowseDir())
-    if (result.ok) {
-      adblockEnabled = loadSettings().adblockEnabled
-      if (adblockEnabled) loadAdblockList()
-      else adblock = new AdblockEngine(parseFilterList(''))
-    }
+    const result = restorePreAiSettings()
     return result
   }
 })
@@ -2200,6 +2206,24 @@ function setupIpc(): void {
   // 原生续传：Chromium 按 Range 续传，服务端不支持时 canResume() 为 false
   ipcMain.handle('downloads:resume', (_e, id: string) => downloads.resume(id))
   ipcMain.handle('downloads:can-resume', (_e, id: string) => downloads.canResume(id))
+  // ── 浏览器设置（用户侧调节面）────────────────────────────────────────────
+  ipcMain.handle('settings:adblock-status', () => ({
+    enabled: adblockEnabled,
+    domains: adblock.size.domains,
+    regex: adblock.size.blockRegex,
+    cosmetic: adblock.size.cosmetic
+  }))
+  ipcMain.handle('settings:adblock-set', (_e, enabled: unknown) => {
+    if (typeof enabled !== 'boolean') return { ok: false, error: 'bad-request' }
+    const result = applyAdblockEnabled(enabled)
+    return result.ok
+      ? { ok: true, enabled: adblockEnabled, domains: adblock.size.domains }
+      : { ok: false, error: result.error }
+  })
+  ipcMain.handle('settings:restore-pre-ai', () => {
+    const result = restorePreAiSettings()
+    return result
+  })
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })
   ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id))
   ipcMain.handle('downloads:reveal', (_e, id: string) => downloads.reveal(id))

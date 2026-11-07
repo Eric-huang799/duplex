@@ -11,6 +11,7 @@ import { MarkdownProse } from './Markdown'
 import { ProvidersPanel } from './ProvidersPanel'
 import { SitePermissionsPanel } from './SitePermissionsPanel'
 import { TimelinePanel } from './TimelinePanel'
+import { SettingsPanel } from './SettingsPanel'
 import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 import { useI18n } from '../i18n'
@@ -172,6 +173,7 @@ export function SidePanel({
   const [showProviders, setShowProviders] = useState(initialShowProviders ?? false)
   const [showSitePermissions, setShowSitePermissions] = useState(false)
   const [showTimeline, setShowTimeline] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [showSkills, setShowSkills] = useState(false)
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
@@ -682,6 +684,14 @@ export function SidePanel({
           >
             🕒
           </button>
+          <button
+            className="session-btn"
+            data-panel-toggle="settings"
+            onClick={() => setShowSettings((v) => !v)}
+            title={t('settings.title')}
+          >
+            设
+          </button>
           <button className="session-btn" onClick={toggleAgentSessions} title={t('panel.historyChats')}>
             ☰
           </button>
@@ -808,6 +818,8 @@ export function SidePanel({
       )}
 
       {showTimeline && <TimelinePanel onClose={() => setShowTimeline(false)} />}
+
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
 
       <div className="panel-list" ref={listRef} onScroll={onScroll}>
         {isAgent ? (
