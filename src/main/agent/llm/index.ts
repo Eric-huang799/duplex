@@ -3,6 +3,7 @@
  * adapter selected by the provider's protocol.
  */
 import { openaiChatStream } from './openai-chat'
+import { isOllamaEndpoint, ollamaNativeStream } from './ollama-native'
 import { anthropicChatStream } from './anthropic'
 import { responsesChatStream } from './openai-responses'
 import { geminiChatStream } from './gemini'
@@ -24,6 +25,11 @@ export async function chatStream(opts: ChatStreamOptions): Promise<ChatStreamRes
 }
 
 async function dispatch(opts: ChatStreamOptions): Promise<ChatStreamResult> {
+  // Ollama 走原生 /api/chat：只有这样才能设 num_ctx，也才能问出模型能力。
+  // 显式选了别的协议（anthropic / responses / gemini）时不抢，尊重用户配置。
+  if ((opts.protocol ?? 'openai-chat') === 'openai-chat' && isOllamaEndpoint(opts.baseUrl)) {
+    return ollamaNativeStream(opts)
+  }
   switch (opts.protocol ?? 'openai-chat') {
     case 'anthropic-messages':
       return anthropicChatStream(opts)
