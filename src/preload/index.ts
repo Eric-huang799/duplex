@@ -107,6 +107,15 @@ const api = {
     ipcRenderer.invoke('settings:adblock-set', enabled),
   settingsRestorePreAi: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:restore-pre-ai'),
+  // 真人浏览的可疑站点预警（提示，不拦截）
+  onSiteRisk: (
+    cb: (payload: { url: string; level: 'notice' | 'warn'; reasons: string[] }) => void
+  ): (() => void) => {
+    const listener = (_e: unknown, payload: unknown): void =>
+      cb(payload as { url: string; level: 'notice' | 'warn'; reasons: string[] })
+    ipcRenderer.on('site:risk', listener)
+    return () => ipcRenderer.removeListener('site:risk', listener)
+  },
   downloadsClear: () => ipcRenderer.invoke('downloads:clear') as Promise<{ ok: boolean }>,
   downloadsOpen: (id: string) =>
     ipcRenderer.invoke('downloads:open', id) as Promise<{ ok: boolean; error?: string }>,

@@ -13,6 +13,7 @@ import { BrowserPanel } from './components/BrowserPanel'
 import type { BrowserDataSnapshot, DownloadRecord } from '../../shared/protocol'
 import { PermissionBar } from './components/PermissionBar'
 import { SettingsPanel } from './components/SettingsPanel'
+import { SiteRiskBar, type SiteRiskNotice } from './components/SiteRiskBar'
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette'
 import type { PermissionAnswer, PermissionAskRequest } from '../../shared/permissions'
 
@@ -119,6 +120,11 @@ export default function App(): React.JSX.Element {
   const [library, setLibrary] = useState<'bookmarks' | 'history' | 'downloads' | null>(null)
   /** 浏览器设置（工具菜单打开；AI 面板不是它的入口）。 */
   const [settingsOpen, setSettingsOpen] = useState(false)
+  /** 真人浏览的可疑站点预警（只提示、不拦截）。 */
+  const [siteRisk, setSiteRisk] = useState<SiteRiskNotice | null>(null)
+  useEffect(() => {
+    return window.cobrowse.onSiteRisk((payload) => setSiteRisk(payload))
+  }, [])
   const [findOpen, setFindOpen] = useState(false)
   const [findText, setFindText] = useState('')
   const [findTabId, setFindTabId] = useState<number | null>(null)
@@ -759,6 +765,7 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       {permAsk && <PermissionBar request={permAsk} onAnswer={answerPermission} />}
+      {siteRisk && <SiteRiskBar notice={siteRisk} onDismiss={() => setSiteRisk(null)} />}
       <CommandPalette
         open={paletteOpen}
         commands={paletteCommands}

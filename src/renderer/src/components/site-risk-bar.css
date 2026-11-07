@@ -1,0 +1,9 @@
+/* 可疑站点预警：复用提示条的位置与形状，但用更中性的配色——
+   这是"提醒"，不是"阻止"，视觉上不应像错误。 */
+.site-risk {
+  border-color: var(--border, rgba(255, 255, 255, 0.16));
+}
+
+.site-risk.warn {
+  border-color: #ffc36b;
+}

@@ -135,6 +135,7 @@ import { PermissionStore } from './permission-store'
 import { PermissionRuntime, type PermissionPrompt, type PromptAnswer } from './permission-runtime'
 import { originOfUrl, type Decision, type PermissionCategory } from '../shared/permissions'
 import { DENIED_GUIDANCE, accessOrigin, decideAccess } from '../shared/access-policy'
+import { assessSiteRisk, shouldWarn } from '../shared/site-risk'
 import { SiteConsentStore } from './site-consent'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
@@ -1721,6 +1722,19 @@ function createWindow(): void {
       if (!incognito && /^https?:\/\//i.test(url))
         browserData.addHistory({ url, title, favicon, visitedAt: Date.now() })
       emitBrowserData()
+      // 真人浏览的可疑站点预警：只提示、不拦截（判定只基于技术事实）
+      const risk = assessSiteRisk(url)
+      if (shouldWarn(risk)) {
+        try {
+          win?.webContents.send('site:risk', {
+            url,
+            level: risk.level,
+            reasons: risk.reasons
+          })
+        } catch {
+          /* window is going away */
+        }
+      }
     },
     (action) => {
       if (

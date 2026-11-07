@@ -2586,5 +2586,41 @@
   "menu.browserSettings": [
     "浏览器设置…",
     "Browser settings…"
+  ],
+  "risk.title": [
+    "{host} 需要注意",
+    "A note about {host}"
+  ],
+  "risk.dismiss": [
+    "知道了",
+    "Got it"
+  ],
+  "risk.insecure": [
+    "连接未加密（HTTP），内容可能被读取或篡改",
+    "Unencrypted connection (HTTP); the content can be read or altered"
+  ],
+  "risk.ipHost": [
+    "直接用 IP 地址访问",
+    "Accessed by raw IP address"
+  ],
+  "risk.punycode": [
+    "域名含编码字符，可能与常见站点形近",
+    "The domain uses encoded characters that can imitate a familiar site"
+  ],
+  "risk.credentials": [
+    "网址里内嵌了用户名或密码",
+    "The URL itself contains a username or password"
+  ],
+  "risk.port": [
+    "使用了非标准端口",
+    "Uses a non-standard port"
+  ],
+  "risk.longHost": [
+    "域名异常长或层级很多",
+    "Unusually long or deeply nested domain"
+  ],
+  "risk.unknown": [
+    "存在值得注意的技术特征",
+    "Has a technical characteristic worth noting"
   ]
 }
