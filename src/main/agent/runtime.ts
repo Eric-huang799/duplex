@@ -49,15 +49,30 @@ const SYSTEM_PROMPT = `你是 Duplex 浏览器的内置操作 agent。你可以�
  * 去掉 `<think>…</think>` 思考块。
  *
  * Qwen3 这类本地模型会把思考过程按标签输出；原样渲染会变成面板里一段
- * 莫名其妙的 `<think></think>` 文本。流式过程中可能只有半个标签，所以
- * 未闭合的开标签之后的内容也一并丢掉。
+ * 莫名其妙的文本。实测比"成对匹配"更难：流式输出时**开标签可能已经被
+ * 上一次剥离吃掉**，只剩一个孤立的 `</think>`。所以规则改成——
+ * 以**最后一个** `</think>` 为界，之前的一律丢弃；没有闭合标签时，
+ * 从 `<think` 开始丢弃。宁可多丢，也不要让思考过程混进回答。
  */
 function stripThink(text: string): string {
-  if (!text.includes('<think')) return text
-  return text
-    .replace(/<think[^>]*>[\s\S]*?<\/think>/gi, '')
-    .replace(/<think[^>]*>[\s\S]*$/i, '')
-    .trim()
+  if (!text) return text
+  let out = text
+  // 1) 成对的块直接删掉（常见情况，一次到位）
+  out = out.replace(/<think[\s\S]*?<\/think>/gi, '')
+
+  // 2) 只剩闭合标签：说明开标签已被吃掉，它之前的内容都是思考
+  const closeAt = out.toLowerCase().lastIndexOf('</think')
+  if (closeAt >= 0) {
+    const end = out.indexOf('>', closeAt)
+    out = end >= 0 ? out.slice(end + 1) : ''
+  }
+
+  // 3) 开标签未闭合：之后都是思考（还在流式中）
+  const openAt = out.toLowerCase().indexOf('<think')
+  if (openAt >= 0) out = out.slice(0, openAt)
+
+  // 4) 顺手清掉模型偶尔附在开头的孤立标点（如 "`,"）
+  return out.replace(/^[\s`,'"，。]+/, '').trim()
 }
 
 /** Base prompt plus the currently enabled skills (progressive disclosure: only name + description here; full instructions come from read_skill). */
