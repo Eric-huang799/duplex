@@ -2502,5 +2502,9 @@
   "menu.askSelection": [
     "问 AI：选中内容",
     "Ask AI about selection"
+  ],
+  "app.takeOver": [
+    "我来接管",
+    "Take over"
   ]
 }

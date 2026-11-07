@@ -2393,6 +2393,20 @@ function setupIpc(): void {
     collaboration.resume(tabId)
     return { ok: true }
   })
+  /**
+   * 一键"我来接管"：把标签置为人工接管态，并中止在途的写操作。
+   * 与用户真的在页面上敲键盘/滚动走的是同一条路径（humanActivity + abortOperation），
+   * 区别只是这里由界面上的一次点击触发——原来只能把方向盘交回给 AI，
+   * 想收回却只能靠"随便动一下页面"。
+   */
+  ipcMain.handle('collaboration:pause', (_e, tabId: number) => {
+    const id = Number(tabId)
+    if (!Number.isInteger(id)) return { ok: false, error: 'bad tab id' }
+    if (!tabs?.getTab(id)) return { ok: false, error: mt('app.tabClosed') }
+    collaboration.humanActivity(id, 'manual')
+    abortOperation({ tabId: id, writesOnly: true })
+    return { ok: true }
+  })
 
   ipcMain.on(
     'overlay:event',

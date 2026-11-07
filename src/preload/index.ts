@@ -344,6 +344,7 @@ const api = {
   },
   collaborationGet: () => ipcRenderer.invoke('collaboration:get') as Promise<CollaborationState>,
   collaborationResume: (tabId: number) => ipcRenderer.invoke('collaboration:resume', tabId) as Promise<{ ok: boolean; error?: string }>,
+  collaborationPause: (tabId: number) => ipcRenderer.invoke('collaboration:pause', tabId) as Promise<{ ok: boolean; error?: string }>,
   onCollaborationState: (cb: (state: CollaborationState) => void): (() => void) => {
     const listener = (_e: unknown, state: CollaborationState): void => cb(state)
     ipcRenderer.on('collaboration:state', listener)

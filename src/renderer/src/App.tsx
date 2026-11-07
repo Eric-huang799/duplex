@@ -794,12 +794,34 @@ export default function App(): React.JSX.Element {
           <div className="collaboration-bar" role="status">
             {aiPaused && <span>{t('app.aiPausedBanner')} <button onClick={() => window.cobrowse.resumeAi()}>{t('app.resumeAi')}</button></span>}
             {confirms.some((c) => c.state === 'pending') && <button onClick={() => { setCollapsed(false); localStorage.setItem('duplex-ai-open', 'true') }}>{t('app.viewPending')}</button>}
-            {collaboration.tabs.filter((tab) => tab.owner || tab.paused).map((state) => (
-              <span key={state.tabId}>
-                {t('app.taskTab', { id: state.tabId })} · {state.paused ? `${t('app.humanTakeover')}${state.reason ? ` (${state.reason})` : ''}` : state.scrolling ? t('app.humanReading') : t('app.aiProcessing')}
-                {(state.paused || state.owner) && <button onClick={() => { void window.cobrowse.collaborationResume(state.tabId).then((r) => { if (!r.ok) showToast(r.error || t('app.resumeFailed')) }) }}>{t('app.resumeTabAi')}</button>}
-              </span>
-            ))}
+            {collaboration.tabs
+              .filter((tab) => tab.owner || tab.paused)
+              // 当前标签排最前：用户最关心的是"我现在这页谁在开"
+              .sort((a, b) => Number(b.tabId === activeTabId) - Number(a.tabId === activeTabId))
+              .map((state) => (
+                <span key={state.tabId} style={state.tabId === activeTabId ? { fontWeight: 600 } : undefined}>
+                  {state.tabId === activeTabId ? '› ' : ''}
+                  {t('app.taskTab', { id: state.tabId })} ·{' '}
+                  {state.paused
+                    ? `${t('app.humanTakeover')}${state.reason ? ` (${state.reason})` : ''}`
+                    : state.scrolling
+                      ? t('app.humanReading')
+                      : t('app.aiProcessing')}
+                  <button
+                    onClick={() => {
+                      // 双向交接：暂停了就把方向盘交回 AI，AI 在开就收回来
+                      const action = state.paused
+                        ? window.cobrowse.collaborationResume(state.tabId)
+                        : window.cobrowse.collaborationPause(state.tabId)
+                      void action.then((r) => {
+                        if (!r.ok) showToast(r.error || t('app.resumeFailed'))
+                      })
+                    }}
+                  >
+                    {state.paused ? t('app.resumeTabAi') : t('app.takeOver')}
+                  </button>
+                </span>
+              ))}
           </div>
         )}
         {findOpen && (

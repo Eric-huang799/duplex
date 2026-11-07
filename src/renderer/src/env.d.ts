@@ -236,6 +236,7 @@ interface CobrowseApi {
   onExternalState(cb: (state: ExternalSessionState | null) => void): () => void
   collaborationGet(): Promise<CollaborationState>
   collaborationResume(tabId: number): Promise<{ ok: boolean; error?: string }>
+  collaborationPause(tabId: number): Promise<{ ok: boolean; error?: string }>
   onCollaborationState(cb: (state: CollaborationState) => void): () => void
   agentsSetMirrorSource(source: 'opencode' | 'external'): Promise<{ ok: boolean }>
   agentsStop(toolId?: string): Promise<{ ok: boolean; killed: number }>
