@@ -43,6 +43,22 @@ const api = {
   }> => ipcRenderer.invoke('site-permissions:get'),
   sitePermissionsClear: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('site-permissions:clear'),
+  sitePermissionSet: (payload: {
+    origin: string
+    category: string
+    decision: 'allow' | 'ask' | 'deny'
+  }): Promise<{ ok: boolean; changed?: boolean; error?: string }> =>
+    ipcRenderer.invoke('site-permissions:set', payload),
+  sitePermissionRemove: (payload: {
+    origin: string
+    category?: string
+  }): Promise<{ ok: boolean; removed: number }> =>
+    ipcRenderer.invoke('site-permissions:remove', payload),
+  probeProvider: (payload: {
+    baseUrl: string
+    model: string
+  }): Promise<{ tools: boolean; contextLength: number | null } | null> =>
+    ipcRenderer.invoke('provider:capabilities', payload),
   setContentBounds: (b: ContentBounds): void => {
     ipcRenderer.send('ui:bounds', b)
   },

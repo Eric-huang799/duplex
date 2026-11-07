@@ -9,6 +9,7 @@ import { ToolCard } from './ToolCard'
 import { PermissionCard, type PermissionRequest } from './PermissionCard'
 import { MarkdownProse } from './Markdown'
 import { ProvidersPanel } from './ProvidersPanel'
+import { SitePermissionsPanel } from './SitePermissionsPanel'
 import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 import { useI18n } from '../i18n'
@@ -165,6 +166,7 @@ export function SidePanel({
   const [autoScroll, setAutoScroll] = useState(true)
   const [sessionMenu, setSessionMenu] = useState(false)
   const [showProviders, setShowProviders] = useState(initialShowProviders ?? false)
+  const [showSitePermissions, setShowSitePermissions] = useState(false)
   const [showSkills, setShowSkills] = useState(false)
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
@@ -642,6 +644,14 @@ export function SidePanel({
           <button className="session-btn" data-panel-toggle="skills" onClick={() => setShowSkills((v) => !v)} title={t('panel.skillsCli')}>
             ✦
           </button>
+          <button
+            className="session-btn"
+            data-panel-toggle="site-permissions"
+            onClick={() => setShowSitePermissions((v) => !v)}
+            title={t('perm.settings.title')}
+          >
+            🛡
+          </button>
           <button className="session-btn" onClick={toggleAgentSessions} title={t('panel.historyChats')}>
             ☰
           </button>
@@ -762,6 +772,10 @@ export function SidePanel({
       )}
 
       {isAgent && showSkills && <SkillsPanel onClose={() => setShowSkills(false)} />}
+
+      {showSitePermissions && (
+        <SitePermissionsPanel onClose={() => setShowSitePermissions(false)} />
+      )}
 
       <div className="panel-list" ref={listRef} onScroll={onScroll}>
         {isAgent ? (

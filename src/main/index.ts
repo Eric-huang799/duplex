@@ -76,6 +76,7 @@ import { AgentRuntime } from './agent/runtime'
 import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { createSitePermissionHandlers } from './agent/permission-tools'
+import { isOllamaEndpoint, probeOllamaModel } from './agent/llm/ollama-native'
 import { importSkillFromFolder, listSkills, removeSkill, setSkillEnabled } from './agent/skills'
 import { importStatus } from './agent/auth-import'
 import { parseNetscapeBookmarks, scanLocalBrowserBookmarks } from './bookmark-import'
@@ -124,7 +125,7 @@ import { configurePlaywright, closePlaywright } from './playwright-browser'
 import { BrowserSessionStore } from './browser-session'
 import { PermissionStore } from './permission-store'
 import { PermissionRuntime, type PermissionPrompt, type PromptAnswer } from './permission-runtime'
-import { originOfUrl } from '../shared/permissions'
+import { originOfUrl, type Decision, type PermissionCategory } from '../shared/permissions'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
@@ -1851,6 +1852,44 @@ function setupIpc(): void {
     permissions?.clearAll()
     return { ok: true }
   })
+  ipcMain.handle(
+    'site-permissions:set',
+    (_e, payload: { origin?: string; category?: string; decision?: string }) => {
+      if (!permissions) return { ok: false, error: 'not-ready' }
+      const decision = payload?.decision
+      if (decision !== 'allow' && decision !== 'ask' && decision !== 'deny') {
+        return { ok: false, error: 'bad-decision' }
+      }
+      const result = permissions.set(
+        typeof payload?.origin === 'string' ? payload.origin : '',
+        (typeof payload?.category === 'string' ? payload.category : '') as PermissionCategory,
+        decision as Decision,
+        'user'
+      )
+      return result
+    }
+  )
+  ipcMain.handle(
+    'site-permissions:remove',
+    (_e, payload: { origin?: string; category?: string }) => {
+      if (!permissions) return { ok: false, removed: 0 }
+      const category = typeof payload?.category === 'string' ? payload.category : undefined
+      return permissions.remove(
+        typeof payload?.origin === 'string' ? payload.origin : '',
+        category as PermissionCategory | undefined
+      )
+    }
+  )
+  // 模型能力探测：把"这个本地模型到底能不能调工具"从猜谜变成可见事实
+  ipcMain.handle(
+    'provider:capabilities',
+    async (_e, payload: { baseUrl?: string; model?: string }) => {
+      const baseUrl = typeof payload?.baseUrl === 'string' ? payload.baseUrl : ''
+      const model = typeof payload?.model === 'string' ? payload.model : ''
+      if (!baseUrl || !model || !isOllamaEndpoint(baseUrl)) return null
+      return await probeOllamaModel(baseUrl, model)
+    }
+  )
   ipcMain.handle('ui:ready', () => {
     const state = {
       tabs: tabs?.list() ?? [],

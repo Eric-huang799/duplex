@@ -2406,5 +2406,57 @@
   "perm.cat.other": [
     "其他权限",
     "other permissions"
+  ],
+  "perm.settings.title": [
+    "站点权限",
+    "Site permissions"
+  ],
+  "perm.settings.empty": [
+    "还没有记录。网页请求摄像头、通知等权限时，地址栏下方会问你；选择「本次及以后允许」就会记在这里。",
+    "Nothing recorded yet. When a page asks for the camera or notifications, the prompt appears under the address bar; choose \"Always allow\" to remember it here."
+  ],
+  "perm.settings.clearAll": [
+    "全部清除",
+    "Clear all"
+  ],
+  "perm.settings.resetOne": [
+    "恢复默认",
+    "Reset"
+  ],
+  "perm.settings.resetOrigin": [
+    "撤销该站点",
+    "Reset site"
+  ],
+  "perm.settings.fromAgent": [
+    "AI 改动",
+    "Changed by AI"
+  ],
+  "perm.settings.fromUser": [
+    "你",
+    "You"
+  ],
+  "perm.dec.allow": [
+    "允许",
+    "Allow"
+  ],
+  "perm.dec.ask": [
+    "询问",
+    "Ask"
+  ],
+  "perm.dec.deny": [
+    "拒绝",
+    "Block"
+  ],
+  "providers.cap.tools": [
+    "支持工具调用",
+    "Tool calling supported"
+  ],
+  "providers.cap.noTools": [
+    "不支持工具调用——换模型才能解决",
+    "No tool support — switch models"
+  ],
+  "providers.cap.context": [
+    "上下文 {n}",
+    "context {n}"
   ]
 }

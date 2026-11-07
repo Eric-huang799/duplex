@@ -1,0 +1,149 @@
+/* 站点权限设置页：沿用面板的排版密度，颜色走主题变量并带兜底。 */
+.site-perm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  font-size: 12.5px;
+  color: var(--text-strong, #f2f4f8);
+}
+
+.site-perm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.site-perm-title {
+  font-weight: 600;
+}
+
+.site-perm-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.site-perm-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.site-perm-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: var(--surface-raised, rgba(255, 255, 255, 0.04));
+}
+
+.site-perm-origin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.site-perm-host {
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.site-perm-src {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
+  color: var(--text-faint, #9aa4b2);
+}
+
+/* AI 改过的规则要一眼能看出来——这是可审计性的关键 */
+.site-perm-src.agent {
+  border-color: #ff9f43;
+  color: #ff9f43;
+}
+
+.site-perm-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.site-perm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
+}
+
+.site-perm-chip b {
+  font-weight: 600;
+}
+
+.site-perm-chip.allow b {
+  color: #4ac97e;
+}
+
+.site-perm-chip.deny b {
+  color: #ff6b6b;
+}
+
+.site-perm-chip.ask b {
+  color: #ffc36b;
+}
+
+.site-perm-x {
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  padding: 0 1px;
+  font-size: 12px;
+}
+
+.site-perm-x:hover {
+  opacity: 1;
+}
+
+.site-perm-btn {
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.16));
+  background: transparent;
+  color: inherit;
+  font-size: 11.5px;
+}
+
+.site-perm-btn.ghost {
+  color: var(--text-faint, #9aa4b2);
+}
+
+.site-perm-btn.small {
+  align-self: flex-start;
+  font-size: 11px;
+}
+
+.site-perm-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.site-perm-empty {
+  color: var(--text-faint, #9aa4b2);
+  line-height: 1.55;
+  font-size: 11.5px;
+}

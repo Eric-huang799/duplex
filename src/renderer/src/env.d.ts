@@ -72,6 +72,19 @@ interface CobrowseApi {
     }>
   }>
   sitePermissionsClear(): Promise<{ ok: boolean }>
+  sitePermissionSet(payload: {
+    origin: string
+    category: string
+    decision: 'allow' | 'ask' | 'deny'
+  }): Promise<{ ok: boolean; changed?: boolean; error?: string }>
+  sitePermissionRemove(payload: {
+    origin: string
+    category?: string
+  }): Promise<{ ok: boolean; removed: number }>
+  probeProvider(payload: {
+    baseUrl: string
+    model: string
+  }): Promise<{ tools: boolean; contextLength: number | null } | null>
   setContentBounds(b: ContentBounds): void
   setChromeOverlay(id: string, open: boolean): void
   tabAction(a: { type: string; url?: string; tabId?: number; value?: number }): Promise<unknown>

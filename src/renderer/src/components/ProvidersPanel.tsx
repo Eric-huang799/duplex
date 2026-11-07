@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { LLM_PROTOCOLS, PROTOCOL_LABELS, type LlmProtocol } from '../../../shared/llm'
 import { hostOfUrl, isTrustedImportedHost } from '../../../shared/trusted-hosts'
 import { useI18n } from '../i18n'
+import { ModelCapability } from './ModelCapability'
 
 type AuthType = 'key' | 'import'
 type AuthSource = 'codex' | 'opencode'
@@ -377,6 +378,7 @@ export function ProvidersPanel({
                       {p.authType === 'import' && t('providers.importSuffix', { src: p.authSource ?? '?' })}
                     </>}
               </div>
+              <ModelCapability baseUrl={p.baseUrl} model={p.model} />
             </div>
             <button
               className="provider-mini"

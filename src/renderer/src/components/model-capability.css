@@ -1,0 +1,29 @@
+/* 模型能力徽标：一行小字，正常不抢视线，不支持工具时明确标红。 */
+.model-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  font-size: 10.5px;
+  color: var(--text-faint, #9aa4b2);
+}
+
+.model-cap-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4ac97e;
+  flex: 0 0 auto;
+}
+
+.model-cap.bad {
+  color: #ff9f43;
+}
+
+.model-cap.bad .model-cap-dot {
+  background: #ff9f43;
+}
+
+.model-cap-ctx {
+  opacity: 0.75;
+}
