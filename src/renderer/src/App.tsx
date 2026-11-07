@@ -12,6 +12,7 @@ import { StartPage } from './components/StartPage'
 import { BrowserPanel } from './components/BrowserPanel'
 import type { BrowserDataSnapshot, DownloadRecord } from '../../shared/protocol'
 import { PermissionBar } from './components/PermissionBar'
+import { CommandPalette, type PaletteCommand } from './components/CommandPalette'
 import type { PermissionAnswer, PermissionAskRequest } from '../../shared/permissions'
 
 export interface LocalMessage {
@@ -65,6 +66,19 @@ export default function App(): React.JSX.Element {
   // 站点权限提示条：主进程只在决策为 ask 时推过来，这里只负责显示与回传答案。
   // origin 一律用主进程给的值，渲染层不推断、不拼接。
   const [permAsk, setPermAsk] = useState<PermissionAskRequest | null>(null)
+
+  // Ctrl+K 命令面板：捕获阶段监听，避免被其它处理器的 preventDefault 吃掉
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return
+      if (e.key.toLowerCase() !== 'k') return
+      e.preventDefault()
+      setPaletteOpen(true)
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [])
   useEffect(() => {
     const offReq = window.cobrowse.onPermissionRequest((req) => setPermAsk(req))
     const offCancel = window.cobrowse.onPermissionCancel(({ id }) =>
@@ -662,10 +676,74 @@ export default function App(): React.JSX.Element {
     }
   }
 
+  const paletteCommands: PaletteCommand[] = [
+    { id: 'newTab', label: t('cmd.newTab'), hint: 'Ctrl+T', run: () => newTab() },
+    {
+      id: 'newIncognito',
+      label: t('cmd.newIncognito'),
+      hint: 'Ctrl+Shift+N',
+      run: () => void window.cobrowse.tabAction({ type: 'newTabIncognito' })
+    },
+    {
+      id: 'reopenClosed',
+      label: t('cmd.reopenClosed'),
+      hint: 'Ctrl+Shift+T',
+      run: () => void window.cobrowse.tabAction({ type: 'reopenClosed' })
+    },
+    ...(activeTabId != null
+      ? [
+          {
+            id: 'closeTab',
+            label: t('cmd.closeTab'),
+            hint: 'Ctrl+W',
+            run: () => void window.cobrowse.tabAction({ type: 'closeTab', tabId: activeTabId })
+          },
+          {
+            id: 'reload',
+            label: t('menu.reload'),
+            hint: 'Ctrl+R',
+            run: () => void window.cobrowse.tabAction({ type: 'reload', tabId: activeTabId })
+          }
+        ]
+      : []),
+    {
+      id: 'toggleAi',
+      label: t('cmd.toggleAi'),
+      hint: 'AI',
+      run: () => {
+        const next = !collapsed
+        setCollapsed(next)
+        localStorage.setItem('duplex-ai-open', String(!next))
+      }
+    },
+    {
+      id: 'annotation',
+      label: t('menu.annotation'),
+      hint: '✎',
+      run: () => void window.cobrowse.annotationToggle()
+    },
+    {
+      id: 'clearHistory',
+      label: t('cmd.clearHistory'),
+      hint: '⌫',
+      run: () => void window.cobrowse.historyClear()
+    },
+    ...tabs.slice(0, 8).map((tab) => ({
+      id: `tab-${tab.id}`,
+      label: t('cmd.switchTo', { title: tab.title || tab.url || `#${tab.id}` }),
+      hint: tab.url,
+      run: () => void window.cobrowse.tabAction({ type: 'switchTab', tabId: tab.id })
+    }))
+  ]
+
   return (
     <div className="app">
       {permAsk && <PermissionBar request={permAsk} onAnswer={answerPermission} />}
-      <div className="left-col">
+      <CommandPalette
+        open={paletteOpen}
+        commands={paletteCommands}
+        onClose={() => setPaletteOpen(false)}
+      />      <div className="left-col">
         <TabBar
           tabs={tabs}
           activeTabId={activeTabId}

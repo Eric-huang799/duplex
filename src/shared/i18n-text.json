@@ -2458,5 +2458,45 @@
   "providers.cap.context": [
     "上下文 {n}",
     "context {n}"
+  ],
+  "cmd.title": [
+    "命令面板",
+    "Command palette"
+  ],
+  "cmd.placeholder": [
+    "输入命令…",
+    "Type a command…"
+  ],
+  "cmd.empty": [
+    "没有匹配的命令",
+    "No matching command"
+  ],
+  "cmd.newTab": [
+    "新建标签页",
+    "New tab"
+  ],
+  "cmd.newIncognito": [
+    "新建隐身标签页",
+    "New incognito tab"
+  ],
+  "cmd.reopenClosed": [
+    "重新打开关闭的标签页",
+    "Reopen closed tab"
+  ],
+  "cmd.closeTab": [
+    "关闭当前标签页",
+    "Close current tab"
+  ],
+  "cmd.toggleAi": [
+    "收起 / 展开 AI 面板",
+    "Toggle AI panel"
+  ],
+  "cmd.clearHistory": [
+    "清空浏览历史",
+    "Clear browsing history"
+  ],
+  "cmd.switchTo": [
+    "切换到「{title}」",
+    "Switch to \"{title}\""
   ]
 }
