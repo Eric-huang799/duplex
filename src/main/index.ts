@@ -134,6 +134,8 @@ import { TimelineStore } from './timeline'
 import { PermissionStore } from './permission-store'
 import { PermissionRuntime, type PermissionPrompt, type PromptAnswer } from './permission-runtime'
 import { originOfUrl, type Decision, type PermissionCategory } from '../shared/permissions'
+import { DENIED_GUIDANCE, accessOrigin, decideAccess } from '../shared/access-policy'
+import { SiteConsentStore } from './site-consent'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
@@ -160,6 +162,8 @@ function isAppRendererUrl(target: string): boolean {
 // 旧实现是"一律拒绝"：全屏、DRM、打印、SSO 存储全被砍掉，且用户无处放行。
 // 现在交给策略内核按类别分级，只有 `ask` 的类别才打扰用户。
 let permissions: PermissionStore | null = null
+/** AI 访问授权表（session / always 两种范围）。 */
+let siteConsent: SiteConsentStore | null = null
 let permissionRuntime: PermissionRuntime | null = null
 /** 渲染层是否已声明支持权限提示条。没有它就不弹窗，直接拒绝（fail-closed）。 */
 let permissionUiReady = false
@@ -257,6 +261,53 @@ function attachCosmeticFiltering(): void {
     })
     wc.on('destroyed', () => cosmeticCssKeys.delete(wc.id))
   })
+}
+
+/**
+ * 硬闸门：AI 访问敏感/未授权站点前的授权检查。
+ *
+ * 提示词只能"要求"模型先问，绕过它的办法太多（换措辞、换标签、改写 URL）。
+ * 所以在主进程执行动作**之前**自己判一次：需要授权就弹确认，用户拒绝就
+ * 直接把工具调用按失败返回，并明确禁止绕过。
+ */
+async function ensureAgentAccess(targetUrl: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!siteConsent) return { ok: true }
+  const verdict = decideAccess({
+    actor: 'agent',
+    url: targetUrl,
+    authorizedOrigins: siteConsent.list(),
+    // 未列出的普通站点目前默认放行；「AI 可访问未授权站点」总闸留作设置项（下一步接线）
+    agentMayBrowseUnlisted: true
+  })
+  if (verdict.decision === 'allow') return { ok: true }
+  if (verdict.decision === 'deny') return { ok: false, error: `${verdict.reason ?? '拒绝访问'}。${DENIED_GUIDANCE}` }
+
+  const origin = accessOrigin(targetUrl) ?? targetUrl
+  const approved = await confirmScript({
+    command: `访问 ${origin}`,
+    cwd: '',
+    skill: '站点访问授权',
+    tool: 'navigate',
+    kind: 'write',
+    preview: `AI 想访问 ${origin}\n类型：${verdict.sensitivity?.reason ?? verdict.reason ?? '未授权站点'}\n授权范围：本次运行`
+  })
+  if (!approved) {
+    logLine(`[consent] 用户拒绝 AI 访问 ${origin}`)
+    return { ok: false, error: `用户没有授权访问 ${origin}。${DENIED_GUIDANCE}` }
+  }
+  siteConsent.authorize(origin, 'session')
+  logLine(`[consent] 用户授权 AI 访问 ${origin}（本次运行）`)
+  timeline?.record({ kind: 'takeover', detail: `授权 AI 访问 ${origin}` })
+  return { ok: true }
+}
+
+function tabUrlOf(tabId: number | null | undefined): string {
+  if (tabId == null) return ''
+  try {
+    return tabs?.getTab(tabId)?.view.webContents.getURL() ?? ''
+  } catch {
+    return ''
+  }
 }
 
 /** 把站点权限策略挂到一个 Session 上（隐身分区传 ephemeral: true，规则不落盘）。 */
@@ -1153,6 +1204,7 @@ async function start(): Promise<void> {
   browserSession = new BrowserSessionStore(cobrowseDir())
   timeline = new TimelineStore(cobrowseDir())
   permissions = new PermissionStore(cobrowseDir())
+  siteConsent = new SiteConsentStore(cobrowseDir())
   permissionRuntime = new PermissionRuntime({
     store: permissions,
     tabIdOf: (wc) => (wc ? findTabIdBySender(wc) : null),
@@ -1263,6 +1315,18 @@ async function start(): Promise<void> {
     const mutates = !PAGE_READ_TOOLS.has(name)
     const ac = beginOperation({ owner: caller, tabId, mutates })
     try {
+      const targetUrlArg =
+        typeof (args as { url?: unknown })?.url === 'string' ? String((args as { url?: unknown }).url) : ''
+      const accessUrl =
+        (name === 'navigate' || name === 'new_tab') && targetUrlArg
+          ? targetUrlArg
+          : tabUrlOf(tabId)
+      if (accessUrl) {
+        const gate = await ensureAgentAccess(accessUrl)
+        if (!gate.ok) {
+          return { isError: true, content: [{ type: 'text', text: gate.error }] }
+        }
+      }
       const invoke = () => execute(name, tabId == null ? args : { ...args, tabId })
       const result = await runInOperation(ac, () => tabId == null ? invoke() : collaboration.run(tabId, caller, mutates, invoke, ac.signal))
       // 旁路审计：AI 在页面上做过什么，落到时间线（写失败不影响调用）
