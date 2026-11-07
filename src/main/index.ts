@@ -1012,6 +1012,27 @@ if (!gotLock) {
 
 async function start(): Promise<void> {
   setMainLanguage(resolveLang(loadSettings().language, app.getLocale()))
+  /**
+   * 去掉 UA 里的 `Electron/x.y.z` 与应用名 token：不少站点据此把浏览器判定为
+   * "非常规客户端"而走降级/挑战流程。
+   *
+   * 刻意**只摘 token、不改 Chrome 版本号**：`navigator.userAgentData` 的品牌与版本
+   * 来自真实引擎，若把 Chrome 版本改高会与它不一致，反而更像伪装浏览器，还可能让
+   * 站点启用本引擎并不具备的特性。
+   *
+   * 必须在任何 webContents 创建之前设置（createWindow 在 start 末尾调用）。
+   */
+  try {
+    const stripped = app.userAgentFallback
+      .replace(/\s?Electron\/[\d.]+/gi, '')
+      .replace(/\s?duplex\/[\d.]+/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+    if (stripped) app.userAgentFallback = stripped
+    logLine(`[ua] ${app.userAgentFallback}`)
+  } catch (error) {
+    logLine(`[ua] 设置失败（保留默认 UA）：${(error as Error)?.message ?? error}`)
+  }
   app.setAppUserModelId('Duplex')
   browserData = new BrowserDataStore(cobrowseDir())
   browserSession = new BrowserSessionStore(cobrowseDir())
