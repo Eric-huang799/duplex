@@ -95,6 +95,22 @@ export default function App(): React.JSX.Element {
     setPermAsk((cur) => (cur && cur.id === id ? null : cur))
     void window.cobrowse.respondPermission(id, answer)
   }, [])
+
+  // 划词即问：主进程推来选中的文字 → 展开侧栏并交给 SidePanel 预填
+  const [selectionAsk, setSelectionAsk] = useState<{
+    text: string
+    url?: string
+    title?: string
+    ts: number
+  } | null>(null)
+  useEffect(() => {
+    return window.cobrowse.onSelectionAsk((payload) => {
+      if (!payload?.text) return
+      setSelectionAsk({ ...payload, ts: Date.now() })
+      setCollapsed(false)
+      localStorage.setItem('duplex-ai-open', 'true')
+    })
+  }, [])
   const [tabs, setTabs] = useState<TabInfo[]>([])
   const [activeTabId, setActiveTabId] = useState<number | null>(null)
   const [browserData, setBrowserData] = useState<BrowserDataSnapshot>({ bookmarks: [], bookmarkFolders: [], history: [], downloads: [] })
@@ -863,6 +879,7 @@ export default function App(): React.JSX.Element {
               confirms={confirms}
               onConfirmRespond={respondConfirm}
               initialShowProviders={initialShowProviders}
+              selectionAsk={selectionAsk}
               onAgentSessionDeleted={() => setAgentEvents([])}
             />
           )}

@@ -61,6 +61,7 @@ interface CobrowseApi {
   permissionUiReady(): Promise<{ ok: boolean }>
   onPermissionRequest(cb: (req: PermissionAskRequest) => void): () => void
   onPermissionCancel(cb: (payload: { id: number }) => void): () => void
+  onSelectionAsk(cb: (payload: { text: string; url?: string; title?: string }) => void): () => void
   respondPermission(id: number, answer: PermissionAnswer): Promise<{ ok: boolean }>
   sitePermissions(): Promise<{
     global: Record<string, string>

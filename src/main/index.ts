@@ -1708,6 +1708,30 @@ function bookmarkAllTabs(): void {
  * Native menu for a right-click on page content. Sections are built from the
  * click context (link / image / selection / editable) and share a common tail.
  */
+/**
+ * 划词即问：把网页里选中的文字交给 AI 面板（展开侧栏并预填到输入框）。
+ *
+ * 走原生右键菜单而不是往每个页面注入浮动按钮——选区文本主进程本来就有
+ * （`context-menu` 的 `selectionText`），少一层"注入到所有网页"的风险。
+ */
+function askAiAboutSelection(text: string, tab: Tab): void {
+  const trimmed = text.trim().slice(0, 4000)
+  if (!trimmed) return
+  let url = ''
+  let title = ''
+  try {
+    url = tab.view.webContents.getURL()
+    title = tab.view.webContents.getTitle()
+  } catch {
+    /* page already gone: the selection is still worth sending */
+  }
+  try {
+    win?.webContents.send('agent:selection', { text: trimmed, url, title })
+  } catch {
+    /* window is going away */
+  }
+}
+
 function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
   const template: MenuItemConstructorOptions[] = []
   const copyText = (text: string, action: string): void => {
@@ -1746,6 +1770,11 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
   }
   if (info.selectionText) {
     const selectionText = info.selectionText
+    // 划词即问：选中文字后直接问 AI，是最高频的入口之一
+    template.push({
+      label: mt('menu.askSelection'),
+      click: () => askAiAboutSelection(selectionText, tab)
+    })
     const engine = loadSettings().searchEngine
     const engineName = SEARCH_ENGINES[engine]?.name ?? SEARCH_ENGINES.baidu.name
     template.push(

@@ -57,6 +57,8 @@ interface Props {
   onConfirmRespond: (id: number, ok: boolean) => void
   onAgentSessionDeleted?: () => void
   initialShowProviders?: boolean
+  /** 划词即问：主进程推来的选中文字（ts 用于去重，同一段只填一次）。 */
+  selectionAsk?: { text: string; url?: string; ts: number } | null
 }
 
 function timeAgo(t: TFn, ts: number): string {
@@ -157,7 +159,8 @@ export function SidePanel({
   confirms,
   onConfirmRespond,
   onAgentSessionDeleted,
-  initialShowProviders
+  initialShowProviders,
+  selectionAsk
 }: Props): React.JSX.Element {
   const { t } = useI18n()
   const [draft, setDraft] = useState(() => loadDraft(mode))
@@ -183,6 +186,23 @@ export function SidePanel({
   const [addBusy, setAddBusy] = useState(false)
   const [dismissedAgentSessionErrTs, setDismissedAgentSessionErrTs] = useState<number | null>(null)
   const composerRef = useRef<HTMLTextAreaElement>(null)
+
+  // 划词即问：把选中的文字以引用块的形式追加到草稿开头，光标留在输入框，
+  // 让用户补一句自己的问题再发送（不替他做决定）。
+  const lastSelectionTs = useRef(0)
+  useEffect(() => {
+    if (!selectionAsk || !selectionAsk.text) return
+    if (selectionAsk.ts === lastSelectionTs.current) return
+    lastSelectionTs.current = selectionAsk.ts
+    const quoted = selectionAsk.text
+      .split(/\n+/)
+      .map((line) => `> ${line}`)
+      .join('\n')
+    const current = draftRef.current
+    const next = current.trim() ? `${quoted}\n\n${current}` : `${quoted}\n\n`
+    updateDraft(next)
+    composerRef.current?.focus()
+  }, [selectionAsk])
   const agentDelTimerRef = useRef<number | null>(null)
 
   const updateDraft = (value: string): void => {

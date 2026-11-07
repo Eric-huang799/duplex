@@ -2498,5 +2498,9 @@
   "cmd.switchTo": [
     "切换到「{title}」",
     "Switch to \"{title}\""
+  ],
+  "menu.askSelection": [
+    "问 AI：选中内容",
+    "Ask AI about selection"
   ]
 }

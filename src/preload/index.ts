@@ -30,6 +30,15 @@ const api = {
     ipcRenderer.on('permission:cancel', listener)
     return () => ipcRenderer.removeListener('permission:cancel', listener)
   },
+  // 划词即问：主进程把网页里选中的文字推过来
+  onSelectionAsk: (
+    cb: (payload: { text: string; url?: string; title?: string }) => void
+  ): (() => void) => {
+    const listener = (_e: unknown, payload: unknown): void =>
+      cb(payload as { text: string; url?: string; title?: string })
+    ipcRenderer.on('agent:selection', listener)
+    return () => ipcRenderer.removeListener('agent:selection', listener)
+  },
   respondPermission: (id: number, answer: PermissionAnswer): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('permission:respond', { id, answer }),
   sitePermissions: (): Promise<{
