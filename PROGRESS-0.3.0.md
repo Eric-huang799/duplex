@@ -97,9 +97,43 @@
 
 ---
 
-## 五、仍未修的已知项（不在本轮范围）
+## 五、独立原型构建（未覆盖安装版）
+
+```
+npx electron-builder --win --dir --publish never --config.directories.output=release-0.3.0-prototype
+→ release-0.3.0-prototype\win-unpacked\Duplex.exe
+```
+
+| 项 | 安装版（0.2.11） | 本次原型 | 差 |
+| --- | --- | --- | --- |
+| 总体积 | 395.8 MB | **348.3 MB** | **−47.5 MB** |
+| `locales` | 55 个 / 48.3 MB | **2 个 / 1.12 MB** | −47.2 MB |
+| `app.asar` | 27.9 MB | 26.7 MB | −1.2 MB |
+
+`%LOCALAPPDATA%\Programs\Duplex` **未被改动**（asar mtime 仍是 10/30 14:50）。原型可直接运行 `release-0.3.0-prototype\win-unpacked\Duplex.exe`，与已装版本互不影响（但注意：两者共用默认数据目录时会被单实例锁挡住，测试请用 `DUPLEX_DATA_DIR`）。
+
+---
+
+## 六、本地模型工具调用改善（2026-11-07 追加）
+
+现象：接 Ollama 等本地模型时"经常无法有效调用工具"。除模型本身能力外，代码侧有三个可改的点：
+
+1. **只认原生 `tool_calls`**：小模型/去审查微调常把调用写成正文（JSON / 代码块 / `<tool_call>` / `name({...})`），运行期拿到零调用就当成普通回答。
+   → 新增 `src/main/agent/llm/tool-repair.ts`，在 `chatStream` 出口统一兜底恢复，**只接受工具名单里的名字**（宁可漏认也不误执行），并把那段文字从回答里摘掉。
+2. **请求参数对本地端点不友好**：原来既不发 `tool_choice`，也没关并行调用，也没控温度。
+   → 带工具时补 `tool_choice: "auto"`、`parallel_tool_calls: false`；**本地端点**再加 `temperature: 0`，并把超长工具描述压到首句（≤280 字符），给真正有用的参数腾上下文。
+3. **上下文不足时静默失败**：`finish_reason === 'length'` 原来被丢弃。
+   → 现在会写一条明确日志（提示换更大模型或调高 `num_ctx`），便于定位"模型好像不会用工具"。
+
+未做（需要进一步验证或产品决策）：Ollama 原生 `/api/chat` 以直接设置 `num_ctx`；工具结果没调通时的自动"再催一次"重试。
+
+新增测试：`tests/tool-repair.test.ts`（11 项）。
+
+
 
 来自 `AUDIT-2026-11-07.md` §〇·补 的进度表，剩两条 + 若干 P2：
+
+## 七、仍未修的已知项（不在本轮范围）
 
 - **P1**：abort 后动作仍在跑却报"已中断" → 客户端重试造成**二次点击**（下单/删除类高风险）
 - **P1**：`settings.json.bak` 保留已清除的 API Key
