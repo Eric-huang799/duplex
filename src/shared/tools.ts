@@ -319,6 +319,34 @@ export const toolDefs: ToolDef[] = [
         .describe('Only this category (omit to clear all rules for the origin)')
     },
     internal: true
+  },
+  {
+    name: 'get_settings_status',
+    description:
+      'Read the browser settings the agent is allowed to change (currently the ad blocker: whether it is on, and how many rules are loaded). Read this before changing anything.',
+    input: {},
+    internal: true
+  },
+  {
+    name: 'set_adblock',
+    description:
+      'Turn the ad blocker on or off for the user. A restore point of the settings is captured before the first agent-driven change, so the user can always ask to undo it. Loopback and non-http(s) traffic is never blocked.',
+    input: {
+      enabled: z.boolean().describe('true = block ads, false = do not block anything')
+    },
+    internal: true
+  },
+  {
+    name: 'restore_settings',
+    description:
+      'Restore the browser settings to the snapshot taken before the agent first changed them. This requires confirm: true because it overwrites the current settings; the pre-restore state is saved alongside as settings.before-restore.json.',
+    input: {
+      confirm: z
+        .boolean()
+        .optional()
+        .describe('Must be true to actually restore; without it the call is refused')
+    },
+    internal: true
   }
 ]
 

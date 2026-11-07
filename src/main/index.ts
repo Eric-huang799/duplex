@@ -77,6 +77,12 @@ import { AgentRuntime } from './agent/runtime'
 import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { createSitePermissionHandlers } from './agent/permission-tools'
+import { createSettingToolHandlers } from './agent/setting-tools'
+import { parseFilterList } from './adblock/filter-list'
+import { AdblockEngine } from './adblock/matcher'
+import { cosmeticCssFor } from './adblock/cosmetic'
+import { saveAdblockEnabled } from './settings'
+import { ensureRestorePoint, restoreFromPoint } from './settings-restore'
 import { isOllamaEndpoint, probeOllamaModel } from './agent/llm/ollama-native'
 import { importSkillFromFolder, listSkills, removeSkill, setSkillEnabled } from './agent/skills'
 import { importStatus } from './agent/auth-import'
@@ -159,6 +165,88 @@ let permissionRuntime: PermissionRuntime | null = null
 let permissionUiReady = false
 /** 等待用户回答的询问：id → 结算函数。 */
 const pendingPermissionPrompts = new Map<number, (answer: PromptAnswer) => void>()
+
+// ─── 广告拦截 ───────────────────────────────────────────────────────────────
+// 网络层由 AdblockEngine 决定 cancel；元素隐藏只注入 display:none 的 CSS，
+// 绝不移除 DOM（AI 的 snapshot 必须和人看到的页面结构一致）。
+let adblock = new AdblockEngine(parseFilterList(''))
+let adblockEnabled = true
+let adblockStats = { accepted: 0, skipped: 0 }
+const cosmeticCssKeys = new Map<number, string>()
+
+function loadAdblockList(): void {
+  let listText = ''
+  try {
+    const file = app.isPackaged
+      ? path.join(process.resourcesPath, 'adblock', 'easylist.txt')
+      : path.join(app.getAppPath(), 'resources', 'adblock', 'easylist.txt')
+    listText = fs.readFileSync(file, 'utf8')
+  } catch {
+    logLine('[adblock] 未找到规则文件，按空列表运行（不拦截）')
+  }
+  const parsed = parseFilterList(listText)
+  adblock = new AdblockEngine(parsed)
+  adblockStats = { accepted: parsed.stats.accepted, skipped: parsed.stats.skipped }
+  logLine(
+    `[adblock] accepted=${adblockStats.accepted} skipped=${adblockStats.skipped} ` +
+      `domains=${adblock.size.domains} regex=${adblock.size.blockRegex} cosmetic=${adblock.size.cosmetic}`
+  )
+}
+
+/** 应用并持久化总开关。改动前先建还原点（AI 也能走这条路径）。 */
+function applyAdblockEnabled(enabled: boolean): { ok: boolean; error?: string } {
+  ensureRestorePoint(cobrowseDir())
+  const saved = saveAdblockEnabled(enabled)
+  adblockEnabled = enabled
+  if (enabled) loadAdblockList()
+  else adblock = new AdblockEngine(parseFilterList(''))
+  return saved.ok ? { ok: true } : { ok: false, error: saved.error }
+}
+
+function attachAdblock(ses: Session): void {
+  // 每个 session 的 onBeforeRequest 只能挂一个监听器；将来别的功能也要用时在此合并
+  ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+    try {
+      callback({ cancel: adblockEnabled && adblock.match(details.url).blocked })
+    } catch {
+      callback({ cancel: false }) // 拦截器故障时永远放行
+    }
+  })
+}
+
+function attachCosmeticFiltering(): void {
+  app.on('web-contents-created', (_event, wc) => {
+    if (wc.getType() !== 'browserView') return // 'window' 是应用自身 UI，不注入
+    const refresh = (): void => {
+      void (async () => {
+        const previous = cosmeticCssKeys.get(wc.id)
+        if (previous) {
+          try {
+            await wc.removeInsertedCSS(previous)
+          } catch {
+            /* frame already gone */
+          }
+          cosmeticCssKeys.delete(wc.id)
+        }
+        if (!adblockEnabled) return
+        const url = wc.getURL()
+        if (!/^https?:/i.test(url)) return
+        const css = cosmeticCssFor(adblock, url)
+        if (!css) return
+        try {
+          cosmeticCssKeys.set(wc.id, await wc.insertCSS(css, { cssOrigin: 'user' }))
+        } catch {
+          /* frame already gone */
+        }
+      })()
+    }
+    wc.on('did-finish-load', refresh)
+    wc.on('did-navigate-in-page', (_e, _url, isMainFrame) => {
+      if (isMainFrame) refresh()
+    })
+    wc.on('destroyed', () => cosmeticCssKeys.delete(wc.id))
+  })
+}
 
 /** 把站点权限策略挂到一个 Session 上（隐身分区传 ephemeral: true，规则不落盘）。 */
 function attachPermissionHandlers(ses: Session, ephemeral = false): void {
@@ -334,6 +422,27 @@ const confirmScript = (payload: {
 const skillHandlers = createSkillToolHandlers(confirmScript)
 /** 站点权限工具：内置 agent 专用；放宽高危类别时会走 confirmScript 让用户点头。 */
 const permHandlers = createSitePermissionHandlers(confirmScript, () => permissions)
+/** 浏览器设置类工具（广告拦截开关 + 恢复还原点）。密码不在其中。 */
+const settingHandlers = createSettingToolHandlers({
+  getAdblock: () => ({
+    enabled: adblockEnabled,
+    domains: adblock.size.domains,
+    regex: adblock.size.blockRegex,
+    cosmetic: adblock.size.cosmetic,
+    accepted: adblockStats.accepted,
+    skipped: adblockStats.skipped
+  }),
+  setAdblock: (enabled) => applyAdblockEnabled(enabled),
+  restore: () => {
+    const result = restoreFromPoint(cobrowseDir())
+    if (result.ok) {
+      adblockEnabled = loadSettings().adblockEnabled
+      if (adblockEnabled) loadAdblockList()
+      else adblock = new AdblockEngine(parseFilterList(''))
+    }
+    return result
+  }
+})
 
 const fsHandlers = createFsToolHandlers((payload) =>
   new Promise<boolean>((resolve) => {
@@ -1068,6 +1177,11 @@ async function start(): Promise<void> {
     new PartialDownloadStore(cobrowseDir())
   )
   const settings = loadSettings()
+  // 广告拦截：先按设置决定是否加载规则，再挂上元素隐藏的注入钩子
+  adblockEnabled = settings.adblockEnabled !== false
+  if (adblockEnabled) loadAdblockList()
+  else logLine('[adblock] 已在设置中关闭')
+  attachCosmeticFiltering()
   nativeTheme.themeSource = settings.theme
   if (settings.aiPaused) {
     // the emergency stop survives restarts until the user explicitly resumes
@@ -1177,7 +1291,7 @@ async function start(): Promise<void> {
   // into the built-in agent path; they go through the same emergency-stop gate
   // and run inside an abortable operation context
   const executeWithSkills: ToolExecutor = async (name, args) => {
-    const h = skillHandlers[name] ?? fsHandlers[name] ?? permHandlers[name]
+    const h = skillHandlers[name] ?? fsHandlers[name] ?? permHandlers[name] ?? settingHandlers[name]
     if (!h) return withCaller('builtin', () => executeWithWake(name, args))
     if (isAiPaused()) {
       logLine('[takeover] AI paused (emergency stop); tool call rejected')
@@ -1578,10 +1692,15 @@ function createWindow(): void {
     },
     (tab, info) => showPageContextMenu(tab, info),
     // 隐身标签用各自的内存分区：挂同一套策略，但规则不落盘
-    (ses) => attachPermissionHandlers(ses, true)
+    (ses) => {
+      attachPermissionHandlers(ses, true)
+      attachAdblock(ses)
+    }
   )
   attachPermissionHandlers(session.defaultSession)
+  attachAdblock(session.defaultSession)
   attachPermissionHandlers(session.fromPartition('persist:cobrowse'))
+  attachAdblock(session.fromPartition('persist:cobrowse'))
   restoringBrowserSession = true
   const savedBrowser = browserSession.read()
   if (savedBrowser?.tabs.length) {

@@ -56,6 +56,7 @@ const cache: {
   searchEngine: SearchEngine
   emergencyStopKeys: string[]
   confirmBeforeDownload: boolean
+  adblockEnabled: boolean
   aiPaused: boolean
   agentAutoContinueRounds: number
   shortcuts: Record<string, string>
@@ -68,6 +69,7 @@ const cache: {
   searchEngine: DEFAULT_ENGINE,
   emergencyStopKeys: [...DEFAULT_STOP_KEYS],
   confirmBeforeDownload: true,
+  adblockEnabled: true,
   aiPaused: false,
   agentAutoContinueRounds: 0,
   shortcuts: {}
@@ -246,6 +248,7 @@ export function loadSettings(): {
   searchEngine: SearchEngine
   emergencyStopKeys: string[]
   confirmBeforeDownload: boolean
+  adblockEnabled: boolean
   aiPaused: boolean
   agentAutoContinueRounds: number
   shortcuts: Record<string, string>
@@ -283,6 +286,7 @@ export function loadSettings(): {
   cache.activeProviderId = norm.activeProviderId
   cache.confirmBeforeDownload =
     typeof raw.confirmBeforeDownload === 'boolean' ? raw.confirmBeforeDownload : true
+  cache.adblockEnabled = typeof raw.adblockEnabled === 'boolean' ? raw.adblockEnabled : true
   cache.aiPaused = raw.aiPaused === true
   cache.agentAutoContinueRounds = Math.max(
     0,
@@ -301,6 +305,7 @@ export function loadSettings(): {
     searchEngine: cache.searchEngine,
     emergencyStopKeys: cache.emergencyStopKeys,
     confirmBeforeDownload: cache.confirmBeforeDownload,
+    adblockEnabled: cache.adblockEnabled,
     aiPaused: cache.aiPaused,
     agentAutoContinueRounds: cache.agentAutoContinueRounds,
     shortcuts: { ...cache.shortcuts }
@@ -401,6 +406,13 @@ export function saveProviders(
 export function saveConfirmBeforeDownload(value: boolean): SaveResult {
   const r = savePatch({ confirmBeforeDownload: !!value })
   if (r.ok) cache.confirmBeforeDownload = !!value
+  return r
+}
+
+/** 广告拦截总开关（默认开）。 */
+export function saveAdblockEnabled(value: boolean): SaveResult {
+  const r = savePatch({ adblockEnabled: !!value })
+  if (r.ok) cache.adblockEnabled = !!value
   return r
 }
 
