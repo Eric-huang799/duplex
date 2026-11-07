@@ -2476,6 +2476,9 @@ function setupIpc(): void {
         { label: mt('menu.libraryBookmarks'), click: () => sendBrowserShortcut('menu:library-bookmarks') },
         { label: mt('menu.libraryHistory'), click: () => sendBrowserShortcut('menu:library-history') },
         { label: mt('menu.libraryDownloads'), click: () => sendBrowserShortcut('menu:library-downloads') },
+        { type: 'separator' },
+        // 浏览器自己的设置（与 AI 面板无关）：广告拦截、回滚 AI 改动等
+        { label: mt('menu.browserSettings'), click: () => sendBrowserShortcut('menu:browser-settings') },
         { label: mt('menu.newIncognitoTab'), click: () => tabs?.createTab(undefined, { incognito: true }) },
         {
           label: mt('menu.autoContinue'),

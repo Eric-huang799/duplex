@@ -2582,5 +2582,9 @@
   "settings.off": [
     "已关闭",
     "Off"
+  ],
+  "menu.browserSettings": [
+    "浏览器设置…",
+    "Browser settings…"
   ]
 }

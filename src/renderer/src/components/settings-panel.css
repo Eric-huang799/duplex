@@ -84,3 +84,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* 浏览器设置以 chrome overlay 的形式出现（与书签/历史/下载同一层），
+   不放在 AI 侧栏里——那里是 AI 的专区。 */
+.settings-sheet {
+  width: min(520px, calc(100vw - 80px));
+  margin: 24px auto;
+  border-radius: 12px;
+  background: var(--surface-raised, #232a36);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  padding: 6px;
+}

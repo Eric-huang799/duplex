@@ -12,6 +12,7 @@ import { StartPage } from './components/StartPage'
 import { BrowserPanel } from './components/BrowserPanel'
 import type { BrowserDataSnapshot, DownloadRecord } from '../../shared/protocol'
 import { PermissionBar } from './components/PermissionBar'
+import { SettingsPanel } from './components/SettingsPanel'
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette'
 import type { PermissionAnswer, PermissionAskRequest } from '../../shared/permissions'
 
@@ -116,6 +117,8 @@ export default function App(): React.JSX.Element {
   const [browserData, setBrowserData] = useState<BrowserDataSnapshot>({ bookmarks: [], bookmarkFolders: [], history: [], downloads: [] })
   const [downloads, setDownloads] = useState<DownloadRecord[]>([])
   const [library, setLibrary] = useState<'bookmarks' | 'history' | 'downloads' | null>(null)
+  /** 浏览器设置（工具菜单打开；AI 面板不是它的入口）。 */
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   const [findText, setFindText] = useState('')
   const [findTabId, setFindTabId] = useState<number | null>(null)
@@ -293,6 +296,7 @@ export default function App(): React.JSX.Element {
       if (action === 'menu:library-bookmarks') setLibrary('bookmarks')
       if (action === 'menu:library-history') window.dispatchEvent(new Event('duplex:open-recent-history'))
       if (action === 'menu:library-downloads') setLibrary('downloads')
+      if (action === 'menu:browser-settings') setSettingsOpen(true)
       if (action === 'menu:stopkeys') window.dispatchEvent(new Event('duplex:open-stopkeys'))
       if (action === 'menu:shortcuts') window.dispatchEvent(new Event('duplex:open-shortcuts'))
     if (action === 'menu:copied-link') showToast(t('app.linkCopied'))
@@ -866,6 +870,13 @@ export default function App(): React.JSX.Element {
             />
           )}
         </div>
+        {settingsOpen && (
+          <div className="library-overlay" style={{ top: contentTop }}>
+            <div className="settings-sheet">
+              <SettingsPanel onClose={() => setSettingsOpen(false)} />
+            </div>
+          </div>
+        )}
         {library && <div className="library-overlay" style={{ top: contentTop }}><BrowserPanel
           section={library} data={browserData} downloads={downloads} onClose={() => setLibrary(null)}
           onNavigate={(url) => { setLibrary(null); navigate(url) }}
