@@ -18,6 +18,7 @@ interface Props {
   onCancelDownload: (id: string) => void
   onClearDownloads: () => void
   onOpenDownload: (id: string) => void
+  onResumeDownload: (id: string) => void
   onRevealDownload: (id: string) => void
   onRefresh?: () => void
 }
@@ -850,7 +851,7 @@ export function BrowserPanel(props: Props): React.JSX.Element {
               <div className="library-file-icon">↓</div><div className="library-row-main"><strong>{row.filename}</strong><small>{row.state === 'progressing' ? `${size(row.receivedBytes)} / ${size(row.totalBytes)}` : row.state === 'completed' ? size(row.totalBytes) : row.state === 'cancelled' ? t('lib.canceled') : t('lib.interrupted')}</small>
                 {row.state === 'progressing' && <div className="download-progress"><i style={{ width: `${pct}%` }} /></div>}
               </div><div className="library-row-actions">
-                {row.state === 'progressing' ? <button onClick={() => props.onCancelDownload(row.id)}>{t('common.cancel')}</button> : <><button disabled={row.state !== 'completed'} onClick={() => props.onOpenDownload(row.id)}>{t('lib.open')}</button><button onClick={() => props.onRevealDownload(row.id)}>{t('lib.folder')}</button></>}
+                {row.state === 'progressing' ? <button onClick={() => props.onCancelDownload(row.id)}>{t('common.cancel')}</button> : <>{row.state === 'interrupted' && <button onClick={() => props.onResumeDownload(row.id)}>{t('lib.resume')}</button>}<button disabled={row.state !== 'completed'} onClick={() => props.onOpenDownload(row.id)}>{t('lib.open')}</button><button onClick={() => props.onRevealDownload(row.id)}>{t('lib.folder')}</button></>}
               </div>
             </article>
           })}

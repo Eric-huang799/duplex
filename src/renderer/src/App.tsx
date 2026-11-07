@@ -875,6 +875,7 @@ export default function App(): React.JSX.Element {
           onCancelDownload={(id) => { void window.cobrowse.downloadsCancel(id) }}
           onClearDownloads={() => { void window.cobrowse.downloadsClear().then(() => window.cobrowse.downloadsList()).then((rows) => applyDownloads(rows, true)) }}
           onOpenDownload={(id) => { void window.cobrowse.downloadsOpen(id).then((r) => { if (!r.ok) showToast(r.error || t('app.openFailed')) }) }}
+          onResumeDownload={(id) => { void window.cobrowse.downloadsResume(id).then((r) => { if (!r.ok) showToast(r.error || t('dl.resumeFailed')) }) }}
           onRevealDownload={(id) => { void window.cobrowse.downloadsReveal(id).then((r) => { if (!r.ok) showToast(r.error || t('app.revealFailed')) }) }}
         /></div>}
       </div>

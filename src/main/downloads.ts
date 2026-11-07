@@ -3,6 +3,8 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { mt } from './i18n'
 import type { BrowserDataStore, DownloadRecord } from './browser-data'
+import { PartialDownloadStore } from './download-partials'
+import { adoptChromiumPartial, resumePartial } from './download-resume'
 
 /** Structured result shared by downloadsOpen / downloadsReveal (surfaced over IPC). */
 export interface DownloadActionResult {
@@ -25,7 +27,9 @@ export class DownloadManager {
      * appears; when false, auto-save into the downloads directory (unique name).
      * Defaults to asking, matching the settings default.
      */
-    private getConfirmBeforeDownload: () => boolean = () => true
+    private getConfirmBeforeDownload: () => boolean = () => true,
+    /** 跨重启续传的登记表（可选：没有它也能用会话内原生续传）。 */
+    private partials?: PartialDownloadStore
   ) {
     this.rows = store.snapshot().downloads
     this.session.on('will-download', (_event, item) => this.begin(item))
@@ -70,6 +74,8 @@ export class DownloadManager {
         row.state = 'interrupted'
         // 原生续传：Chromium 自己按 Range 续，条件是服务端支持分段
         this.scheduleAutoResume(id, item)
+        // 跨重启续传：把 Chromium 的半成品改名收编，登记元数据
+        this.rememberPartial(id, item, row)
       }
       this.upsert(row, false)
       if (!persistTimer) persistTimer = setTimeout(() => { persistTimer = null; this.persist(row) }, 500)
@@ -84,6 +90,7 @@ export class DownloadManager {
       row.totalBytes = item.getTotalBytes()
       row.endedAt = Date.now()
       row.state = state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'interrupted'
+      if (state === 'completed' || state === 'cancelled') this.partials?.discard(id)
       this.upsert(row)
     })
   }
@@ -126,17 +133,81 @@ export class DownloadManager {
     timer.unref?.()
   }
 
+  /** 记下半成品，供重启后继续。 */
+  private rememberPartial(id: string, item: DownloadItem, row: DownloadRecord): void {
+    if (!this.partials) return
+    let target = row.path
+    try {
+      target = item.getSavePath() || target
+    } catch {
+      /* 中断后部分接口会抛错，退回它自己记的路径 */
+    }
+    if (!target) return
+    const temp = adoptChromiumPartial(target, id)
+    if (!temp) return
+    let etag: string | undefined
+    let lastModified: string | undefined
+    try {
+      etag = item.getETag() || undefined
+    } catch {
+      /* 不可用 */
+    }
+    try {
+      lastModified = item.getLastModifiedTime() || undefined
+    } catch {
+      /* 不可用 */
+    }
+    this.partials.put({
+      id,
+      url: item.getURL(),
+      target,
+      temp,
+      receivedBytes: item.getReceivedBytes(),
+      totalBytes: item.getTotalBytes(),
+      ...(etag ? { etag } : {}),
+      ...(lastModified ? { lastModified } : {}),
+      updatedAt: Date.now()
+    })
+  }
+
   /** 手动续传一个中断的下载；服务端不支持 Range 请求时返回失败原因。 */
   resume(id: string): DownloadActionResult {
+    // 1) 本次会话内还在的下载：走 Chromium 原生续传
     const item = this.active.get(id)
-    if (!item) return { ok: false, error: mt('dl.notFound') }
-    try {
-      if (!item.canResume()) return { ok: false, error: mt('dl.cannotResume') }
-      item.resume()
-      return { ok: true }
-    } catch (e) {
-      return { ok: false, error: (e as Error)?.message ?? mt('dl.resumeFailed') }
+    if (item) {
+      try {
+        if (!item.canResume()) return { ok: false, error: mt('dl.cannotResume') }
+        item.resume()
+        return { ok: true }
+      } catch (e) {
+        return { ok: false, error: (e as Error)?.message ?? mt('dl.resumeFailed') }
+      }
     }
+    // 2) 重启之后：用登记的半成品 + Range 请求自己续
+    const meta = this.partials?.get(id)
+    if (!meta) return { ok: false, error: mt('dl.cannotResume') }
+    const row = this.rows.find((entry) => entry.id === id)
+    if (row) {
+      row.state = 'progressing'
+      this.upsert(row)
+    }
+    void resumePartial(meta, (received) => {
+      if (!row) return
+      row.receivedBytes = received
+      this.upsert(row, false)
+    }).then((result) => {
+      if (!row) return
+      if (result.ok) {
+        row.state = 'completed'
+        if (row.totalBytes > 0) row.receivedBytes = row.totalBytes
+        row.endedAt = Date.now()
+        this.partials?.discard(id)
+      } else {
+        row.state = 'interrupted'
+      }
+      this.upsert(row)
+    })
+    return { ok: true }
   }
 
   /** 该下载当前是否可续传（界面据此决定是否显示"继续"）。 */

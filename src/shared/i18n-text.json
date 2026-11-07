@@ -2534,5 +2534,9 @@
   "dl.resumeFailed": [
     "续传失败",
     "Resume failed"
+  ],
+  "lib.resume": [
+    "继续",
+    "Resume"
   ]
 }

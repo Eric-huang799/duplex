@@ -19,6 +19,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { TabManager, type PageContextMenuInfo, type Tab } from './tabs'
 import { BrowserDataStore } from './browser-data'
 import { DownloadManager } from './downloads'
+import { PartialDownloadStore } from './download-partials'
 import { MirrorStore } from './mirror'
 import { createToolExecutor, type ToolExecutor } from './tool-handlers'
 import { startHttpServer, type RunningHttpServer } from './http-server'
@@ -1041,7 +1042,9 @@ async function start(): Promise<void> {
     (rows) => {
       if (win && !win.isDestroyed()) win.webContents.send('downloads:update', rows)
     },
-    () => loadSettings().confirmBeforeDownload
+    () => loadSettings().confirmBeforeDownload,
+    // 跨重启续传：Chromium 的 resume() 出了进程就失效，这里自己记半成品
+    new PartialDownloadStore(cobrowseDir())
   )
   const settings = loadSettings()
   nativeTheme.themeSource = settings.theme
