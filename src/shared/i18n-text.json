@@ -2599,6 +2599,14 @@
     "预置任务",
     "Playbooks"
   ],
+  "panel.modelAccess": [
+    "模型与授权",
+    "Models and access"
+  ],
+  "panel.modelSelect": [
+    "切换模型",
+    "Switch model"
+  ],
   "panel.playbookEta": [
     "约 {n} 分钟",
     "~{n} min"

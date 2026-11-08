@@ -8,8 +8,7 @@ import type { LocalMessage } from '../App'
 import { ToolCard } from './ToolCard'
 import { PermissionCard, type PermissionRequest } from './PermissionCard'
 import { MarkdownProse } from './Markdown'
-import { ProvidersPanel } from './ProvidersPanel'
-import { SitePermissionsPanel } from './SitePermissionsPanel'
+import { ModelAccessPanel } from './ModelAccessPanel'
 import { TimelinePanel } from './TimelinePanel'
 import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
@@ -171,12 +170,14 @@ export function SidePanel({
   const draftModeRef = useRef(mode)
   const [autoScroll, setAutoScroll] = useState(true)
   const [sessionMenu, setSessionMenu] = useState(false)
-  const [showProviders, setShowProviders] = useState(initialShowProviders ?? false)
-  const [showSitePermissions, setShowSitePermissions] = useState(false)
+  /** 合并后的「模型与授权」面板（原来的模型配置 / 站点授权 / 技能三合一）。 */
+  const [showModelAccess, setShowModelAccess] = useState(initialShowProviders ?? false)
+  /** 头部模型下拉的数据源：切换模型是高频动作，不展开面板。 */
+  const [providers, setProviders] = useState<Array<{ id: string; name?: string; model: string }>>([])
+  const [activeProviderId, setActiveProviderId] = useState<string | null>(null)
   const [showPlaybooks, setShowPlaybooks] = useState(false)
   const [showTimeline, setShowTimeline] = useState(false)
   const [notice, setNotice] = useState('')
-  const [showSkills, setShowSkills] = useState(false)
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
   const [externalPending, setExternalPending] = useState(false)
@@ -347,7 +348,25 @@ export function SidePanel({
   const isAgent = mode === 'agent'
 
   const refreshAgentReady = (): void => {
-    void window.cobrowse.agentProviders().then((s) => setAgentReady(s.providers.length > 0))
+    void window.cobrowse.agentProviders().then((s) => {
+      setAgentReady(s.providers.length > 0)
+      setProviders(
+        (s.providers as Array<{ id: string; name?: string; model: string }>).map((p) => ({
+          id: p.id,
+          name: p.name,
+          model: p.model
+        }))
+      )
+      setActiveProviderId(s.activeId ?? s.providers[0]?.id ?? null)
+    })
+  }
+
+  /** 头部下拉切换模型：走与面板里同一套 IPC（会持久化 activeProviderId）。 */
+  const switchProvider = async (id: string): Promise<void> => {
+    if (!id || id === activeProviderId) return
+    const result = await window.cobrowse.agentProviderActivate(id)
+    if (result?.ok) setActiveProviderId(id)
+    refreshAgentReady()
   }
 
   const toggleAgentSessions = (): void => {
@@ -729,19 +748,29 @@ export function SidePanel({
                 ? t('panel.agentReady')
                 : t('panel.agentUnconfigured')}
           </span>
-          <button className="session-btn" data-panel-toggle="providers" onClick={() => setShowProviders((v) => !v)} title={t('panel.modelConfig')}>
-            ⚙
-          </button>
-          <button className="session-btn" data-panel-toggle="skills" onClick={() => setShowSkills((v) => !v)} title={t('panel.skillsCli')}>
-            ✦
-          </button>
+          {/* 模型选择单独放在头部：切换模型是高频动作，不该每次都展开面板 */}
+          {isAgent && providers.length > 0 && (
+            <select
+              className="session-btn model-pick"
+              title={t('panel.modelSelect')}
+              value={activeProviderId ?? ''}
+              onChange={(e) => void switchProvider(e.target.value)}
+              style={{ maxWidth: 150, padding: '2px 4px', fontSize: 11 }}
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name || p.model}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             className="session-btn"
-            data-panel-toggle="site-permissions"
-            onClick={() => setShowSitePermissions((v) => !v)}
-            title={t('perm.settings.title')}
+            data-panel-toggle="model-access"
+            onClick={() => setShowModelAccess((v) => !v)}
+            title={t('panel.modelAccess')}
           >
-            🛡
+            ⚙
           </button>
           <button
             className="session-btn"
@@ -882,14 +911,8 @@ export function SidePanel({
         </>
       )}
 
-      {isAgent && showProviders && (
-        <ProvidersPanel onClose={() => setShowProviders(false)} onChanged={refreshAgentReady} />
-      )}
-
-      {isAgent && showSkills && <SkillsPanel onClose={() => setShowSkills(false)} />}
-
-      {showSitePermissions && (
-        <SitePermissionsPanel onClose={() => setShowSitePermissions(false)} />
+      {showModelAccess && (
+        <ModelAccessPanel onClose={() => setShowModelAccess(false)} onChanged={refreshAgentReady} />
       )}
 
       {showTimeline && <TimelinePanel onClose={() => setShowTimeline(false)} />}
@@ -935,7 +958,7 @@ export function SidePanel({
                   <>
                     {t('panel.noProviders')}
                     <div className="empty-action">
-                      <button className="send-btn" onClick={() => setShowProviders(true)}>
+                      <button className="send-btn" onClick={() => setShowModelAccess(true)}>
                         {t('panel.openConfig')}
                       </button>
                     </div>

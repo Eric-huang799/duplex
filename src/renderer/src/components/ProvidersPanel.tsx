@@ -91,10 +91,13 @@ function newEditing(): EditingState {
  */
 export function ProvidersPanel({
   onClose,
-  onChanged
+  onChanged,
+  embedded = false
 }: {
   onClose: () => void
   onChanged: () => void
+  /** 嵌在「模型与授权」里时不再重复标题与关闭按钮，避免视觉噪音。 */
+  embedded?: boolean
 }): React.JSX.Element {
   const { t } = useI18n()
   const protocolShort = (p: LlmProtocol): string =>
@@ -321,11 +324,17 @@ export function ProvidersPanel({
   return (
     <div className="providers-panel" ref={rootRef}>
       <div className="providers-head">
-        <span>{t('providers.title')}</span>
-        <span className="dim">{t('providers.count', { n: providers.length })}</span>
-        <button className="panel-collapse" title={t('providers.close')} onClick={onClose}>
-          ✕
-        </button>
+        {embedded ? (
+          <span className="dim">{t('providers.count', { n: providers.length })}</span>
+        ) : (
+          <>
+            <span>{t('providers.title')}</span>
+            <span className="dim">{t('providers.count', { n: providers.length })}</span>
+            <button className="panel-collapse" title={t('providers.close')} onClick={onClose}>
+              ✕
+            </button>
+          </>
+        )}
       </div>
 
       <div className="providers-list">

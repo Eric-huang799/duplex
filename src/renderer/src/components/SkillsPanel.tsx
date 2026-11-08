@@ -21,7 +21,14 @@ interface CodexStatus {
  * Skill manager + CLI integration entry: list/import/toggle skills, and set
  * up the MCP connection for Codex / Claude Code.
  */
-export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function SkillsPanel({
+  onClose,
+  embedded = false
+}: {
+  onClose: () => void
+  /** 嵌在「模型与授权」里时隐藏自身标题与关闭按钮。 */
+  embedded?: boolean
+}): React.JSX.Element {
   const { t } = useI18n()
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [codex, setCodex] = useState<CodexStatus | null>(null)
@@ -192,13 +199,17 @@ export function SkillsPanel({ onClose }: { onClose: () => void }): React.JSX.Ele
   return (
     <div className="providers-panel skills-panel" ref={rootRef}>
       <div className="providers-head">
-        <span>Skills</span>
-        <span className="dim">
-          {t('skills.count', { n: skills.length, duplex: duplexCount, claude: claudeCount })}
-        </span>
-        <button className="panel-collapse" title={t('common.close')} onClick={onClose}>
-          »
-        </button>
+        {embedded ? null : (
+          <>
+            <span>Skills</span>
+            <span className="dim">
+              {t('skills.count', { n: skills.length, duplex: duplexCount, claude: claudeCount })}
+            </span>
+            <button className="panel-collapse" title={t('common.close')} onClick={onClose}>
+              »
+            </button>
+          </>
+        )}
       </div>
 
       <div className="providers-list">

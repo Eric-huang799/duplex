@@ -1,0 +1,60 @@
+/* 「模型与授权」合并面板：三个 tab 共用一套外壳，避免三个面板各带一套边框与标题。 */
+.map {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+}
+
+.map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px 4px;
+}
+
+.map-title {
+  font-size: 12.5px;
+}
+
+.map-close {
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: var(--text-faint, #9aa4b2);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.map-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 10px 6px;
+}
+
+.map-tab {
+  flex: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-faint, #9aa4b2);
+  font-size: 11.5px;
+}
+
+.map-tab.on {
+  border-color: var(--border, rgba(255, 255, 255, 0.16));
+  color: inherit;
+}
+
+.map-body {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* 内嵌时子面板不再画自己的外边框，避免出现"框套框" */
+.map-body .providers-panel,
+.map-body .site-perm {
+  border: 0;
+}

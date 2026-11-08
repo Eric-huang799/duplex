@@ -18,7 +18,14 @@ interface OriginRuleView {
  * 这是纯"查看 + 撤销"界面——放行只能通过提示条上的用户点击产生，
  * 以免有人误以为这里能绕过提问直接授权。
  */
-export function SitePermissionsPanel({ onClose }: { onClose: () => void }): React.JSX.Element {
+export function SitePermissionsPanel({
+  onClose,
+  embedded = false
+}: {
+  onClose: () => void
+  /** 嵌在「模型与授权」里时隐藏自身标题与关闭按钮，保留"全部清除"。 */
+  embedded?: boolean
+}): React.JSX.Element {
   const { t } = useI18n()
   const [origins, setOrigins] = useState<OriginRuleView[]>([])
   const [busy, setBusy] = useState(false)
@@ -62,16 +69,18 @@ export function SitePermissionsPanel({ onClose }: { onClose: () => void }): Reac
   return (
     <div className="site-perm">
       <div className="site-perm-head">
-        <span className="site-perm-title">{t('perm.settings.title')}</span>
+        {embedded ? null : <span className="site-perm-title">{t('perm.settings.title')}</span>}
         <span className="site-perm-actions">
           {origins.length > 0 && (
             <button className="site-perm-btn ghost" disabled={busy} onClick={clearAll}>
               {t('perm.settings.clearAll')}
             </button>
           )}
-          <button className="site-perm-btn" onClick={onClose}>
-            ✕
-          </button>
+          {embedded ? null : (
+            <button className="site-perm-btn" onClick={onClose}>
+              ✕
+            </button>
+          )}
         </span>
       </div>
 
