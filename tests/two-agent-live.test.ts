@@ -54,7 +54,10 @@ function provider(): Provider {
 
 const TARGETS: Record<string, string> = {
   按钮: '#probe-btn',
-  输入框: '#probe-input'
+  输入框: '#probe-input',
+  '加数 A': '#probe-a',
+  '加数 B': '#probe-b',
+  求和: '#probe-sum'
 }
 
 interface ToolCall {
@@ -71,7 +74,7 @@ const TOOLS = [
       description: '点击页面上的按钮。target 只能是：按钮',
       parameters: {
         type: 'object',
-        properties: { target: { type: 'string', enum: ['按钮'] } },
+        properties: { target: { type: 'string', enum: ['按钮', '求和'] } },
         required: ['target']
       }
     }
@@ -80,11 +83,14 @@ const TOOLS = [
     type: 'function' as const,
     function: {
       name: 'type',
-      description: '在页面输入框中输入文本（会替换原有内容）。',
+      description: '在指定输入框中输入文本（会替换原有内容）。',
       parameters: {
         type: 'object',
-        properties: { text: { type: 'string' } },
-        required: ['text']
+        properties: {
+          target: { type: 'string', enum: ['输入框', '加数 A', '加数 B'] },
+          text: { type: 'string' }
+        },
+        required: ['target', 'text']
       }
     }
   },
@@ -154,7 +160,8 @@ async function realClick(
   page: Page,
   selector: string
 ): Promise<{ landed: boolean; via: 'mouse' | 'locator'; at: string }> {
-  const before = (await counter(page)) ?? 0
+  const effect = selector === '#probe-sum' ? 'submits' : 'clicks'
+  const before = (await pageState(page))[effect]
   const point = (await page.evaluate((sel: string) => {
     const el = document.querySelector(sel)
     if (!el) return null
@@ -168,14 +175,14 @@ async function realClick(
 
   await page.mouse.click(point.x, point.y)
   await new Promise((resolve) => setTimeout(resolve, 120))
-  if (((await counter(page)) ?? 0) > before) {
+  if ((await pageState(page))[effect] > before) {
     return { landed: true, via: 'mouse', at: `${point.x},${point.y} hit=${point.hit}` }
   }
 
   // 坐标派发没生效：回退到 locator 点击（会滚动进视口再点）
   await page.click(selector, { timeout: 2000 }).catch(() => undefined)
   await new Promise((resolve) => setTimeout(resolve, 120))
-  const landed = ((await counter(page)) ?? 0) > before
+  const landed = (await pageState(page))[effect] > before
   return { landed, via: 'locator', at: `${point.x},${point.y} hit=${point.hit}` }
 }
 
@@ -186,10 +193,34 @@ async function counter(page: Page): Promise<number | null> {
   })) as number | null
 }
 
-async function realType(page: Page, text: string): Promise<void> {
-  await page.click('#probe-input')
-  await page.fill('#probe-input', '')
-  await page.type('#probe-input', text)
+async function realType(page: Page, selector: string, text: string): Promise<void> {
+  await page.click(selector)
+  await page.fill(selector, '')
+  await page.type(selector, text)
+}
+
+/** 页面当前状态：点击次数、表单提交次数与两个加数（用于验证协作是否真的发生）。 */
+async function pageState(page: Page): Promise<{
+  clicks: number
+  input: string
+  submits: number
+  a: string
+  b: string
+  sum: number | null
+}> {
+  return (await page.evaluate(() => {
+    const form = (window as unknown as {
+      __FORM__?: { submits: number; lastSum: number | null }
+    }).__FORM__
+    return {
+      clicks: (window as unknown as { __CLICKS__?: { count: number } }).__CLICKS__?.count ?? -1,
+      input: (document.querySelector('#probe-input') as HTMLInputElement | null)?.value ?? '',
+      submits: form?.submits ?? -1,
+      a: (document.querySelector('#probe-a') as HTMLInputElement | null)?.value ?? '',
+      b: (document.querySelector('#probe-b') as HTMLInputElement | null)?.value ?? '',
+      sum: form?.lastSum ?? null
+    }
+  })) as { clicks: number; input: string; submits: number; a: string; b: string; sum: number | null }
 }
 
 async function runAgent(
@@ -243,16 +274,14 @@ async function runAgent(
           messages.push({ role: 'tool', tool_call_id: call.id, content: 'clicked' })
         } else if (call.name === 'type') {
           const text = String(call.args['text'] ?? '')
-          await arbiter.withTarget(actor, 1, '#probe-input', async () => {
-            await realType(page, text)
+          const selector = TARGETS[String(call.args['target'] ?? '')] ?? TARGETS['输入框']
+          await arbiter.withTarget(actor, 1, selector, async () => {
+            await realType(page, selector, text)
             await new Promise((resolve) => setTimeout(resolve, 60))
           })
-          messages.push({ role: 'tool', tool_call_id: call.id, content: `typed: ${text}` })
+          messages.push({ role: 'tool', tool_call_id: call.id, content: `typed into ${selector}: ${text}` })
         } else {
-          const state = (await page.evaluate(() => ({
-            clicks: (window as unknown as { __CLICKS__?: { count: number } }).__CLICKS__?.count ?? -1,
-            input: (document.querySelector('#probe-input') as HTMLInputElement | null)?.value ?? ''
-          }))) as { clicks: number; input: string }
+          const state = await pageState(page)
           messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(state) })
         }
       } catch (error) {
@@ -295,11 +324,6 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
     })
   }
 
-  const state = async (page: Page): Promise<{ clicks: number; input: string }> =>
-    (await page.evaluate(() => ({
-      clicks: (window as unknown as { __CLICKS__?: { count: number } }).__CLICKS__?.count ?? -1,
-      input: (document.querySelector('#probe-input') as HTMLInputElement | null)?.value ?? ''
-    }))) as { clicks: number; input: string }
 
   const summarize = (metrics: Metrics[]): unknown[] =>
     metrics.map((m) => ({
@@ -336,7 +360,7 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
       )
     ])
     const wallMs = Date.now() - startedAt
-    const final = await state(page)
+    const final = await pageState(page)
     const report = {
       mode: 'parallel',
       wallMs,
@@ -366,7 +390,7 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
       10
     )
     const wallMs = Date.now() - startedAt
-    const final = await state(page)
+    const final = await pageState(page)
     const report = {
       mode: 'sequential-baseline',
       wallMs,
@@ -381,6 +405,51 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
     expect(report.inputCorrect).toBe(true)
   }, 240_000)
 
+  it('真模型协作：一人填一个加数，另一人等到都填好再求和', async () => {
+    const { page } = await connect()
+    await reset(page)
+    const cfg = provider()
+    const arbiter = new MultiAgentArbiter({ navTimeoutMs: 5000 })
+    const startedAt = Date.now()
+    const [planner, filler] = await Promise.all([
+      runAgent(
+        'agent-1',
+        '目标：点击"求和"。规则：你只能填"加数 A"（填 6），绝不能改"加数 B"。每次操作前先 read。' +
+          '如果 read 显示加数 B 仍为空，就继续 read 等待（不要点求和、也不要自己填 B）。' +
+          '等到两个加数都不为空后再点击"求和"，最后 read 一次确认结果。',
+        cfg,
+        page,
+        arbiter,
+        10
+      ),
+      runAgent(
+        'agent-2',
+        '目标：只把"加数 B"填成 7。不要碰"加数 A"，不要点击任何按钮。完成后 read 一次。',
+        cfg,
+        page,
+        arbiter,
+        6
+      )
+    ])
+    const wallMs = Date.now() - startedAt
+    const final = await pageState(page)
+    const report = {
+      mode: 'coupled-form',
+      wallMs,
+      agents: summarize([planner, filler]),
+      final,
+      coordination: {
+        submitExactlyOnce: final.submits === 1,
+        bothFilled: final.a !== '' && final.b !== '',
+        sum: final.sum
+      }
+    }
+    console.log('[dual-agent] coupled:', JSON.stringify(report, null, 2))
+    expect(final.submits).toBe(1)
+    expect(final.a).toBe('6')
+    expect(final.b).toBe('7')
+    expect(final.sum).toBe(13)
+  }, 240_000)
   it('真模型争抢同一个按钮：各点两次，按钮必须正好被点 4 次', async () => {
     const { page, close } = await connect()
     await reset(page)
@@ -392,7 +461,7 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
       runAgent('agent-2', '请点击"按钮"两次。每次都先 read 确认当前计数。', cfg, page, arbiter, 6)
     ])
     const wallMs = Date.now() - startedAt
-    const final = await state(page)
+    const final = await pageState(page)
     const report = {
       mode: 'contention',
       wallMs,

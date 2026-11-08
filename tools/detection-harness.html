@@ -40,6 +40,34 @@
       />
       <span id="probe-input-echo" style="margin-left: 12px; color: #8b98ab"></span>
     </p>
+    <p id="probe-couple">
+      <label style="margin-right: 10px">
+        加数 A
+        <input id="probe-a" inputmode="numeric" style="font: inherit; width: 80px; padding: 6px 10px; border-radius: 8px; border: 1px solid #2a3543; background: #0d1117; color: #e8eef7" />
+      </label>
+      <label style="margin-right: 10px">
+        加数 B
+        <input id="probe-b" inputmode="numeric" style="font: inherit; width: 80px; padding: 6px 10px; border-radius: 8px; border: 1px solid #2a3543; background: #0d1117; color: #e8eef7" />
+      </label>
+      <button id="probe-sum" style="font: inherit; padding: 6px 16px; border-radius: 8px; cursor: pointer">求和</button>
+      <span id="probe-sum-out" style="margin-left: 12px; color: #8b98ab">-</span>
+    </p>
+
+    <script>
+      // 两个 agent 必须协作的任务：一人填一个加数，谁都不能单独完成
+      window.__FORM__ = { submits: 0, lastSum: null, aAtSubmit: '', bAtSubmit: '' }
+      document.getElementById('probe-sum').addEventListener('click', () => {
+        const a = document.getElementById('probe-a').value.trim()
+        const b = document.getElementById('probe-b').value.trim()
+        window.__FORM__.submits += 1
+        window.__FORM__.aAtSubmit = a
+        window.__FORM__.bAtSubmit = b
+        window.__FORM__.lastSum = a === '' || b === '' ? null : Number(a) + Number(b)
+        document.getElementById('probe-sum-out').textContent =
+          a === '' || b === '' ? '两个加数都要填' : String(window.__FORM__.lastSum)
+      })
+    </script>
+
     <script>
       document.getElementById('probe-input').addEventListener('input', (event) => {
         document.getElementById('probe-input-echo').textContent =
