@@ -8,7 +8,7 @@
  *   $env:DUPLEX_LIVE_DUAL_AGENT = '1'
  *   npx vitest run tests/two-agent-live.test.ts
  */
-import { describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { chromium, type Page } from 'playwright-core'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -143,15 +143,47 @@ interface Metrics {
 }
 
 /** 一次真实点击：先拿坐标，再交给浏览器派发（走 Playwright 的 CDP 输入，测量路径）。 */
-async function realClick(page: Page, selector: string): Promise<void> {
+/**
+ * 一次真实点击，并**验证它真的生效**。
+ *
+ * 为什么要回退：坐标派发（`page.mouse.click`）在这条 CDP 连接上会偶发不产生点击
+ * ——计数不动、而输入框写入却成功。测量必须记录"这一下到底有没有落地"，
+ * 否则会把"派发成功"当成人点到了（第一次跑就是这么误判的）。
+ */
+async function realClick(
+  page: Page,
+  selector: string
+): Promise<{ landed: boolean; via: 'mouse' | 'locator'; at: string }> {
+  const before = (await counter(page)) ?? 0
   const point = (await page.evaluate((sel: string) => {
     const el = document.querySelector(sel)
     if (!el) return null
     const rect = el.getBoundingClientRect()
-    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) }
-  }, selector)) as { x: number; y: number } | null
+    const x = Math.round(rect.left + rect.width / 2)
+    const y = Math.round(rect.top + rect.height / 2)
+    const hit = document.elementFromPoint(x, y)
+    return { x, y, hit: hit ? hit.id || hit.tagName : 'none' }
+  }, selector)) as { x: number; y: number; hit: string } | null
   if (!point) throw new Error(`找不到 ${selector}`)
+
   await page.mouse.click(point.x, point.y)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  if (((await counter(page)) ?? 0) > before) {
+    return { landed: true, via: 'mouse', at: `${point.x},${point.y} hit=${point.hit}` }
+  }
+
+  // 坐标派发没生效：回退到 locator 点击（会滚动进视口再点）
+  await page.click(selector, { timeout: 2000 }).catch(() => undefined)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  const landed = ((await counter(page)) ?? 0) > before
+  return { landed, via: 'locator', at: `${point.x},${point.y} hit=${point.hit}` }
+}
+
+async function counter(page: Page): Promise<number | null> {
+  return (await page.evaluate(() => {
+    const w = window as unknown as { __CLICKS__?: { count: number } }
+    return w.__CLICKS__ ? w.__CLICKS__.count : null
+  })) as number | null
 }
 
 async function realType(page: Page, text: string): Promise<void> {
@@ -203,8 +235,9 @@ async function runAgent(
         if (call.name === 'click') {
           const selector = TARGETS[String(call.args['target'] ?? '')] ?? TARGETS['按钮']
           await arbiter.withTarget(actor, 1, selector, async () => {
-            await realClick(page, selector)
-            metrics.clicks++
+            const result = await realClick(page, selector)
+            if (result.landed) metrics.clicks++
+            else metrics.errors.push(`点击未生效（${result.via} @ ${result.at}）`)
             await new Promise((resolve) => setTimeout(resolve, 60))
           })
           messages.push({ role: 'tool', tool_call_id: call.id, content: 'clicked' })
@@ -232,21 +265,58 @@ async function runAgent(
 }
 
 describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
-  it('两个独立模型循环协作：各点两次按钮 + 一方输入文本', async () => {
-    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${devtoolsPort()}`)
-    const pages: Page[] = []
-    for (const context of browser.contexts()) pages.push(...context.pages())
-    const page = pages.find((candidate) => !candidate.url().startsWith('file:'))
-    if (!page) throw new Error('没有可用的网页标签：请先在应用里打开探针页')
+  // 全程共用一个 CDP 连接：每个用例自己 close 连接会让后续用例拿到失去宿主的页面，
+  // 表现为点击确实派发了、但最终计数读到 0（第一次跑就是这样）。
+  let sharedPage: Page | null = null
+  let sharedBrowser: Awaited<ReturnType<typeof chromium.connectOverCDP>> | null = null
 
+  beforeAll(async () => {
+    sharedBrowser = await chromium.connectOverCDP(`http://127.0.0.1:${devtoolsPort()}`)
+    const pages: Page[] = []
+    for (const context of sharedBrowser.contexts()) pages.push(...context.pages())
+    sharedPage = pages.find((candidate) => !candidate.url().startsWith('file:')) ?? null
+  }, 30_000)
+
+  afterAll(async () => {
+    await sharedBrowser?.close().catch(() => undefined)
+  })
+
+  const connect = async (): Promise<{ page: Page; close: () => Promise<void> }> => {
+    const page = sharedPage
+    if (!page) throw new Error('没有可用的网页标签：请先在应用里打开探针页')
+    return { page, close: async () => undefined }
+  }
+
+  const reset = async (page: Page): Promise<void> => {
     await page.goto(PROBE)
     await page.evaluate(() => {
       const w = window as unknown as { __CLICKS__?: { count: number } }
       if (w.__CLICKS__) w.__CLICKS__.count = 0
     })
+  }
 
+  const state = async (page: Page): Promise<{ clicks: number; input: string }> =>
+    (await page.evaluate(() => ({
+      clicks: (window as unknown as { __CLICKS__?: { count: number } }).__CLICKS__?.count ?? -1,
+      input: (document.querySelector('#probe-input') as HTMLInputElement | null)?.value ?? ''
+    }))) as { clicks: number; input: string }
+
+  const summarize = (metrics: Metrics[]): unknown[] =>
+    metrics.map((m) => ({
+      actor: m.actor,
+      modelCalls: m.modelCalls,
+      toolCalls: m.toolCalls,
+      clicks: m.clicks,
+      modelMsTotal: m.waits.reduce((a, b) => a + b, 0),
+      errors: m.errors
+    }))
+
+  it('并行协作：两个独立模型各点两次 + 一方输入文本', async () => {
+    const { page, close } = await connect()
+    await reset(page)
     const cfg = provider()
     const arbiter = new MultiAgentArbiter({ navTimeoutMs: 5000 })
+    const startedAt = Date.now()
     const [agentA, agentB] = await Promise.all([
       runAgent(
         'agent-1',
@@ -265,31 +335,75 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
         6
       )
     ])
-
-    const final = (await page.evaluate(() => ({
-      clicks: (window as unknown as { __CLICKS__?: { count: number } }).__CLICKS__?.count ?? -1,
-      input: (document.querySelector('#probe-input') as HTMLInputElement | null)?.value ?? ''
-    }))) as { clicks: number; input: string }
-
+    const wallMs = Date.now() - startedAt
+    const final = await state(page)
     const report = {
-      agents: [agentA, agentB].map((m) => ({
-        actor: m.actor,
-        modelCalls: m.modelCalls,
-        toolCalls: m.toolCalls,
-        clicks: m.clicks,
-        modelMsTotal: m.waits.reduce((a, b) => a + b, 0),
-        errors: m.errors
-      })),
+      mode: 'parallel',
+      wallMs,
+      agents: summarize([agentA, agentB]),
       final,
-      plannedClicks: 2,
       clickAccuracy: final.clicks === 2 ? 'exact' : final.clicks > 2 ? 'duplicated' : 'missing',
       inputCorrect: final.input === 'duplex'
     }
-    console.log('[dual-agent] report:', JSON.stringify(report, null, 2))
-    await browser.close()
-
-    // 真模型有随机性：这里只断言"没有重复点击"和"输入最终正确"，不断言过程步数
+    console.log('[dual-agent] parallel:', JSON.stringify(report, null, 2))
+    await close()
     expect(report.clickAccuracy).not.toBe('duplicated')
     expect(report.inputCorrect).toBe(true)
+  }, 240_000)
+
+  it('串行基线：同一个模型把两件事都做一遍', async () => {
+    const { page, close } = await connect()
+    await reset(page)
+    const cfg = provider()
+    const arbiter = new MultiAgentArbiter({ navTimeoutMs: 5000 })
+    const startedAt = Date.now()
+    const solo = await runAgent(
+      'agent-solo',
+      '请点击"按钮"两次，然后在"输入框"里输入文本 duplex，最后 read 一次确认。',
+      cfg,
+      page,
+      arbiter,
+      10
+    )
+    const wallMs = Date.now() - startedAt
+    const final = await state(page)
+    const report = {
+      mode: 'sequential-baseline',
+      wallMs,
+      agents: summarize([solo]),
+      final,
+      clickAccuracy: final.clicks === 2 ? 'exact' : final.clicks > 2 ? 'duplicated' : 'missing',
+      inputCorrect: final.input === 'duplex'
+    }
+    console.log('[dual-agent] sequential:', JSON.stringify(report, null, 2))
+    await close()
+    expect(report.clickAccuracy).not.toBe('duplicated')
+    expect(report.inputCorrect).toBe(true)
+  }, 240_000)
+
+  it('真模型争抢同一个按钮：各点两次，按钮必须正好被点 4 次', async () => {
+    const { page, close } = await connect()
+    await reset(page)
+    const cfg = provider()
+    const arbiter = new MultiAgentArbiter({ navTimeoutMs: 5000 })
+    const startedAt = Date.now()
+    const [agentA, agentB] = await Promise.all([
+      runAgent('agent-1', '请点击"按钮"两次。每次都先 read 确认当前计数。', cfg, page, arbiter, 6),
+      runAgent('agent-2', '请点击"按钮"两次。每次都先 read 确认当前计数。', cfg, page, arbiter, 6)
+    ])
+    const wallMs = Date.now() - startedAt
+    const final = await state(page)
+    const report = {
+      mode: 'contention',
+      wallMs,
+      agents: summarize([agentA, agentB]),
+      final,
+      plannedClicks: 4,
+      clickAccuracy: final.clicks === 4 ? 'exact' : final.clicks > 4 ? 'duplicated' : 'missing'
+    }
+    console.log('[dual-agent] contention:', JSON.stringify(report, null, 2))
+    await close()
+    // 真模型可能少数/多算一次，但绝不允许"双击"（4 次变 5、6 次）
+    expect(report.clickAccuracy).not.toBe('duplicated')
   }, 240_000)
 })
