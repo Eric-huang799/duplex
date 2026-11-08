@@ -147,3 +147,46 @@ typecheck  通过（node + web）
 
 这一轮没有把"优化"包装成成功：三次运行里两次模型根本没用新工具，一次用了反而更慢。
 需要更长的任务（多次跨 agent 依赖）才能验证 wait 的真实收益。
+
+## 第五轮：多个**内置**会话并行
+
+之前 `AgentRuntime` 是单例：一个实例装所有会话、同一时刻只跑一个，且工具调用硬编码 `builtin`。
+也就是说"多 agent"只对**外部** agent 成立，内置会话再多也只是同一个人。
+
+现在的做法（`src/main/agent/session-runner.ts`）：
+
+1. **每个后台会话一个 runtime 实例**，各自 `load` 只看见自己那一个会话。
+2. **身份**：工具调用包在 `withCaller('builtin:<sessionId>')` 里，授权 / ref 命名空间 / 仲裁因此按会话隔离。
+3. **保存合并**：后台实例保存时**重新读盘、只替换自己的那条**，不覆盖别的会话。
+4. **协作绑定**：每个后台会话用自己的 caller 绑定标签，互不抢对方的锁。
+5. **事件带 sessionId**：渲染层收到 `agent:background-event`，可以归到对应会话。
+
+IPC：`agent:parallel-start(text, sessionId?)`、`agent:parallel-running()`。
+
+### 实测（真模型，两个会话同时跑）
+
+```json
+{
+  "wallMs": 7115,
+  "starts": [{ "ok": true, "sessionId": "demo-a" }, { "ok": true, "sessionId": "demo-b" }],
+  "toolCounts": { "demo-a": 12, "demo-b": 8 },
+  "final": { "clicks": 2, "input": "duplex" },
+  "callers": ["builtin:demo-a", "builtin:demo-b"]
+}
+```
+
+两个会话都指向同一个标签：demo-a 点按钮两次、demo-b 输入 duplex。**7.1 秒内 20 次工具调用**，
+最终页面状态完全正确（2 次点击、输入框 `duplex`），且两个身份不同。
+
+### 这条路上抓到并修掉的 bug
+
+`sessionCallerId` 最初把非 ASCII 字符全部删掉，于是「会话 一号」和「会话 二号」都变成
+`builtin:session` —— 两个内置会话共用授权与 ref 命名空间，比不隔离更糟。
+现在只要发生截断/清空就拼上原 id 的哈希，测试覆盖了这条。
+
+### 仍然存在的边界
+
+1. 后台会话**没有 UI 表面**：事件已经发到渲染层，但面板还没有"运行中的会话"列表/徽标。
+2. 保存是"读盘-改-写"，同一个会话不会互相覆盖；但多个实例同时写**不同**会话时，
+   仍可能丢掉对方刚写的那一版（窗口毫秒级）。生产化需要一把文件锁。
+3. 主实例仍独占会话列表与 UI 当前会话；后台会话要等一次保存后才出现在列表里。

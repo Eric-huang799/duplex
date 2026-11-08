@@ -76,6 +76,7 @@ import {
 } from './agent/providers'
 import { SessionBus } from './session-bus'
 import { AgentRuntime } from './agent/runtime'
+import { BackgroundSessionRunner, sessionCallerId } from './agent/session-runner'
 import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { createSitePermissionHandlers } from './agent/permission-tools'
@@ -1376,6 +1377,8 @@ function sendToCurrentExternalSession(
 
 let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
+/** 并行内置会话的运行器（窗口创建时装配，演示脚本在 ready-to-show 里用）。 */
+let parallelRunnerRef: BackgroundSessionRunner | null = null
 
 /** Absolute path of the MCP bridge entry point external CLIs (node) will execute. */
 function tUnknown(): string {
@@ -1697,7 +1700,9 @@ async function start(): Promise<void> {
   // and run inside an abortable operation context
   const executeWithSkills: ToolExecutor = async (name, args) => {
     const h = skillHandlers[name] ?? fsHandlers[name] ?? permHandlers[name] ?? settingHandlers[name]
-    if (!h) return withCaller('builtin', () => executeWithWake(name, args))
+    // 身份来自外层：主实例是 builtin，后台并行会话是 builtin:<sessionId>。
+    const owner = currentCaller() === 'direct' ? 'builtin' : currentCaller()
+    if (!h) return withCaller(owner, () => executeWithWake(name, args))
     if (isAiPaused()) {
       logLine('[takeover] AI paused (emergency stop); tool call rejected')
       return {
@@ -1710,9 +1715,9 @@ async function start(): Promise<void> {
         ]
       }
     }
-    const ac = beginOperation({ owner: 'builtin', mutates: true })
+    const ac = beginOperation({ owner, mutates: true })
     try {
-      return await withCaller('builtin', () => runInOperation(ac, () => h(args)))
+      return await withCaller(owner, () => runInOperation(ac, () => h(args)))
     } finally {
       endOperation(ac)
     }
@@ -1744,6 +1749,32 @@ async function start(): Promise<void> {
       cancelTools: () => { abortOperation({ owner: 'builtin' }); denyAllPendingConfirms('builtin') }
     }
   )
+
+  // 并行内置会话：每个后台会话一个 AgentRuntime 实例，工具调用包在它自己的身份里
+  // （builtin:<sessionId>），因此授权、ref 命名空间、仲裁都按会话隔离。
+  const parallelRunner = new BackgroundSessionRunner({
+    makeExecutor: (sessionId) => (name, args) =>
+      withCaller(sessionCallerId(sessionId), () => executeWithSkills(name, args)),
+    getConfig: requireAgentConfig,
+    getActiveTabId: () => tabs?.activeId ?? null,
+    onStart: (callerId, tabId) => {
+      collaboration.release(callerId)
+      if (tabId != null) collaboration.bind(callerId, tabId)
+    },
+    onEnd: (callerId) => collaboration.release(callerId),
+    emit: (sessionId, event) => {
+      try {
+        win?.webContents.send('agent:background-event', { sessionId, event })
+      } catch {
+        /* window closing */
+      }
+    }
+  })
+  ipcMain.handle('agent:parallel-start', (_event, text: unknown, sessionId: unknown) =>
+    parallelRunnerRef!.start(String(text ?? ''), sessionId == null ? undefined : String(sessionId))
+  )
+  parallelRunnerRef = parallelRunner
+  ipcMain.handle('agent:parallel-running', () => parallelRunner.runningIds())
 
   httpServer = await startHttpServer({
     token: TOKEN,
@@ -1997,6 +2028,52 @@ function createWindow(): void {
           logLine(`[arbiter-exp] 报告已写入 ${out}`)
         } catch (error) {
           logLine(`[arbiter-exp] 实验失败：${(error as Error).message}`)
+        }
+      })()
+    }
+
+    // 并行内置会话演示：两个独立 runtime 同时跑，各自身份、各自工具调用。
+    // 双重开关（环境变量 + 一次性 marker），绝不自动重跑。
+    const agentDemoMarker = path.join(app.getPath('userData'), 'run-agent-parallel-demo')
+    if (process.env['DUPLEX_AGENT_PARALLEL_DEMO'] === '1' && fs.existsSync(agentDemoMarker)) {
+      void (async () => {
+        try {
+          fs.unlinkSync(agentDemoMarker)
+          const tab = tabs?.createTab(PROBE_URL)
+          if (!tab) return
+          const wc = tab.view.webContents
+          await new Promise<void>((resolve) => {
+            if (!wc.isLoading()) return resolve()
+            wc.once('did-finish-load', () => resolve())
+            setTimeout(resolve, 8000)
+          })
+          const started = Date.now()
+          const starts = [
+            parallelRunnerRef!.start('点击按钮两次，每次先 snapshot 看一下计数。只用工具，不要写长解释。', 'demo-a'),
+            parallelRunnerRef!.start('在输入框里输入 duplex。只用工具，不要写长解释。', 'demo-b')
+          ]
+          const deadline = Date.now() + 150_000
+          while (parallelRunnerRef!.runningIds().length > 0 && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
+          const raw = await wc.executeJavaScript(
+            'JSON.stringify({ clicks: (window.__CLICKS__ && window.__CLICKS__.count) ?? -1, input: ((document.querySelector("#probe-input") || {}).value) || "" })',
+            true
+          )
+          const report = {
+            startedAt: new Date(started).toISOString(),
+            wallMs: Date.now() - started,
+            starts,
+            toolCounts: parallelRunnerRef!.toolCounts(),
+            stillRunning: parallelRunnerRef!.runningIds(),
+            final: JSON.parse(String(raw)),
+            callers: ['demo-a', 'demo-b'].map((id) => sessionCallerId(id))
+          }
+          const out = path.join(app.getPath('userData'), 'agent-parallel-demo.json')
+          fs.writeFileSync(out, JSON.stringify(report, null, 2), 'utf8')
+          logLine(`[agent-demo] 报告已写入 ${out}`)
+        } catch (error) {
+          logLine(`[agent-demo] 演示失败：${(error as Error).message}`)
         }
       })()
     }
