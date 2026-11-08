@@ -147,6 +147,8 @@ import { assessSiteRisk, shouldWarn } from '../shared/site-risk'
 import { classifySite } from '../shared/sensitive-sites'
 import { detectChallenge, shouldPauseAgent, type ChallengeSignals } from '../shared/challenge'
 import { SiteConsentStore } from './site-consent'
+// 多 agent 仲裁实验：仅在 DUPLEX_ARBITER_EXPERIMENT=1 时启用
+import { runArbiterExperiment } from './arbiter-experiment'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
@@ -1902,6 +1904,33 @@ function createWindow(): void {
   win.on('ready-to-show', () => {
     win?.show()
     win?.focus()
+    // 多 agent 仲裁实验：只在显式开启时跑，产物写到 userData，方便外部读数值。
+    // 实验必须显式开启：环境变量 + 数据目录里的 marker 文件，双重开关。
+    // 只认环境变量会出意外——本机就发生过反复 `electron .` 导致窗口反复弹出/闪烁。
+    const marker = path.join(app.getPath('userData'), 'run-arbiter-experiment')
+    if (process.env['DUPLEX_ARBITER_EXPERIMENT'] === '1' && fs.existsSync(marker)) {
+      void (async () => {
+        try {
+          fs.unlinkSync(marker) // 一次性：跑完即失效，绝不在下次启动时重跑
+          const tab = tabs?.createTab(PROBE_URL)
+          if (!tab) return
+          const wc = tab.view.webContents
+          await new Promise<void>((resolve) => {
+            if (!wc.isLoading()) return resolve()
+            wc.once('did-finish-load', () => resolve())
+            setTimeout(resolve, 8000)
+          })
+          // 真实输入需要 webContents 有焦点；但抢焦点会打扰用户，
+          // 所以实验默认走 CDP 派发（只影响测量路径，不影响产品行为）。
+          const report = await runArbiterExperiment({ page: wc, log: logLine })
+          const out = path.join(app.getPath('userData'), 'arbiter-experiment.json')
+          fs.writeFileSync(out, JSON.stringify(report, null, 2), 'utf8')
+          logLine(`[arbiter-exp] 报告已写入 ${out}`)
+        } catch (error) {
+          logLine(`[arbiter-exp] 实验失败：${(error as Error).message}`)
+        }
+      })()
+    }
   })
 
   win.on('closed', () => {
@@ -2262,6 +2291,8 @@ function askAiAboutSelection(text: string, tab: Tab): void {
  *  3. 状态是拉取式的，UI 自己轮询，主进程不推事件。
  */
 const requireFromMain = createRequire(import.meta.url)
+/** 多 agent 仲裁实验用的本地探针页（tools/probe-server.mjs）。 */
+const PROBE_URL = 'http://127.0.0.1:8799/'
 
 function updateFeedConfigured(): boolean {
   // `DUPLEX_UPDATE_FEED=0/1` 只用于已打包构建的 staging 开关：
