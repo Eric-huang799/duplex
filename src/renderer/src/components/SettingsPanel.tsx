@@ -21,6 +21,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [consents, setConsents] = useState<string[]>([])
+  const [rulesNote, setRulesNote] = useState('')
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -42,6 +43,27 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
       const result = await window.cobrowse.settingsAdblockSet(!adblock.enabled)
       setNote(result.ok ? '' : (result.error ?? 'failed'))
       await refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const refreshRules = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setRulesNote(t('settings.refreshing'))
+    try {
+      const result = await window.cobrowse.settingsAdblockRefresh()
+      setRulesNote(
+        t('settings.refreshed', {
+          domains: result.domains,
+          regex: result.regex,
+          cosmetic: result.cosmetic
+        })
+      )
+      await refresh()
+    } catch {
+      setRulesNote(t('settings.refreshFailed'))
     } finally {
       setBusy(false)
     }
@@ -83,6 +105,12 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
           <div className="setp-label">{t('settings.adblock')}</div>
           <div className="setp-hint">{t('settings.adblockHint')}</div>
           {rulesLine && <div className="setp-hint">{rulesLine}</div>}
+          <div className="setp-inline">
+            <button className="setp-btn" disabled={busy} onClick={() => void refreshRules()}>
+              {t('settings.refreshRules')}
+            </button>
+            {rulesNote && <span className="setp-hint">{rulesNote}</span>}
+          </div>
         </div>
         <button
           className={`setp-switch ${adblock?.enabled ? 'on' : ''}`}

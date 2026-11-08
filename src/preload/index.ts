@@ -105,6 +105,13 @@ const api = {
   }> => ipcRenderer.invoke('settings:adblock-status'),
   settingsAdblockSet: (enabled: boolean): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:adblock-set', enabled),
+  settingsAdblockRefresh: (): Promise<{
+    ok: boolean
+    enabled: boolean
+    domains: number
+    regex: number
+    cosmetic: number
+  }> => ipcRenderer.invoke('settings:adblock-refresh'),
   settingsRestorePreAi: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:restore-pre-ai'),
   settingsConsents: (): Promise<{ origins: string[] }> => ipcRenderer.invoke('settings:consents'),

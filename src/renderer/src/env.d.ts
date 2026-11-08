@@ -104,6 +104,13 @@ interface CobrowseApi {
   downloadsCanResume(id: string): Promise<boolean>
   settingsAdblockStatus(): Promise<{ enabled: boolean; domains: number; regex: number; cosmetic: number }>
   settingsAdblockSet(enabled: boolean): Promise<{ ok: boolean; error?: string }>
+  settingsAdblockRefresh(): Promise<{
+    ok: boolean
+    enabled: boolean
+    domains: number
+    regex: number
+    cosmetic: number
+  }>
   settingsRestorePreAi(): Promise<{ ok: boolean; error?: string }>
   settingsConsents(): Promise<{ origins: string[] }>
   settingsConsentRevoke(origin: string): Promise<{ ok: boolean; removed: boolean }>

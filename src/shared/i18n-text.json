@@ -2579,6 +2579,22 @@
     "已开启",
     "On"
   ],
+  "settings.refreshRules": [
+    "更新规则",
+    "Update rules"
+  ],
+  "settings.refreshing": [
+    "正在拉取规则…",
+    "Fetching rules…"
+  ],
+  "settings.refreshed": [
+    "已更新：{domains} 域名 / {regex} 正则 / {cosmetic} 隐藏规则",
+    "Updated: {domains} domains / {regex} regex / {cosmetic} hiding rules"
+  ],
+  "settings.refreshFailed": [
+    "更新失败，仍使用现有规则",
+    "Update failed; keeping the current rules"
+  ],
   "settings.off": [
     "已关闭",
     "Off"

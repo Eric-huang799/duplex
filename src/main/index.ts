@@ -181,7 +181,11 @@ const pendingPermissionPrompts = new Map<number, (answer: PromptAnswer) => void>
 let adblock = new AdblockEngine(parseFilterList(''))
 let adblockEnabled = true
 let adblockStats = { accepted: 0, skipped: 0 }
+/** 最近一次规则加载的来源（'network' / 'cache' / 'empty'），供设置界面显示。 */
+let adblockRuleSource = 'unknown'
 const cosmeticCssKeys = new Map<number, string>()
+/** 每个 contents 上一次注入的 CSS 文本，避免同一页面重复注入同一份规则。 */
+const cosmeticLastText = new Map<number, string>()
 
 function applyRuleText(listText: string, source: string): void {
   const parsed = parseFilterList(listText)
@@ -238,11 +242,12 @@ function netFetchText(url: string): Promise<RuleFetchResult> {
 }
 
 /** 启动后异步拉取规则：不阻塞窗口，失败退回缓存，全部失败就继续不拦截。 */
-async function refreshAdblockRules(): Promise<void> {
+async function refreshAdblockRules(force = false): Promise<void> {
   try {
     const source = new RuleSource({ directory: cobrowseDir() }, netFetchText)
-    const outcome = await source.load()
+    const outcome = await (force ? source.refresh() : source.load())
     if (!adblockEnabled) return
+    adblockRuleSource = outcome.source
     logLine(
       `[adblock] rules source=${outcome.source} bytes=${outcome.text.length} ` +
         `detail=${JSON.stringify(outcome.perUrl.map((entry) => ({ ok: entry.ok, bytes: entry.bytes, error: entry.error })))}`
@@ -292,6 +297,13 @@ function attachCosmeticFiltering(): void {
     if (!win || wc.id === win.webContents.id) return
     const refresh = (): void => {
       void (async () => {
+        if (!adblockEnabled) return
+        const url = wc.getURL()
+        if (!/^https?:/i.test(url)) return
+        const css = cosmeticCssFor(adblock, url)
+        if (!css) return
+        // 同一 contents 的同一份规则不重复注入（多事件会触发多次）
+        if (cosmeticLastText.get(wc.id) === css && cosmeticCssKeys.has(wc.id)) return
         const previous = cosmeticCssKeys.get(wc.id)
         if (previous) {
           try {
@@ -301,13 +313,9 @@ function attachCosmeticFiltering(): void {
           }
           cosmeticCssKeys.delete(wc.id)
         }
-        if (!adblockEnabled) return
-        const url = wc.getURL()
-        if (!/^https?:/i.test(url)) return
-        const css = cosmeticCssFor(adblock, url)
-        if (!css) return
         try {
           cosmeticCssKeys.set(wc.id, await wc.insertCSS(css, { cssOrigin: 'user' }))
+          cosmeticLastText.set(wc.id, css)
           logLine(`[adblock] 元素隐藏已注入 bytes=${css.length} url=${url.slice(0, 80)}`)
         } catch {
           /* frame already gone */
@@ -318,7 +326,10 @@ function attachCosmeticFiltering(): void {
     wc.on('did-navigate-in-page', (_e, _url, isMainFrame) => {
       if (isMainFrame) refresh()
     })
-    wc.on('destroyed', () => cosmeticCssKeys.delete(wc.id))
+    wc.on('destroyed', () => {
+      cosmeticCssKeys.delete(wc.id)
+      cosmeticLastText.delete(wc.id)
+    })
   })
 }
 
@@ -2465,7 +2476,10 @@ function setupIpc(): void {
     enabled: adblockEnabled,
     domains: adblock.size.domains,
     regex: adblock.size.blockRegex,
-    cosmetic: adblock.size.cosmetic
+    cosmetic: adblock.size.cosmetic,
+    source: adblockRuleSource,
+    accepted: adblockStats.accepted,
+    skipped: adblockStats.skipped
   }))
   ipcMain.handle('settings:adblock-set', (_e, enabled: unknown) => {
     if (typeof enabled !== 'boolean') return { ok: false, error: 'bad-request' }
@@ -2473,6 +2487,16 @@ function setupIpc(): void {
     return result.ok
       ? { ok: true, enabled: adblockEnabled, domains: adblock.size.domains }
       : { ok: false, error: result.error }
+  })
+  ipcMain.handle('settings:adblock-refresh', async () => {
+    await refreshAdblockRules(true)
+    return {
+      ok: true,
+      enabled: adblockEnabled,
+      domains: adblock.size.domains,
+      regex: adblock.size.blockRegex,
+      cosmetic: adblock.size.cosmetic
+    }
   })
   ipcMain.handle('settings:restore-pre-ai', () => {
     const result = restorePreAiSettings()
