@@ -131,6 +131,7 @@ import { isLlmProtocol } from '../shared/llm'
 import { duplexShimEnv, ensureOpenShim, extractHttpUrl } from './open-shim'
 import { CollaborationCoordinator, currentCaller, PAGE_READ_TOOLS, withCaller } from './collaboration'
 import { configurePlaywright, closePlaywright, aiInputSuppressUntil } from './playwright-browser'
+import { setIoLogger } from './cdp'
 import { BrowserSessionStore } from './browser-session'
 import { TimelineStore } from './timeline'
 import { PermissionStore } from './permission-store'
@@ -1344,6 +1345,8 @@ if (!gotLock) {
 
 async function start(): Promise<void> {
   setMainLanguage(resolveLang(loadSettings().language, app.getLocale()))
+  // 让 cdp 层的"读操作走进程内/回退 CDP"这类事实落到 app.log，便于复查
+  setIoLogger(logLine)
   /**
    * 去掉 UA 里的 `Electron/x.y.z` 与应用名 token：不少站点据此把浏览器判定为
    * "非常规客户端"而走降级/挑战流程。

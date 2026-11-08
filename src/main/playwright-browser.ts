@@ -509,6 +509,21 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
     }
     case 'screenshot': {
       const fullPage = args.fullPage === true
+      // 视口截图用进程内 capturePage：不需要 Playwright 会话，也就没有 CDP 附着。
+      // 整页截图仍走 Playwright（captureBeyondViewport 在进程内没有等价能力）。
+      if (!fullPage) {
+        try {
+          const shot = (await tab.view.webContents.capturePage()).toPNG()
+          if (shot.length > 100) {
+            cdp.logIo(`[io] 截图走进程内 capturePage（${shot.length} 字节）`)
+            checkCancelled()
+            return { png: shot.toString('base64') }
+          }
+          cdp.logIo(`[io] 截图回退 Playwright：capturePage 返回空图（${shot.length} 字节）`)
+        } catch (error) {
+          cdp.logIo(`[io] 截图回退 Playwright：${(error as Error)?.message ?? error}`)
+        }
+      }
       if (fullPage && await page.evaluate(() => document.documentElement.scrollHeight) > 20000) throw new Error('页面过长，请使用视口截图')
       const png = await page.screenshot({ type: 'png', fullPage, timeout: 5000 })
       checkCancelled()

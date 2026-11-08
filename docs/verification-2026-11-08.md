@@ -235,12 +235,31 @@ CDP 的 DOM 与截图能力。所以"彻底去 CDP"还没有完成，剩下的�
 
 ---
 
+## 五点六、读操作进程内化（"去掉 CDP"的最后一块）
+
+原来所有读取都经过 `src/main/cdp.ts` 的 `evalInPage`：先 `webContents.debugger.attach('1.3')`
+再发 `Runtime.evaluate`——**附着 DevTools 协议本身就是站点侧可探测的信号**。
+
+现在 `evalInPage` 优先 `webContents.executeJavaScript`（进程内、不需要附着），失败才回退 CDP，
+并把走了哪条路径写进 `app.log`：
+
+```
+[io] eval 走进程内执行（无 debugger 附着）        ← snapshot / query / get_html / 标注取样
+[io] 截图走进程内 capturePage（92991 字节）      ← 视口截图
+```
+
+**仍然依赖 CDP 的地方（诚实列出）**：整页截图（`captureBeyondViewport` 没有进程内等价物）、
+`type`/`scroll`/`press` 的按键与滚轮序列、点击时用 Playwright 解析元素坐标。
+结论：**读路径已经不需要 DevTools 附着了；动作路径还有一部分在。**
+
+---
+
 ## 六、没做完的（明确列出，不冒充完成）
 
 1. **`type` / `scroll` / `press` 仍走 CDP**。本轮只迁了点击类动作；输入与滚动要模拟
    真实按键序列与滚轮事件，工作量更大，而且 `type` 还需要处理 IME 与逐字输入。
-2. **`snapshot` / `query` / `screenshot` 仍依赖 CDP**——所以 CDP 会话暂时还拿不掉，
-   §五点五 的结论仍然成立：去 CDP 的下半场是"快照与查询进程内化"。
+2. **整页截图仍走 CDP**（进程内 `capturePage` 只有视口）。
+3. **点击仍用 Playwright 解析坐标**——读不再是瓶颈，动作是。
 2. **UA-CH brands 仍是 Chromium**（需品牌化构建，见 §5.1）。
 3. **`data-page-token` 仍是一个属性**，只是不再带产品名。彻底方案是改成不落 DOM 的
    Symbol 属性或主进程侧映射，会牵动标注/导航校验，单独一轮做。

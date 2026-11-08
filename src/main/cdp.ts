@@ -1,6 +1,21 @@
 import type { Tab } from './tabs'
 import { operationSignal } from './interrupt'
 
+/**
+ * 诊断日志出口。主进程在启动时注入 `logLine`，这样"读操作是否走进程内"
+ * 这类事实能落到 app.log 里可被复查，而不是只出现在打不开的 stdout。
+ */
+let ioLog: (message: string) => void = (message) => console.log(message)
+
+export function setIoLogger(logger: (message: string) => void): void {
+  ioLog = logger
+}
+
+/** 供其它模块复用同一条诊断日志通道。 */
+export function logIo(message: string): void {
+  ioLog(message)
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -27,7 +42,35 @@ export async function cdp(
   return tab.view.webContents.debugger.sendCommand(method, params)
 }
 
+/** 读操作走进程内执行时只记录一次，便于在日志里区分两条路径。 */
+let inProcessEvalLogged = false
+let cdpEvalLogged = false
+
+/**
+ * 在页面里执行一段表达式。
+ *
+ * 优先用 `webContents.executeJavaScript`（进程内，**不需要 debugger 附着**），
+ * 失败才退回 DevTools 协议。这是"去掉 CDP 痕迹"的最后一块：
+ * snapshot / query / get_html / 标注取样全靠它，原来每次都 `debugger.attach('1.3')`，
+ * 而那正是站点侧最容易探测到的信号之一。
+ */
 export async function evalInPage<T = unknown>(tab: Tab, expression: string): Promise<T> {
+  if (operationSignal()?.aborted) throw new Error('操作已被用户中断')
+  const wc = tab.view.webContents
+  try {
+    const value = (await wc.executeJavaScript(expression, true)) as T
+    if (!inProcessEvalLogged) {
+      inProcessEvalLogged = true
+      ioLog('[io] eval 走进程内执行（无 debugger 附着）')
+    }
+    return value
+  } catch (error) {
+    // 极少数情况（例如 CSP 或执行上下文已销毁）会失败，退回 CDP 保证功能不退化
+    if (!cdpEvalLogged) {
+      cdpEvalLogged = true
+      ioLog(`[io] eval 回退 CDP：${(error as Error)?.message ?? error}`)
+    }
+  }
   const res = await cdp(tab, 'Runtime.evaluate', {
     expression,
     returnByValue: true,
@@ -278,7 +321,25 @@ export async function setFileInputFiles(
   return { ok: true }
 }
 
+let inProcessShotLogged = false
+
 export async function captureScreenshot(tab: Tab, fullPage: boolean): Promise<string> {
+  // 视口截图用进程内的 capturePage（不需要 debugger）；
+  // 整页截图仍走 CDP 的 captureBeyondViewport，进程内没有等价能力。
+  if (!fullPage) {
+    try {
+      const image = await tab.view.webContents.capturePage()
+      const png = image.toPNG()
+      if (png.length < 100) throw new Error(`capturePage 返回空图（${png.length} 字节）`)
+      if (!inProcessShotLogged) {
+        inProcessShotLogged = true
+        ioLog(`[io] 截图走进程内 capturePage（${png.length} 字节）`)
+      }
+      return png.toString('base64')
+    } catch (error) {
+      ioLog(`[io] 截图回退 CDP：${(error as Error)?.message ?? error}`)
+    }
+  }
   const res = await cdp(tab, 'Page.captureScreenshot', {
     format: 'png',
     captureBeyondViewport: fullPage
