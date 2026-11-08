@@ -14,6 +14,7 @@ import { TimelinePanel } from './TimelinePanel'
 import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 import { useI18n } from '../i18n'
+import { mirrorKey } from '../../../shared/mirror-key'
 import type { I18nKey } from '../../../shared/i18n'
 
 type TFn = (key: I18nKey, vars?: Record<string, string | number>) => string
@@ -133,12 +134,11 @@ function MirrorItem({ ev, pendingToolId }: { ev: MirrorEvent; pendingToolId?: nu
 /**
  * 流式快照每来一次都会生成**新的** `ev.id`，而 `partID` 才是"同一条消息"的
  * 稳定身份。用 id 当 key 会让 React 每次卸载重建这个组件——展开的工具卡自动
- * 收起、思考块闪断、整段 Markdown 重新解析。长会话里这就是"卡"的主要来源。
+ * 收起、思考块闪断、整段 Markdown 重新解析（issue #4）。
+ *
+ * 实现已抽到 `src/shared/mirror-key.ts`，并由 `tests/mirror-key.test.ts` 钉住，
+ * 防止后续改动又退回 `ev.id`。
  */
-function mirrorKey(ev: MirrorEvent): string {
-  const partID = (ev as { partID?: string }).partID
-  return partID ? `${ev.kind}:${partID}` : `${ev.kind}:${ev.id}`
-}
 
 /**
  * 未变化的条目 `ev` 引用保持不变（`mergeMirror` 只替换命中的那一条），
