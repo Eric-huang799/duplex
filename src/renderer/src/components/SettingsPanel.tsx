@@ -42,8 +42,19 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
     }
   }
 
+  // 发现新版本后自动轮询状态：模块是拉取式的，不轮询就永远停在 "available"
+  useEffect(() => {
+    if (update.state !== 'available' && update.state !== 'downloading') return
+    const timer = window.setInterval(() => {
+      void window.cobrowse.updateStatus().then(setUpdate)
+    }, 2000)
+    return () => window.clearInterval(timer)
+  }, [update.state])
+
   const installUpdate = async (): Promise<void> => {
-    await window.cobrowse.updateInstall()
+    const result = await window.cobrowse.updateInstall()
+    // 安装没启动（例如还没到 ready）必须给反馈，不能静默
+    if (!result.ok) setNote(t('settings.updateInstallFailed'))
   }
 
   const refresh = useCallback(async (): Promise<void> => {

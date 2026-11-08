@@ -145,7 +145,7 @@ import { originOfUrl, type Decision, type PermissionCategory } from '../shared/p
 import { DENIED_GUIDANCE, accessOrigin, decideAccess } from '../shared/access-policy'
 import { assessSiteRisk, shouldWarn } from '../shared/site-risk'
 import { classifySite } from '../shared/sensitive-sites'
-import { detectChallenge, shouldPauseAgent } from '../shared/challenge'
+import { detectChallenge, shouldPauseAgent, type ChallengeSignals } from '../shared/challenge'
 import { SiteConsentStore } from './site-consent'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
@@ -282,7 +282,9 @@ function restorePreAiSettings(): { ok: boolean; error?: string } {
   adblockEnabled = loadSettings().adblockEnabled !== false
   if (adblockEnabled) loadAdblockList()
   else adblock = new AdblockEngine(parseFilterList(''))
-  permissions = new PermissionStore(cobrowseDir())
+  // 刻意**不重建** PermissionStore：还原点只备份 settings.json，permissions.json 没变；
+  // 而 permissionRuntime 构造时按值捕获了实例，重建会让运行期判权用旧实例、
+  // 并把用户新改的规则用旧快照覆盖掉。
   return { ok: true }
 }
 
@@ -426,10 +428,11 @@ function attachChallengeWatch(): void {
     // 唯一可靠的判据是身份：应用自己的 UI 就是 win.webContents。
     if (!win || wc.id === win.webContents.id) return
     wc.on('did-finish-load', () => {
+      void (async () => {
       try {
-        const url = wc.getURL()
-        const title = wc.getTitle()
-        const verdict = detectChallenge({ url, title })
+        const signals = await challengeSignalsFor(wc)
+        const url = signals.url
+        const verdict = detectChallenge(signals)
         if (!verdict.challenge) {
           challengeContents.delete(wc.id)
           return
@@ -455,15 +458,41 @@ function attachChallengeWatch(): void {
       } catch {
         /* 页面已销毁 */
       }
+      })()
     })
     wc.on('did-navigate', () => challengeContents.delete(wc.id))
     wc.on('destroyed', () => challengeContents.delete(wc.id))
   })
 }
 
+/**
+ * 收集挑战判定需要的页面信号。
+ *
+ * 只喂 url/title 是不够的：reCAPTCHA / hCaptcha / Turnstile / 极验 都以 **iframe** 形态
+ * 出现，页面正文里的"请完成安全验证"也不在标题里。只按 url/title 判，最常见的情形
+ * （登录页内嵌 reCAPTCHA）永远不触发停手——单测里那些用例等于覆盖了生产走不到的路径。
+ */
+async function challengeSignalsFor(wc: WebContents): Promise<ChallengeSignals> {
+  let frames: Array<{ url?: string }> = []
+  try {
+    frames = wc.mainFrame.framesInSubtree.map((frame) => ({ url: frame.url }))
+  } catch {
+    /* 帧树不可用（页面销毁中） */
+  }
+  let text = ''
+  try {
+    text = (await wc.executeJavaScript(
+      'document.body ? String(document.body.innerText || "").slice(0, 4000) : ""',
+      false
+    )) as string
+  } catch {
+    /* 导航竞态：拿不到正文就只按 url/title/frames 判 */
+  }
+  return { url: wc.getURL(), title: wc.getTitle(), frames, text }
+}
+
 /** 由 webContents 反查标签号。 */
-function tabIdOfContents(wc: Electron.WebContents): number | null {
-  for (const info of tabs?.list() ?? []) {
+function tabIdOfContents(wc: Electron.WebContents): number | null {  for (const info of tabs?.list() ?? []) {
     const tab = tabs?.getTab(info.id)
     if (tab?.view.webContents.id === wc.id) return info.id
   }
@@ -1519,7 +1548,7 @@ async function start(): Promise<void> {
           'resume_tab'
         ])
         if (!CHALLENGE_SAFE_TOOLS.has(name) && !PAGE_READ_TOOLS.has(name) && contents) {
-          const live = detectChallenge({ url: contents.getURL(), title: contents.getTitle() })
+          const live = detectChallenge(await challengeSignalsFor(contents))
           if (shouldPauseAgent(live)) {
             challengeContents.add(contents.id)
             return {
@@ -1541,10 +1570,21 @@ async function start(): Promise<void> {
     try {
       const targetUrlArg =
         typeof (args as { url?: unknown })?.url === 'string' ? String((args as { url?: unknown }).url) : ''
+      // 闸门必须按**解析后的落地 URL** 判。只喂原始参数的话，`mail.google.com`
+      // 或 `//mail.google.com` 这种无 scheme 写法会让 accessOrigin 返回 null、
+      // decideAccess 直接放行，随后 resolveAddress 才补成 https 并加载。
+      let resolvedTarget = targetUrlArg
+      if (targetUrlArg) {
+        try {
+          const addr = resolveAddress(targetUrlArg)
+          // 搜索词不指向站点，按原文判（不会有敏感站点被放行的问题）
+          resolvedTarget = addr.kind === 'url' ? addr.url : targetUrlArg
+        } catch {
+          resolvedTarget = targetUrlArg
+        }
+      }
       const accessUrl =
-        (name === 'navigate' || name === 'new_tab') && targetUrlArg
-          ? targetUrlArg
-          : tabUrlOf(tabId)
+        (name === 'navigate' || name === 'new_tab') && resolvedTarget ? resolvedTarget : tabUrlOf(tabId)
       if (accessUrl) {
         const gate = await ensureAgentAccess(accessUrl)
         if (!gate.ok) {
@@ -2224,9 +2264,11 @@ function askAiAboutSelection(text: string, tab: Tab): void {
 const requireFromMain = createRequire(import.meta.url)
 
 function updateFeedConfigured(): boolean {
+  // `DUPLEX_UPDATE_FEED=0/1` 只用于已打包构建的 staging 开关：
+  // 未打包时一律 false，让"开发态绝不联网检查更新"是代码保证而不是上游实现细节。
+  if (!app.isPackaged) return false
   if (process.env['DUPLEX_UPDATE_FEED'] === '0') return false
   if (process.env['DUPLEX_UPDATE_FEED'] === '1') return true
-  if (!app.isPackaged) return false
   try {
     return fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
   } catch {
@@ -3074,6 +3116,20 @@ function setupIpc(): void {
     (timeline?.recent(Number(limit) || 120) ?? [])
   )
   /**
+   * 导出文件名用的本地时间戳。
+   * 用本地时间而不是 UTC：UTC+8 下晚上导出的文件会看着差 8 小时，
+   * 与 printing.ts 的 `suggestedPdfName` 口径也不一致。
+   */
+  const localStamp = (): string => {
+    const now = new Date()
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    return (
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+      `T${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`
+    )
+  }
+
+  /**
    * 对话导出：把一次 AI 会话写成可分享的 Markdown。
    * 渲染层只传事件与标题，文件名与落盘全在主进程决定（渲染层不能传路径）。
    */
@@ -3091,7 +3147,7 @@ function setupIpc(): void {
           appVersion: app.getVersion(),
           model: payload?.model
         })
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+        const stamp = localStamp()
         const file = path.join(app.getPath('downloads'), `duplex-transcript-${stamp}.md`)
         fs.mkdirSync(path.dirname(file), { recursive: true })
         fs.writeFileSync(file, markdown, 'utf8')
@@ -3104,7 +3160,7 @@ function setupIpc(): void {
   ipcMain.handle('timeline:export', () => {
     if (!timeline) return { ok: false, error: 'not-ready' }
     try {
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+      const stamp = localStamp()
       const file = path.join(app.getPath('downloads'), `duplex-timeline-${stamp}.md`)
       fs.writeFileSync(file, timeline.toMarkdown(300), 'utf8')
       return { ok: true, file }

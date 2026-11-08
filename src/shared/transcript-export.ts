@@ -30,19 +30,37 @@ const MAX_TITLE = 120
 const MAX_TOOL_ARGS = 240
 const MAX_TOOL_RESULT = 300
 
-/** 密钥键名：JSON 引号、= / : 赋值、纯文本都覆盖，值整段替换成 ***。 */
+/**
+ * 密钥键名：JSON 引号、= / : 赋值、纯文本都覆盖，值整段替换成 ***。
+ *
+ * 刻意**不含** authorization / cookie：它们的值允许空格（"Authorization: Basic xxx"、
+ * "Cookie: a=b; c=d"），通用规则会在第一个空格处截断，反而漏掉真正的内容；
+ * 这两种形态由下面两条专用正则整行处理。
+ */
 const SECRET_KEY_RE =
-  /(^|[^\w-])(["']?)(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|token|password|passwd|secret|密码|密钥|令牌)\2(\s*[:=：]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&)}\]]+)/gi
+  /(^|[^\w-])(["']?)(api[_-]?key|x[_-]?api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|token|password|passwd|secret|密码|密钥|令牌)\2(\s*[:=：]\s*)(?:"[^"]*"|'[^']*'|[^\s,;&)}\]]+)/gi
 
 /** URL 里的 user:pass@ 只保留协议和主机，账号密码整段打码。 */
 const URL_CREDENTIAL_RE = /(\bhttps?:\/\/)[^\s/@:]+:[^\s/@]+@/gi
 
 const BEARER_RE = /\bBearer\s+[A-Za-z0-9._~+/\-=]{3,}/gi
+/**
+ * `Authorization: Basic xxx` / `Authorization: Token xxx` 这类非 Bearer 值。
+ *
+ * 注意 lookahead 必须**自己吃掉空白**（`(?![ \t]*Bearer\b)`）：写成
+ * `(\s*[:=]\s*)(?!Bearer)` 时，`\s*` 会回溯到零宽、于是 lookahead 看到的是空格
+ * 而不是 "Bearer"，整行照样被吞掉——Bearer 前缀就丢了。
+ */
+const AUTHORIZATION_VALUE_RE =
+  /\b(authorization\s*[:=][ \t]*)(?![ \t]*Bearer\b)[^\r\n]{3,}/gi
+/** `Cookie: a=b; c=d` 整段打码；值里本来就有分号，不能用通用键名正则。 */
+const COOKIE_VALUE_RE = /\b((?:set-)?cookie\s*[:=]\s*)[^\r\n]{3,}/gi
+
 const SK_KEY_RE = /\bsk-[A-Za-z0-9_-]{3,}/g
 
 /** 参数对象的键名命中这些词时，值整段替换（含嵌套对象），不依赖值本身的长相。 */
 const SECRET_KEY_NAME_RE =
-  /api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|token|password|passwd|secret|密码|密钥|令牌/i
+  /api[_-]?key|x[_-]?api[_-]?key|authorization|cookie|set[_-]?cookie|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|token|password|passwd|secret|密码|密钥|令牌/i
 
 /** 单行剪裁：多行结果压成一行，超长加省略号。 */
 function clipInline(input: string, max: number): string {
@@ -56,6 +74,9 @@ function redactText(input: string): string {
     URL_CREDENTIAL_RE,
     (_match, scheme: string) => `${scheme}${REDACTED}@`
   )
+  // 先处理整行形态的头，再走通用键名规则，避免被截断成半个值
+  text = text.replace(AUTHORIZATION_VALUE_RE, (_match, head: string) => `${head}${REDACTED}`)
+  text = text.replace(COOKIE_VALUE_RE, (_match, head: string) => `${head}${REDACTED}`)
   text = text.replace(BEARER_RE, `Bearer ${REDACTED}`)
   text = text.replace(
     SECRET_KEY_RE,

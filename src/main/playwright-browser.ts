@@ -297,7 +297,7 @@ async function inputAction(
   wc.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
   if (mode === 'hover') return { x: point.x, y: point.y }
   // 先开抑制窗口：overlay 的 humanActivity 必须把这次输入认成 AI 的
-  inputSuppressUntil = Date.now() + 1200
+  inputSuppressUntil = Date.now() + 400
   const clickCount = mode === 'double' ? 2 : 1
   wc.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount })
   wc.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount })

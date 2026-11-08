@@ -2663,6 +2663,10 @@
     "此构建未配置更新源（源码构建请自行更新）",
     "This build has no update feed (source builds update by pulling)"
   ],
+  "settings.updateInstallFailed": [
+    "更新尚未就绪，暂时无法重启安装",
+    "The update is not ready yet; cannot restart to install"
+  ],
   "settings.off": [
     "已关闭",
     "Off"
