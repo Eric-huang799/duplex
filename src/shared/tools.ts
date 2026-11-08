@@ -288,11 +288,17 @@ export const toolDefs: ToolDef[] = [
   {
     name: 'run_command',
     description:
-      'Run a shell command (cmd/PowerShell on Windows) and return its output (exit code + stdout/stderr). Every command must be approved by the user in a confirmation dialog. Use it to run scripts provided by a skill (set cwd to the skill directory) or scripts you created with write_file.',
+      'Run a shell command (cmd/PowerShell on Windows) and return its output (exit code + stdout/stderr). Every command must be approved by the user in a confirmation dialog. Use it to run scripts provided by a skill (set cwd to the skill directory) or scripts you created with write_file. Starting something long-lived (a server, a watcher) is fine: commands that print nothing for silent_ms are treated as background processes and return immediately with a PID instead of blocking the turn.',
     input: {
       command: z.string().describe('Full command line'),
       cwd: z.string().optional().describe('Working directory (defaults to the home directory)'),
-      timeout_ms: z.number().optional().describe('Timeout in ms (default 120000, max 600000)')
+      timeout_ms: z.number().optional().describe('Timeout in ms (default 120000, max 600000)'),
+      silent_ms: z
+        .number()
+        .optional()
+        .describe(
+          'Treat the command as a background process if it prints nothing for this long (default 15000). Raise it for slow silent steps such as long builds.'
+        )
     },
     internal: true
   },

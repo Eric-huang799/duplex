@@ -153,3 +153,21 @@ describe('fs-tools run_command', () => {
     expect(elapsed).toBeLessThan(8000)
   }, 15_000)
 })
+
+describe('run_command 的后台常驻处理（卡死回归）', () => {
+  it('长时间无输出的命令按后台处理并立刻返回，而不是等到 timeout', async () => {
+    const { fn } = makeConfirm(true)
+    const handlers = createFsToolHandlers(fn)
+    const started = Date.now()
+    // 一个会一直运行且不输出、并且会保持管道打开的命令（正是用户遇到的那类）
+    const res = await handlers.run_command({
+      command: 'node -e "setTimeout(()=>{}, 60000)"',
+      timeout_ms: 60000,
+      silent_ms: 1500
+    })
+    const elapsed = Date.now() - started
+    const text = String((res.content?.[0] as { text?: string } | undefined)?.text ?? '')
+    expect(text).toMatch(/按后台常驻处理/)
+    expect(elapsed).toBeLessThan(8000)
+  }, 20000)
+})

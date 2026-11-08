@@ -23,6 +23,20 @@ export type FsConfirmFn = (payload: {
 
 const PREVIEW_LIMIT = 2000
 
+/**
+ * 识别"启动一个后台服务"的命令。
+ *
+ * 为什么要特判：`start "" /min python -m http.server` 这类命令里，服务进程会
+ * 继承 cmd 的 stdout/stderr 管道，父 shell 虽然立刻退出，但管道永远不 EOF，
+ * 于是工具调用要等到 timeout（默认 120s）才返回——用户看到的就是"卡住"。
+ * 这类命令直接以 detached + 忽略 stdio 的方式启动，立刻返回 PID。
+ */
+export function isDetachedCommand(command: string): boolean {
+  const text = command.trim()
+  if (!text) return false
+  return /^(?:start(?:\s|"|$)|start-process\s)/i.test(text)
+}
+
 /** A ≤2000-char preview with an explicit truncation marker. */
 function contentPreview(content: string): string {
   if (content.length <= PREVIEW_LIMIT) return content
@@ -109,6 +123,9 @@ export function createFsToolHandlers(
         Math.max(Number(args.timeout_ms ?? 120_000) || 120_000, 1000),
         600_000
       )
+      // 长时间无输出就当成后台常驻：像 `powershell -Command "Start-Process ..."`
+      // 这种写法同样会让子进程继承管道，只按命令长相识别不可靠。
+      const silentMs = Math.min(Math.max(Number(args.silent_ms ?? 15_000) || 15_000, 1000), timeoutMs)
       const ok = await interruptibleAwait(confirm({ kind: 'command', detail: command, cwd }), false)
       if (!ok) {
         return operationSignal()?.aborted
@@ -116,6 +133,37 @@ export function createFsToolHandlers(
           : text('用户拒绝了该命令，未执行。')
       }
       if (operationSignal()?.aborted) return text('已被用户急停中断（本次命令未执行）')
+
+      // 服务类命令（start / Start-Process）不等退出：它们会保持 stdout 管道打开，
+      // 等下去只能等到 timeout（用户看到的就是卡死）。立刻后台启动并回报 PID。
+      if (isDetachedCommand(command)) {
+        return await new Promise<ToolResult>((resolve) => {
+          let child: ReturnType<typeof spawn>
+          try {
+            child = spawn(command, {
+              cwd,
+              shell: true,
+              windowsHide: true,
+              detached: true,
+              stdio: 'ignore',
+              env: duplexShimEnv(ensureOpenShim())
+            })
+          } catch (error) {
+            resolve(errorText(`启动失败：${(error as Error).message}`))
+            return
+          }
+          child.on('error', (error) => resolve(errorText(`启动失败：${error.message}`)))
+          child.unref()
+          resolve(
+            text(
+              `已在后台启动（PID ${child.pid ?? '未知'}）：${command}\n` +
+                '这个命令不会随本次调用返回输出。请用 navigate / evaluate 验证服务是否就绪；' +
+                '需要停止时用 run_command 执行 taskkill。'
+            )
+          )
+        })
+      }
+
       return await new Promise<ToolResult>((resolve) => {
         const MAX_OUTPUT = 4 * 1024 * 1024
         let killTimer: ReturnType<typeof setTimeout> | null = null
@@ -216,6 +264,28 @@ export function createFsToolHandlers(
           timedOut = true
           killTree()
         }, timeoutMs)
+        // 无输出看门狗：silentMs 内完全没有输出且进程还活着 → 判定为后台常驻，
+        // 断开读端并 unref，让工具立刻返回（进程继续跑），而不是等到 timeout。
+        //
+        // 调用方显式给了更短的 timeout 时以"超时并终止"为准——那种场景下静默看门狗没有意义，
+        // 还会让本该被 kill 的进程漏掉（单测就是这么发现它的）。
+        if (silentMs < timeoutMs) {
+          const silentTimer = setTimeout(() => {
+            if (settled) return
+            try {
+              child.stdout?.destroy()
+              child.stderr?.destroy()
+            } catch {
+              /* 管道可能已关闭 */
+            }
+            child.unref()
+            finish(`${silentMs / 1000}s 内没有任何输出，按后台常驻处理（PID ${child.pid ?? '未知'}）`)
+          }, silentMs)
+          const stopSilent = (): void => clearTimeout(silentTimer)
+          child.stdout?.on('data', stopSilent)
+          child.stderr?.on('data', stopSilent)
+          child.on('close', stopSilent)
+        }
       })
     }
   }
