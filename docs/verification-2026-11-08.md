@@ -1,0 +1,164 @@
+# 实测报告：自动化特征 / 广告拦截 / 验证码交接
+
+> 2026-11-08 · 分支 `feat/ollama-native` · 原型 `release-0.3.0-prototype`（348 MB）
+> 数据来源：运行中的实例 + 本地探针页，不是推断。
+
+---
+
+## 一、方法：自己造一个"能看见自己"的页面
+
+站点判定机器人的第一手依据，是页面里能被读到的信号。所以我们先造一个探针页，把**页面能看到的自己**列出来：
+
+```
+node tools/probe-server.mjs 8799     # 本地静态服务
+# 应用内打开 http://127.0.0.1:8799/
+# 然后 evaluate: return window.__PROBE__()
+```
+
+探针覆盖：`navigator.webdriver`、UA / UA-CH brands、语言/插件/时区/硬件、WebGL 供应商、
+我们自己的 DOM 属性与全局变量、ChromeDriver/Puppeteer/Playwright 常见全局、
+以及"被替换过的方法是否还带 `[native code]`"。
+
+---
+
+## 二、修复前后的真实对比
+
+| 信号 | 修复前 | 修复后 | 判定依据 |
+| --- | --- | --- | --- |
+| `navigator.webdriver` | **true** | **false** | 最强、最直接的"这是机器人"标记 |
+| UA 里的产品 token | 已无 Electron/app token | 无 | 早前已处理 |
+| 我们自己的 DOM 属性 | `data-duplex-document` | `data-page-token`（不再带产品名） | 唯一指纹 |
+| 我们自己的全局变量 | `__duplexEvaluations` 常驻 | 仅在 evaluate 执行期间存在 | 用完即删 |
+| ChromeDriver/Puppeteer/Playwright 全局 | 无 | 无 | — |
+| 原生方法完整性 | 全部 native | 全部 native | 未被替换 |
+| UA-CH brands | `Chromium/152` | 同左（**未解决**） | 见 §五 |
+
+`navigator.webdriver` 的根因不是"我们像爬虫"，而是**嵌入方式的副产物**：应用为了自动化开了
+`remote-debugging-port`，Playwright 通过 CDP 接管后，Blink 就把这个标记置为 true。
+修法是关掉 `AutomationControlled` 这个 blink feature——引擎行为一点没变，只是不再对外
+宣布"我是被自动化驱动的"。**这不是破解验证码**，验证码交给用户（见 §四）。
+
+---
+
+## 三、广告拦截：从"空转"到真的拦
+
+### 3.1 规则来源（启动时联网拉取 + 缓存回退）
+
+```
+[adblock] rules source=network bytes=2080206
+[adblock] source=network accepted=68504 skipped=10094 domains=44700 regex=9 cosmetic=23787
+```
+
+- 首次启动：联网拉取 2,080,206 字节 → **68,504 条规则**（44,700 域名 / 9 正则 / 23,787 元素隐藏）
+- 二次启动：`source=cache`（7 天 TTL 内不再请求），规则数一致
+- 中国区列表原来的 URL 是 404，已换成 Adblock Plus 下载站地址
+- 请求走 Electron `net`（跟随系统代理）——本机不走代理到不了外网
+
+### 3.2 拦截是否生效（页面内实测）
+
+```js
+fetch('https://securepubads.g.doubleclick.net/tag/js/gpt.js')
+  → BLOCKED (Failed to fetch)          ✅ 被拦
+fetch('https://example.com/favicon.ico')
+  → ALLOWED                            ✅ 正常放行
+```
+
+`googletagmanager` / `google-analytics` 放行是**正确行为**：EasyList 本身不拦它们（那是 EasyPrivacy 的职责）。
+
+### 3.3 三条安全线（单测覆盖）
+
+- 回环地址（localhost / 127.0.0.0/8 / [::1]）**永不拦截**——拦了会掐断自家 AI 面板与 MCP 桥
+- 非 http(s) 协议不拦
+- 元素隐藏**只注入 `display:none`**，绝不移除 DOM（AI 的 snapshot 必须和人看到的一致）
+
+---
+
+## 四、人机验证：检测 + 交接（不对抗）
+
+产品决定：**不自动过验证码**。检测到挑战就暂停 AI，把控制权交回用户。
+
+支持的信号（8 项单测）：
+
+| 类型 | 依据 |
+| --- | --- |
+| reCAPTCHA / hCaptcha / Turnstile / 极验 | iframe 域名，置信度 0.9 |
+| Cloudflare 挑战页 | `/cdn-cgi/challenge-platform/`、`cf-chl`、`/sorry/`，0.85 |
+| 文本/标题 | "Verify you are human"、"unusual traffic"、"请完成安全验证"、"人机验证"，0.7 |
+| 滑块 | "拖动滑块"、"slide to verify"，0.75 |
+
+达到暂停阈值（≥0.75）时：该标签被标记 → **AI 的修改类工具直接被拒绝**，返回明确指令
+"让用户手动完成验证，不要尝试自动通过"；同时浏览器 chrome 顶部出现提示条。
+
+反例测试确保不误报：普通文章里的 "verification"、普通 YouTube 嵌入、普通登录页都不触发。
+
+---
+
+## 五、诚实结论：内核这件事，数据说了什么
+
+### 5.1 你的直觉有一处是对的
+
+UA-CH（`navigator.userAgentData.brands`）实测是：
+
+```
+["Not?A_Brand/24", "Chromium/152"]
+```
+
+真实 Chrome 会说 `Google Chrome/152`。这不是我们能改的——brands 来自构建期的产品标识，
+**只有品牌化的 Chromium 构建（fork 或自编译）才能声称自己是 Google Chrome**。
+
+这是目前唯一一条"必须在引擎/构建层解决"的信号。它是支持"自己搞内核"的唯一硬证据，
+但请注意：**它也是唯一一条**。其余所有信号（webdriver、DOM 痕迹、全局变量、行为节拍）
+都在应用层可以处理。
+
+### 5.2 但"写内核"仍然不是性价比最高的路
+
+- 广告拦截：CEF 的 `OnBeforeResourceLoad` 与 Electron 的 `webRequest.onBeforeRequest`
+  **是同一层、同一能力**。我们已经在拦了，换内核不会多拦一条。
+- 行为节拍与 IP/登录态：**任何内核都改不了**，那是服务端的判定。
+- 去掉 CDP：这是 CEF 的真实收益，但 Electron 也能做（`sendInputEvent` 进程内输入），
+  差别是工作量，不是可能性。
+
+**建议顺序**：先把进程内输入做掉并实测（见 §六），再决定要不要为了 UA-CH brands 下沉到 CEF/Fork。
+
+### 5.3 已核实的开源候选
+
+| 候选 | 定位 | 对我们是否可行 |
+| --- | --- | --- |
+| CEF | Chromium 的嵌入框架 | 唯一现实的"下沉一步"：同引擎、无 CDP、可控注入面 |
+| Chromium fork（Brave 系等） | 整棵浏览器树 | 成本高；Brave 的 `adblock-rust` 可以**直接当库用**，不必 fork |
+| Servo | 新布局引擎 | 已可作 crates 嵌入，但真实站点兼容性不足以撑日常浏览器 |
+| Ultralight | 小型商业引擎 | 授权与生态都不合适 |
+| WebKit（WPE/GTK） | 可嵌入 | 站点兼容 + 无 Widevine |
+| GeckoView | Android | 只对安卓端有意义 |
+
+---
+
+## 六、没做完的（明确列出，不冒充完成）
+
+1. **输入还没从 CDP 迁到 `sendInputEvent`**。这是"去掉 CDP 痕迹"的核心工程，本轮没做，
+   下一轮第一优先，做完可以用同一套探针再测一遍对比。
+2. **UA-CH brands 仍是 Chromium**（需品牌化构建，见 §5.1）。
+3. **`data-page-token` 仍是一个属性**，只是不再带产品名。彻底方案是改成不落 DOM 的
+   Symbol 属性或主进程侧映射，会牵动标注/导航校验，单独一轮做。
+4. **验证码交接只在单测层面验证过**，没有在真实站点上端到端跑一次（需要真实触发挑战）。
+5. `list_tabs` 在会话没有绑定标签时可能报"没有任务标签"，需要复核（本轮遇到过一次）。
+
+---
+
+## 七、复现方式
+
+```powershell
+# 1) 探针服务
+node tools/probe-server.mjs 8799
+
+# 2) 启动原型（隔离数据目录，别碰真实配置）
+$env:DUPLEX_DATA_DIR = "$env:TEMP\duplex-030"
+release-0.3.0-prototype\win-unpacked\Duplex.exe --user-data-dir="$env:TEMP\duplex-030\electron"
+
+# 3) 看规则加载情况
+Get-Content "$env:TEMP\duplex-030\app.log" | Select-String '\[adblock\]|\[challenge\]|\[ua\]'
+
+# 4) 打包（本机必须给 electron-builder 代理，否则 ECONNRESET）
+$env:HTTPS_PROXY='http://127.0.0.1:7890'; $env:HTTP_PROXY='http://127.0.0.1:7890'
+npx electron-builder --win --dir --publish never --config.directories.output=release-0.3.0-prototype
+```

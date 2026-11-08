@@ -29,11 +29,12 @@ export async function closePlaywright(): Promise<void> {
  * "returned undefined" 却不知道原因。这里先用 `new Function` 做**静态语法
  * 检查**（不执行）：能作为表达式解析就补上 `return (...)`，否则原样执行。
  */
-function wrapEvaluateScript(script: string): string {
+export function wrapEvaluateScript(script: string): string {
   if (/\breturn\b/.test(script)) return script
   try {
-    // 只做解析，不执行；语法不通说明是语句块，按原样交给页面
-    new Function(`return (${script})`)
+    // 只做解析、不执行。包在 async 箭头里，这样 `await x` 这类表达式也能通过语法检查
+    // （脚本实际运行在 async 函数体内）。
+    new Function(`return (async () => (${script}))`)
     return `return (${script})`
   } catch {
     return script

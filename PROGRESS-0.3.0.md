@@ -158,3 +158,20 @@ npx electron-builder --win --dir --publish never --config.directories.output=rel
 
 门禁：`typecheck` ✅ / **418 passed, 1 skipped** ✅ / `build` ✅（每项提交前都跑过）。
 
+
+## 九、实测与修复（2026-11-08）
+
+完整报告见 [docs/verification-2026-11-08.md](docs/verification-2026-11-08.md)。核心结论：
+
+| 项 | 结果 |
+| --- | --- |
+| 
+avigator.webdriver | **true → false**（关掉 AutomationControlled blink feature） |
+| 页面里的自有 DOM 记号 | data-duplex-document → 中性 data-page-token |
+| 广告拦截规则 | 启动时联网拉取 EasyList + EasyList China：2,577,696 字节 / **80,219 条**；有 7 天缓存回退 |
+| 拦截实测 | doubleclick.net 被拦、普通请求放行；回环永不拦 |
+| 人机验证 | 8 项检测（reCAPTCHA/hCaptcha/Turnstile/极验/Cloudflare/滑块），命中即暂停 AI 并交回用户 |
+| 裸表达式 | valuate 现在 document.title 也能返回值（原来必须自己写 return） |
+| UA-CH brands | 仍是 Chromium/152 —— 只有品牌化构建能声称 Google Chrome（唯一真正需要引擎层的信号） |
+
+未完成：输入从 CDP 迁到 sendInputEvent、data-page-token 改 Symbol、真实站点端到端验证码验证。
