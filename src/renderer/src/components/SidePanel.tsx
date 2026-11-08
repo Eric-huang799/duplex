@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   MirrorAnnotationEvent,
   MirrorEvent,
@@ -15,6 +15,8 @@ import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 import { useI18n } from '../i18n'
 import { mirrorKey } from '../../../shared/mirror-key'
+import { playbooksByCategory } from '../../../shared/playbooks'
+import type { TranscriptEvent } from '../../../shared/transcript-export'
 import type { I18nKey } from '../../../shared/i18n'
 
 type TFn = (key: I18nKey, vars?: Record<string, string | number>) => string
@@ -90,7 +92,7 @@ function AnnotationNotice({ ev }: { ev: MirrorAnnotationEvent }): React.JSX.Elem
 }
 
 function MirrorItem({ ev, pendingToolId }: { ev: MirrorEvent; pendingToolId?: number | null }): React.JSX.Element | null {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [open, setOpen] = useState(false)
 
   if (ev.kind === 'annotation') {
@@ -163,7 +165,7 @@ export function SidePanel({
   initialShowProviders,
   selectionAsk
 }: Props): React.JSX.Element {
-  const { t } = useI18n()
+  const { t, lang } = useI18n()
   const [draft, setDraft] = useState(() => loadDraft(mode))
   const draftRef = useRef(draft)
   const draftModeRef = useRef(mode)
@@ -171,7 +173,9 @@ export function SidePanel({
   const [sessionMenu, setSessionMenu] = useState(false)
   const [showProviders, setShowProviders] = useState(initialShowProviders ?? false)
   const [showSitePermissions, setShowSitePermissions] = useState(false)
+  const [showPlaybooks, setShowPlaybooks] = useState(false)
   const [showTimeline, setShowTimeline] = useState(false)
+  const [notice, setNotice] = useState('')
   const [showSkills, setShowSkills] = useState(false)
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
@@ -416,6 +420,71 @@ export function SidePanel({
   }, [isAgent])
 
   const displayEvents = isAgent ? agentEvents : events
+
+  /** 预置任务按语言分组；标题与正文本身已是双语数据。 */
+  const playbookGroups = useMemo(() => playbooksByCategory(lang), [lang])
+
+  /**
+   * 预置任务"点一下就发"。
+   * agent 模式直接发送，不走 draft（setState 是异步的，先写 draft 再 send 会读到旧值）；
+   * 其它模式只把指令填进输入框，让用户自己确认后再发。
+   */
+  const startPlaybook = (prompt: string): void => {
+    setShowPlaybooks(false)
+    if (isAgent) {
+      void window.cobrowse.agentSend(prompt)
+      return
+    }
+    updateDraft(prompt)
+  }
+
+  /** 把当前会话映射成导出事件并写成 Markdown（文件名与落盘都在主进程）。 */
+  const exportTranscript = async (): Promise<void> => {
+    const mapped: TranscriptEvent[] = []
+    let startedAt = 0
+    for (const raw of displayEvents) {
+      const ev = raw as unknown as Record<string, unknown>
+      const ts = typeof ev.ts === 'number' ? ev.ts : 0
+      if (!startedAt && ts) startedAt = ts
+      if (ev.kind === 'text') {
+        mapped.push({
+          kind: 'text',
+          role: ev.role === 'user' ? 'user' : 'assistant',
+          ...(typeof ev.partID === 'string' ? { partID: ev.partID } : {}),
+          text: typeof ev.text === 'string' ? ev.text : '',
+          ...(ts ? { at: ts } : {})
+        })
+      } else if (ev.kind === 'tool') {
+        mapped.push({
+          kind: 'tool',
+          tool: typeof ev.tool === 'string' ? ev.tool : 'tool',
+          ...(typeof ev.status === 'string' ? { status: ev.status } : {}),
+          ...(ev.input !== undefined ? { args: ev.input } : {}),
+          ...(typeof ev.output === 'string'
+            ? { result: ev.output }
+            : typeof ev.error === 'string'
+              ? { result: ev.error }
+              : {}),
+          ...(ts ? { at: ts } : {})
+        })
+      } else if (ev.kind === 'session') {
+        mapped.push({
+          kind: 'session',
+          ...(typeof ev.status === 'string' ? { status: ev.status } : {}),
+          ...(ts ? { at: ts } : {})
+        })
+      }
+    }
+    const result = await window.cobrowse.transcriptExport({
+      events: mapped,
+      ...(startedAt ? { startedAt } : {})
+    })
+    setNotice(
+      result.ok && result.file
+        ? t('panel.exported', { path: result.file })
+        : t('panel.exportFailed', { err: result.error ?? '?' })
+    )
+  }
 
   useEffect(() => {
     if (autoScroll && listRef.current) {
@@ -682,6 +751,22 @@ export function SidePanel({
           >
             🕒
           </button>
+          <button
+            className="session-btn"
+            data-panel-toggle="playbooks"
+            onClick={() => setShowPlaybooks((v) => !v)}
+            title={t('panel.playbooks')}
+          >
+            ⚡
+          </button>
+          <button
+            className="session-btn"
+            data-panel-toggle="export-transcript"
+            onClick={() => void exportTranscript()}
+            title={t('panel.exportTranscript')}
+          >
+            📄
+          </button>
           <button className="session-btn" onClick={toggleAgentSessions} title={t('panel.historyChats')}>
             ☰
           </button>
@@ -808,6 +893,36 @@ export function SidePanel({
       )}
 
       {showTimeline && <TimelinePanel onClose={() => setShowTimeline(false)} />}
+
+      {showPlaybooks && (
+        <div className="pbp" style={{ padding: '8px 12px', borderBottom: '1px solid var(--border, rgba(255,255,255,.1))', maxHeight: 320, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <strong style={{ fontSize: 12.5 }}>{t('panel.playbooks')}</strong>
+            <button className="session-btn" onClick={() => setShowPlaybooks(false)}>✕</button>
+          </div>
+          {playbookGroups.map((group) => (
+            <div key={group.category} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10.5, opacity: 0.65, marginBottom: 3 }}>{group.category}</div>
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => startPlaybook(item.prompt[lang])}
+                  style={{ display: 'flex', justifyContent: 'space-between', gap: 8, width: '100%', textAlign: 'left', padding: '5px 8px', marginBottom: 3, borderRadius: 7, border: '1px solid var(--border, rgba(255,255,255,.12))', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 11.5 }}
+                >
+                  <span>{item.title[lang]}</span>
+                  <span style={{ opacity: 0.55, flex: '0 0 auto' }}>{t('panel.playbookEta', { n: item.etaMinutes })}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {notice && (
+        <div style={{ padding: '4px 12px', fontSize: 11, color: 'var(--text-faint, #9aa4b2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={notice}>
+          {notice}
+        </div>
+      )}
 
       <div className="panel-list" ref={listRef} onScroll={onScroll}>
         {isAgent ? (

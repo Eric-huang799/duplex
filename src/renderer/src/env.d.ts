@@ -114,6 +114,16 @@ interface CobrowseApi {
   settingsRestorePreAi(): Promise<{ ok: boolean; error?: string }>
   settingsConsents(): Promise<{ origins: string[] }>
   settingsConsentRevoke(origin: string): Promise<{ ok: boolean; removed: boolean }>
+  appVersion(): Promise<{ version: string; packaged: boolean }>
+  updateStatus(): Promise<{ state: string; version?: string; error?: string }>
+  updateCheck(): Promise<{ state: string; version?: string; error?: string }>
+  updateInstall(): Promise<{ ok: boolean }>
+  transcriptExport(payload: {
+    events: unknown[]
+    title?: string
+    startedAt?: number
+    model?: string
+  }): Promise<{ ok: boolean; file?: string; error?: string }>
   onSiteRisk(
     cb: (payload: { url: string; level: 'notice' | 'warn'; reasons: string[] }) => void
   ): () => void

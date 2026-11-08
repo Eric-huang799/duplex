@@ -22,6 +22,29 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
   const [busy, setBusy] = useState(false)
   const [consents, setConsents] = useState<string[]>([])
   const [rulesNote, setRulesNote] = useState('')
+  const [version, setVersion] = useState('')
+  const [update, setUpdate] = useState<{ state: string; version?: string; error?: string }>({
+    state: 'idle'
+  })
+  const [updating, setUpdating] = useState(false)
+
+  useEffect(() => {
+    void window.cobrowse.appVersion().then((info) => setVersion(info.version))
+    void window.cobrowse.updateStatus().then(setUpdate)
+  }, [])
+
+  const checkUpdate = async (): Promise<void> => {
+    setUpdating(true)
+    try {
+      setUpdate(await window.cobrowse.updateCheck())
+    } finally {
+      setUpdating(false)
+    }
+  }
+
+  const installUpdate = async (): Promise<void> => {
+    await window.cobrowse.updateInstall()
+  }
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -164,6 +187,36 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
               ))}
             </div>
           )}
+        </div>
+      </div>
+
+      <div className="setp-row">
+        <div className="setp-main">
+          <div className="setp-label">{t('settings.about')}</div>
+          <div className="setp-hint">
+            {t('settings.version', { version: version || '—' })} ·{' '}
+            {update.state === 'disabled'
+              ? t('settings.updateDisabled')
+              : update.state === 'ready'
+                ? t('settings.updateReady', { version: update.version ?? '' })
+                : update.state === 'available' || update.state === 'downloading'
+                  ? t('settings.updateDownloading', { version: update.version ?? '' })
+                  : update.state === 'error'
+                    ? t('settings.updateError', { err: update.error ?? '?' })
+                    : update.state === 'none'
+                      ? t('settings.updateNone')
+                      : t('settings.updateIdle')}
+          </div>
+          <div className="setp-inline">
+            <button className="setp-btn" disabled={updating} onClick={() => void checkUpdate()}>
+              {t('settings.updateCheck')}
+            </button>
+            {update.state === 'ready' && (
+              <button className="setp-btn" onClick={() => void installUpdate()}>
+                {t('settings.updateInstall')}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

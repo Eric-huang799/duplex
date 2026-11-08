@@ -2595,6 +2595,66 @@
     "更新失败，仍使用现有规则",
     "Update failed; keeping the current rules"
   ],
+  "panel.playbooks": [
+    "预置任务",
+    "Playbooks"
+  ],
+  "panel.playbookEta": [
+    "约 {n} 分钟",
+    "~{n} min"
+  ],
+  "panel.exportTranscript": [
+    "导出对话为 Markdown",
+    "Export chat as Markdown"
+  ],
+  "panel.exported": [
+    "已导出到 {path}",
+    "Exported to {path}"
+  ],
+  "panel.exportFailed": [
+    "导出失败：{err}",
+    "Export failed: {err}"
+  ],
+  "settings.about": [
+    "关于与更新",
+    "About and updates"
+  ],
+  "settings.version": [
+    "版本 {version}",
+    "Version {version}"
+  ],
+  "settings.updateIdle": [
+    "尚未检查更新",
+    "No update check yet"
+  ],
+  "settings.updateCheck": [
+    "检查更新",
+    "Check for updates"
+  ],
+  "settings.updateNone": [
+    "已是最新版本",
+    "You are up to date"
+  ],
+  "settings.updateDownloading": [
+    "发现新版本 {version}，正在下载…",
+    "Found {version}, downloading…"
+  ],
+  "settings.updateReady": [
+    "新版本 {version} 已就绪",
+    "Version {version} is ready"
+  ],
+  "settings.updateInstall": [
+    "重启并更新",
+    "Restart and update"
+  ],
+  "settings.updateError": [
+    "更新出错：{err}",
+    "Update error: {err}"
+  ],
+  "settings.updateDisabled": [
+    "此构建未配置更新源（源码构建请自行更新）",
+    "This build has no update feed (source builds update by pulling)"
+  ],
   "settings.off": [
     "已关闭",
     "Off"

@@ -206,6 +206,19 @@ export class TabManager {
     // BrowserWindow always does — attach only when it actually exists
     this.win.webContents?.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return
+      // 应用 UI 聚焦时（地址栏、AI 面板）：Ctrl+P / Ctrl+Shift+S 不在可自定义
+      // 快捷键表里，必须显式处理，否则焦点不在页面时打印会静默失效。
+      if ((input.control || input.meta) && !input.alt) {
+        const uiKey = (input.key || '').toLowerCase()
+        const uiAction =
+          !input.shift && uiKey === 'p' ? 'print' : input.shift && uiKey === 's' ? 'savePdf' : null
+        const activeTab = this.activeId != null ? (this.tabs.get(this.activeId) ?? null) : null
+        if (uiAction && activeTab && this.onPageShortcut) {
+          event.preventDefault()
+          this.onPageShortcut(activeTab, uiAction)
+          return
+        }
+      }
       if ((input.control || input.meta) && !input.alt && /^[1-9]$/.test(input.key)) {
         event.preventDefault()
         const ids = Array.from(this.tabs.keys())

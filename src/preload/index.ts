@@ -117,6 +117,20 @@ const api = {
   settingsConsents: (): Promise<{ origins: string[] }> => ipcRenderer.invoke('settings:consents'),
   settingsConsentRevoke: (origin: string): Promise<{ ok: boolean; removed: boolean }> =>
     ipcRenderer.invoke('settings:consent-revoke', origin),
+  // ── 关于与更新 ──────────────────────────────────────────────────────────
+  appVersion: (): Promise<{ version: string; packaged: boolean }> => ipcRenderer.invoke('app:version'),
+  updateStatus: (): Promise<{ state: string; version?: string; error?: string }> =>
+    ipcRenderer.invoke('app:update-status'),
+  updateCheck: (): Promise<{ state: string; version?: string; error?: string }> =>
+    ipcRenderer.invoke('app:update-check'),
+  updateInstall: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('app:update-install'),
+  transcriptExport: (payload: {
+    events: unknown[]
+    title?: string
+    startedAt?: number
+    model?: string
+  }): Promise<{ ok: boolean; file?: string; error?: string }> =>
+    ipcRenderer.invoke('transcript:export', payload),
   // 真人浏览的可疑站点预警（提示，不拦截）
   onSiteRisk: (
     cb: (payload: { url: string; level: 'notice' | 'warn'; reasons: string[] }) => void

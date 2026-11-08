@@ -303,6 +303,8 @@ export default function App(): React.JSX.Element {
       if (action === 'menu:library-history') window.dispatchEvent(new Event('duplex:open-recent-history'))
       if (action === 'menu:library-downloads') setLibrary('downloads')
       if (action === 'menu:browser-settings') setSettingsOpen(true)
+      if (action === 'menu:pdf-failed') showToast(t('menu.pdfFailed', { err: '' }))
+      if (action === 'menu:pdf-done') showToast(t('menu.pdfDone'))
       if (action === 'menu:stopkeys') window.dispatchEvent(new Event('duplex:open-stopkeys'))
       if (action === 'menu:shortcuts') window.dispatchEvent(new Event('duplex:open-shortcuts'))
     if (action === 'menu:copied-link') showToast(t('app.linkCopied'))

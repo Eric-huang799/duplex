@@ -13,6 +13,7 @@ import {
   type WebContents
 } from 'electron'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import fs from 'node:fs'
 import os from 'node:os'
 import crypto from 'node:crypto'
@@ -133,6 +134,9 @@ import { duplexShimEnv, ensureOpenShim, extractHttpUrl } from './open-shim'
 import { CollaborationCoordinator, currentCaller, PAGE_READ_TOOLS, withCaller } from './collaboration'
 import { configurePlaywright, closePlaywright, aiInputSuppressUntil } from './playwright-browser'
 import { setIoLogger } from './cdp'
+import { printPage, savePageAsPdf, suggestedPdfName, type PrintableContents } from './printing'
+import { AppUpdater, type UpdaterLike } from './updater'
+import { exportTranscriptMarkdown, type TranscriptEvent } from '../shared/transcript-export'
 import { BrowserSessionStore } from './browser-session'
 import { TimelineStore } from './timeline'
 import { PermissionStore } from './permission-store'
@@ -1415,6 +1419,15 @@ async function start(): Promise<void> {
   void refreshAdblockRules()
   attachCosmeticFiltering()
   attachChallengeWatch()
+  // 自动更新：延迟检查，避免和首屏抢资源；未配置 feed 时状态是 disabled
+  appUpdater = new AppUpdater({
+    load: loadAutoUpdater,
+    feedConfigured: updateFeedConfigured(),
+    log: (line) => logLine(line)
+  })
+  setTimeout(() => {
+    void appUpdater?.check()
+  }, 15_000)
   nativeTheme.themeSource = settings.theme
   if (settings.aiPaused) {
     // the emergency stop survives restarts until the user explicitly resumes
@@ -1991,11 +2004,8 @@ function createWindow(): void {
         const wc = tab.view.webContents
         if (wc.isDestroyed()) return
         if (action === 'devtools') wc.toggleDevTools()
-        else if (action === 'print') {
-          wc.print({}, (success, reason) => {
-            if (!success) logLine(`[print] 打印未完成：${reason ?? 'unknown'}`)
-          })
-        } else if (action === 'savePdf') void saveActivePageAsPdf(wc)
+        else if (action === 'print') printActivePage(wc)
+        else if (action === 'savePdf') void saveActivePageAsPdf(wc)
       } catch (e) {
         logLine(`[shortcut] 页面快捷键失败：${(e as Error)?.message ?? e}`)
       }
@@ -2202,21 +2212,74 @@ function askAiAboutSelection(text: string, tab: Tab): void {
   }
 }
 
-/** 另存为 PDF：用 Chromium 自带的 printToPDF，落盘后定位到文件。 */
+/**
+ * 自动更新：用户停在下载当天的版本，等于修好的问题永远推不出去。
+ *
+ * 三道保护，缺一不可：
+ *  1. 只有**打包后且真的带了 feed**（`app-update.yml` 存在）才允许联网检查，
+ *     开发态与未配置发布源的构建一律 disabled；
+ *  2. `electron-updater` 用 try/catch 动态加载，缺包不能让浏览器起不来；
+ *  3. 状态是拉取式的，UI 自己轮询，主进程不推事件。
+ */
+const requireFromMain = createRequire(import.meta.url)
+
+function updateFeedConfigured(): boolean {
+  if (process.env['DUPLEX_UPDATE_FEED'] === '0') return false
+  if (process.env['DUPLEX_UPDATE_FEED'] === '1') return true
+  if (!app.isPackaged) return false
+  try {
+    return fs.existsSync(path.join(process.resourcesPath, 'app-update.yml'))
+  } catch {
+    return false
+  }
+}
+
+function loadAutoUpdater(): UpdaterLike | null {
+  try {
+    const mod = requireFromMain('electron-updater') as { autoUpdater?: UpdaterLike }
+    return mod?.autoUpdater ?? null
+  } catch (error) {
+    logLine(`[updater] electron-updater 不可用：${(error as Error)?.message ?? error}`)
+    return null
+  }
+}
+
+let appUpdater: AppUpdater | null = null
+
+/** 把 Electron 的 webContents 适配成可测试的打印接口。 */
+function printable(wc: WebContents): PrintableContents {
+  return {
+    print: (options, callback) =>
+      wc.print(options as unknown as Electron.WebContentsPrintOptions, callback),
+    printToPDF: (options) => wc.printToPDF(options as unknown as Electron.PrintToPDFOptions)
+  }
+}
+
+/** 打印当前页面（弹系统对话框，silent 默认 false）。 */
+function printActivePage(wc: WebContents | null): void {
+  if (!wc || wc.isDestroyed()) return
+  void printPage(printable(wc)).then((result) => {
+    if (!result.ok) logLine(`[print] ${result.error ?? 'unknown'}`)
+  })
+}
+
+/** 另存为 PDF：文件名与清洗交给 printing.ts（它用本地时间，不会因为 UTC 差一天）。 */
 async function saveActivePageAsPdf(wc: WebContents | null): Promise<void> {
   if (!wc || !win || wc.isDestroyed()) return
   try {
-    const title = wc.getTitle() || 'page'
-    const safe = title.replace(/[\\/:*?"<>|]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80) || 'page'
-    const stamp = new Date().toISOString().slice(0, 10)
     const picked = await dialog.showSaveDialog(win, {
       title: mt('menu.savePdf'),
-      defaultPath: path.join(app.getPath('downloads'), `${stamp}_${safe}.pdf`),
+      defaultPath: path.join(app.getPath('downloads'), suggestedPdfName(wc.getTitle())),
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     })
     if (picked.canceled || !picked.filePath) return
-    const data = await wc.printToPDF({ printBackground: true, pageSize: 'A4' })
-    fs.writeFileSync(picked.filePath, data)
+    const result = await savePageAsPdf(printable(wc))
+    if (!result.ok || !result.data) {
+      logLine(`[print] 另存 PDF 失败：${result.error ?? 'unknown'}`)
+      sendBrowserShortcut('menu:pdf-failed')
+      return
+    }
+    fs.writeFileSync(picked.filePath, result.data)
     shell.showItemInFolder(picked.filePath)
     timeline?.record({ kind: 'takeover', detail: `导出 PDF：${path.basename(picked.filePath)}` })
   } catch (e) {
@@ -2382,17 +2445,8 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
     {
       label: mt('menu.print'),
       enabled: pageUrl !== '',
-      click: () => {
-        const wc = wcAtClick()
-        if (!wc) return
-        try {
-          wc.print({}, (success, reason) => {
-            if (!success) logLine(`[print] 打印未完成：${reason ?? 'unknown'}`)
-          })
-        } catch (e) {
-          logLine(`[print] 打印失败：${(e as Error)?.message ?? e}`)
-        }
-      }
+      // 打印走 printing.ts（有单测覆盖取消/失败/默认参数）
+      click: () => printActivePage(wcAtClick())
     },
     { label: mt('menu.savePdf'), enabled: pageUrl !== '', click: () => void saveActivePageAsPdf(wcAtClick()) },
     {
@@ -2628,6 +2682,11 @@ function setupIpc(): void {
     return result
   })
   // AI 访问授权：让用户看得见、撤得掉（只有能授权没有能撤销是不对称的）
+  // ── 关于与更新 ───────────────────────────────────────────────────────────
+  ipcMain.handle('app:version', () => ({ version: app.getVersion(), packaged: app.isPackaged }))
+  ipcMain.handle('app:update-status', () => appUpdater?.status() ?? { state: 'disabled' })
+  ipcMain.handle('app:update-check', async () => (appUpdater ? await appUpdater.check() : { state: 'disabled' }))
+  ipcMain.handle('app:update-install', () => ({ ok: appUpdater?.install() ?? false }))
   ipcMain.handle('settings:consents', () => ({ origins: siteConsent?.list() ?? [] }))
   ipcMain.handle('settings:consent-revoke', (_e, origin: unknown) => {
     if (typeof origin !== 'string' || !siteConsent) return { ok: false, removed: false }
@@ -3013,6 +3072,34 @@ function setupIpc(): void {
   })
   ipcMain.handle('timeline:recent', (_e, limit?: number) =>
     (timeline?.recent(Number(limit) || 120) ?? [])
+  )
+  /**
+   * 对话导出：把一次 AI 会话写成可分享的 Markdown。
+   * 渲染层只传事件与标题，文件名与落盘全在主进程决定（渲染层不能传路径）。
+   */
+  ipcMain.handle(
+    'transcript:export',
+    (
+      _e,
+      payload?: { events?: TranscriptEvent[]; title?: string; startedAt?: number; model?: string }
+    ) => {
+      try {
+        const markdown = exportTranscriptMarkdown(payload?.events ?? [], {
+          title: payload?.title || 'Duplex 对话',
+          startedAt: payload?.startedAt,
+          exportedAt: Date.now(),
+          appVersion: app.getVersion(),
+          model: payload?.model
+        })
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+        const file = path.join(app.getPath('downloads'), `duplex-transcript-${stamp}.md`)
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, markdown, 'utf8')
+        return { ok: true, file }
+      } catch (error) {
+        return { ok: false, error: (error as Error)?.message ?? String(error) }
+      }
+    }
   )
   ipcMain.handle('timeline:export', () => {
     if (!timeline) return { ok: false, error: 'not-ready' }
@@ -3830,3 +3917,4 @@ app.on('will-quit', () => {
   removeEndpoint(process.pid)
   httpServer?.close()
 })
+
