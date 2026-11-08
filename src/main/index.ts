@@ -301,7 +301,10 @@ function attachCosmeticFiltering(): void {
         if (!adblockEnabled) return
         const url = wc.getURL()
         if (!/^https?:/i.test(url)) return
-        const css = cosmeticCssFor(adblock, url)
+        // 默认只套用带域名限定的精确规则；通用规则需要显式打开（见 cosmetic.ts 注释）
+        const css = cosmeticCssFor(adblock, url, {
+          includeGeneric: process.env['DUPLEX_COSMETIC_GENERIC'] === '1'
+        })
         if (!css) return
         // 同一 contents 的同一份规则不重复注入（多事件会触发多次）
         if (cosmeticLastText.get(wc.id) === css && cosmeticCssKeys.has(wc.id)) return

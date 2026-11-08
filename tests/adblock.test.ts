@@ -47,16 +47,18 @@ describe('parseFilterList', () => {
     })
   })
 
-  it('无效 cosmetic 规则分别计入 invalid / unsupported', () => {
+  it('无效 cosmetic 计入 invalid/unsupported，`#@#` 例外现在是合法规则', () => {
     const parsed = parseFilterList(
       ['example.com##', 'bad_domain!!##.x', '@@example.com##.x', '#@#.ad'].join('\n')
     )
-    expect(parsed.cosmetic).toHaveLength(0)
+    // `#@#.ad` 从"不支持丢弃"改为解析为例外规则（见 cosmetic-exceptions.test.ts）
+    expect(parsed.cosmetic).toHaveLength(1)
+    expect(parsed.cosmetic[0]).toMatchObject({ selector: '.ad', exception: true })
     expect(parsed.stats).toMatchObject({
       total: 4,
-      accepted: 0,
-      skipped: 4,
-      skippedReasons: { regexTooLong: 0, regexInvalid: 0, unsupported: 2, invalid: 2 }
+      accepted: 1,
+      skipped: 3,
+      skippedReasons: { regexTooLong: 0, regexInvalid: 0, unsupported: 1, invalid: 2 }
     })
   })
 })
@@ -172,27 +174,32 @@ describe('cosmeticCssFor', () => {
     ].join('\n')
   )
 
-  it('带域名限定与 ~ 排除都能正确给出 CSS', () => {
+  it('带域名限定与 ~ 排除都能正确给出 CSS（通用规则需显式打开）', () => {
+    // 通用（无域名限定）规则默认不套用：它们正是误伤真实元素的来源。
     expect(cosmeticCssFor(engine, 'https://example.com/article')).toBe(
+      '.ad-banner,.sponsored,.sponsor{display:none!important}'
+    )
+    const withGeneric = { includeGeneric: true }
+    expect(cosmeticCssFor(engine, 'https://example.com/article', withGeneric)).toBe(
       '.global-ad,.ad-banner,.sponsored,.sponsor{display:none!important}'
     )
     // ~ads.example.com 让 .sponsored 在该子域上不生效。
-    expect(cosmeticCssFor(engine, 'https://ads.example.com/a')).toBe(
+    expect(cosmeticCssFor(engine, 'https://ads.example.com/a', withGeneric)).toBe(
       '.global-ad,.ad-banner,.sponsor{display:none!important}'
     )
-    expect(cosmeticCssFor(engine, 'https://www.example.com/a')).toBe(
+    expect(cosmeticCssFor(engine, 'https://www.example.com/a', withGeneric)).toBe(
       '.global-ad,.ad-banner,.sponsored,.sponsor{display:none!important}'
     )
     // 更具体的 news.example.com 规则只在它自己及子域生效。
-    expect(cosmeticCssFor(engine, 'https://news.example.com/a')).toBe(
+    expect(cosmeticCssFor(engine, 'https://news.example.com/a', withGeneric)).toBe(
       '.global-ad,.ad-banner,.sponsored,.sponsor,.news-ad{display:none!important}'
     )
-    // 全局规则 everywhere 在非 example.com 站点生效。
-    expect(cosmeticCssFor(engine, 'https://unrelated.net/a')).toBe(
+    // 全局规则 everywhere 在非 example.com 站点生效（仅在显式打开通用规则时）。
+    expect(cosmeticCssFor(engine, 'https://unrelated.net/a', withGeneric)).toBe(
       '.global-ad,.everywhere{display:none!important}'
     )
     // 后缀相同但不是子域：限定规则不能命中。
-    expect(cosmeticCssFor(engine, 'https://example.com.evil.net/a')).toBe(
+    expect(cosmeticCssFor(engine, 'https://example.com.evil.net/a', withGeneric)).toBe(
       '.global-ad,.everywhere{display:none!important}'
     )
   })

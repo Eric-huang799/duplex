@@ -34,6 +34,13 @@ export interface CosmeticRule {
   excludeDomains: string[]
   /** `##` 后的 CSS 选择器（已 trim）。 */
   selector: string
+  /**
+   * `#@#` 例外规则：在指定站点**取消**同名选择器的隐藏。
+   *
+   * ABP 用 `#@#` 表示"这个站别隐藏这条"，EasyList 里大量存在。原来我们直接丢弃，
+   * 于是该保留的元素照样被隐藏——用户报告的"页面渲染被搞乱"多半出在这里。
+   */
+  exception?: boolean
 }
 
 /** 解析统计，用来回答「这份列表实际生效了多少条、跳过了多少、为什么」。 */

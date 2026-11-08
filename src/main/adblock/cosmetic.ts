@@ -37,20 +37,41 @@ function appliesTo(rule: CosmeticRule, hostname: string): boolean {
 /**
  * 返回该 origin 适用的元素隐藏 CSS。
  * 无匹配规则（或 origin 不可解析）时返回空串，调用方据此跳过注入。
+ *
+ * `includeGeneric` 默认 **false**：只应用带域名限定的精确规则，跳过"全站生效"的
+ * 通用规则。EasyList 的通用规则是为配合完整的例外体系设计的，我们只实现了其中
+ * 一部分语法；整片套用的结果就是误伤真实元素（用户看到的"页面被改坏"）。
+ * 需要激进模式时可显式打开。
  */
-export function cosmeticCssFor(engine: AdblockEngine, origin: string): string {
+export function cosmeticCssFor(
+  engine: AdblockEngine,
+  origin: string,
+  options: { includeGeneric?: boolean } = {}
+): string {
   const hostname = hostnameOf(origin)
   if (!hostname) return ''
+  const includeGeneric = options.includeGeneric === true
 
   const selectors = new Set<string>()
+  /** 本站点被 `#@#` 例外取消的选择器。 */
+  const cancelled = new Set<string>()
+
   for (const rule of engine.cosmeticRules) {
     if (!appliesTo(rule, hostname)) continue
     const selector = rule.selector.trim()
     if (!selector) continue
     // 防御性再查一遍：手工构造的 engine 可能绕过解析器校验。
     if (/[{}<]/.test(selector)) continue
+    if (rule.exception) {
+      cancelled.add(selector)
+      continue
+    }
+    // 没有域名限定的规则 = 全站生效，默认不套用
+    if (!includeGeneric && rule.domains.length === 0) continue
     selectors.add(selector)
   }
+
+  for (const selector of cancelled) selectors.delete(selector)
   if (selectors.size === 0) return ''
 
   return `${Array.from(selectors).join(',')}{display:none!important}`

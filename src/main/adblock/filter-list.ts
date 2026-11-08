@@ -82,7 +82,7 @@ function parseRegex(line: string, exception: boolean): RegexOutcome {
  * 域名部分有任何非法 token 就整条丢弃：宁可少隐藏，也不要把限定域丢掉后
  * 变成一条意外的全局规则。
  */
-function parseCosmetic(line: string, at: number): CosmeticRule | null {
+function parseCosmetic(line: string, at: number, exception = false, markerLength = 2): CosmeticRule | null {
   const domains: string[] = []
   const excludeDomains: string[] = []
   const rawDomains = line.slice(0, at).trim()
@@ -99,13 +99,15 @@ function parseCosmetic(line: string, at: number): CosmeticRule | null {
     if (domains.length === 0 && excludeDomains.length === 0) return null
   }
 
-  const selector = line.slice(at + 2).trim()
+  const selector = line.slice(at + markerLength).trim()
   if (!selector || selector.length > MAX_COSMETIC_SELECTOR_LENGTH) return null
   // `{}` 会提前闭合注入的规则；`<` 在把 CSS 塞进 <style> 时可能被当成标签。
   // 只做 display:none，绝不支持 +js(...) 这类脚本注入。
   if (/[{}<]/.test(selector) || selector.startsWith('+js(')) return null
 
-  return { rule: line, domains, excludeDomains, selector }
+  return exception
+    ? { rule: line, domains, excludeDomains, selector, exception: true }
+    : { rule: line, domains, excludeDomains, selector }
 }
 
 /** 解析一份 EasyList 子集文本；任何异常行都不会抛错，只会计入统计。 */
@@ -154,8 +156,19 @@ export function parseFilterList(text: string): ParsedFilterList {
       continue
     }
 
-    // 元素隐藏；`@@` 对 cosmetic 无意义（ABP 用 #@#），按不支持处理。
+    // 元素隐藏。`#@#` 是例外规则（在指定站点取消隐藏），必须解析而不是丢弃：
+    // 丢掉例外就等于把所有"这里不要隐藏"的保护全部无视，页面会被我们改坏。
+    const exceptionAt = body.indexOf('#@#')
     const cosmeticAt = body.indexOf('##')
+    if (exceptionAt >= 0 && (cosmeticAt < 0 || exceptionAt < cosmeticAt)) {
+      const rule = parseCosmetic(body, exceptionAt, true, 3)
+      if (!rule) skip('invalid')
+      else {
+        cosmetic.push(rule)
+        stats.accepted++
+      }
+      continue
+    }
     if (cosmeticAt >= 0) {
       if (exception) {
         skip('unsupported')
@@ -199,3 +212,4 @@ export function parseFilterList(text: string): ParsedFilterList {
 
   return { domain, regex, cosmetic, stats }
 }
+
