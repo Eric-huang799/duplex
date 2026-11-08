@@ -19,13 +19,14 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { cobrowseDir, readEndpoint } from '../shared/endpoint'
+import { bridgeCallerId } from '../shared/caller-id'
 import { toolDefs } from '../shared/tools'
 import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
 const VERSION = '0.3.0-beta.1'
-const CALLER_ID = `bridge:${crypto.createHash('sha1').update(cobrowseDir()).digest('hex').slice(0, 12)}`
+const CALLER_ID = bridgeCallerId({ dataDir: cobrowseDir() })
 
 /**
  * When the bridge runs from an installed (packaged) app it lives inside

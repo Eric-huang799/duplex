@@ -149,6 +149,7 @@ import { detectChallenge, shouldPauseAgent, type ChallengeSignals } from '../sha
 import { SiteConsentStore } from './site-consent'
 // 多 agent 仲裁实验：仅在 DUPLEX_ARBITER_EXPERIMENT=1 时启用
 import { runArbiterExperiment } from './arbiter-experiment'
+import { MultiAgentArbiter } from './multi-agent-arbiter'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
 
@@ -471,7 +472,33 @@ function attachChallengeWatch(): void {
       }
       })()
     })
-    wc.on('did-navigate', () => challengeContents.delete(wc.id))
+    wc.on('did-navigate', (_event, url) => {
+      challengeContents.delete(wc.id)
+      const tabId = tabIdOfContents(wc)
+      if (tabId == null) return
+      // 我们（任一 agent）刚请求过导航：这是预期的，不算"意外跳转"
+      const pending = pendingNavigation.get(tabId)
+      if (pending && Date.now() - pending.at < 5000) {
+        pendingNavigation.delete(tabId)
+        lastUrlByContents.set(wc.id, url)
+        return
+      }
+      const previous = lastUrlByContents.get(wc.id) ?? ''
+      lastUrlByContents.set(wc.id, url)
+      // 没有 agent 在操作 → 页面自己跳转与 AI 无关，不干预
+      const active = multiAgentArbiter.activeOperations(tabId)
+      if (active.length === 0) return
+      const result = multiAgentArbiter.handleUnexpectedNavigation(tabId, 'navigation', previous)
+      logLine(
+        `[arbiter] 标签 ${tabId} 未预期跳转 → ${url.slice(0, 80)}；` +
+          `已暂停 ${result.stopped.join(', ')}，可回退到 ${result.rollbackTo || '(未知)'}`
+      )
+      try {
+        win?.webContents.send('site:risk', { url, level: 'warn', reasons: ['agent-conflict'] })
+      } catch {
+        /* window closing */
+      }
+    })
     wc.on('destroyed', () => challengeContents.delete(wc.id))
   })
 }
@@ -1579,6 +1606,11 @@ async function start(): Promise<void> {
     } catch (e) { return { isError: true, content: [{ type: 'text', text: (e as Error).message }] } }
     const mutates = !PAGE_READ_TOOLS.has(name)
     const ac = beginOperation({ owner: caller, tabId, mutates })
+    // 多 agent 仲裁：登记在途操作，导航先等别人，同一目标串行。
+    // 单 agent 时这些人全是空操作（没有别的操作/没有争用）。
+    const arbiterTab = tabId ?? -1
+    const arbiterToken =
+      mutates && arbiterTab >= 0 ? multiAgentArbiter.beginOperation(caller, arbiterTab) : null
     try {
       const targetUrlArg =
         typeof (args as { url?: unknown })?.url === 'string' ? String((args as { url?: unknown }).url) : ''
@@ -1605,8 +1637,32 @@ async function start(): Promise<void> {
           return { isError: true, content: [{ type: 'text', text: gate.error }] }
         }
       }
-      const invoke = () => execute(name, tabId == null ? args : { ...args, tabId })
-      const result = await runInOperation(ac, () => tabId == null ? invoke() : collaboration.run(tabId, caller, mutates, invoke, ac.signal))
+      // 发起动作前最后一道检查：本 agent 若被别人的导航抢占过，必须失败而不是带脏状态继续。
+      if (arbiterToken) multiAgentArbiter.assertNotAborted(arbiterToken, name)
+
+      // 导航屏障：等该标签上其它 agent 的操作结束（有上限，超时才抢占）。
+      if ((name === 'navigate' || name === 'new_tab') && arbiterTab >= 0) {
+        const decision = await multiAgentArbiter.requestNavigation(caller, arbiterTab)
+        if (decision.preempted.length > 0) {
+          logLine(
+            `[arbiter] ${caller} 的导航抢占了 ${decision.preempted.join(', ')}` +
+              `（等待 ${Math.round(decision.waitedMs)}ms${decision.timedOut ? '，已超时' : ''}）`
+          )
+        }
+        pendingNavigation.set(arbiterTab, { actorId: caller, at: Date.now() })
+      }
+
+      // 同一目标（同一个按钮/输入框）的动作串行化：按 agent 编号加权，不会两个 agent 同时按同一个键。
+      const targetArg =
+        typeof (args as { target?: unknown })?.target === 'string'
+          ? String((args as { target?: unknown }).target)
+          : ''
+      const guardedInvoke = async () => {
+        const invoke = () => execute(name, tabId == null ? args : { ...args, tabId })
+        if (!arbiterToken || arbiterTab < 0 || !targetArg) return invoke()
+        return multiAgentArbiter.withTarget(caller, arbiterTab, `${name}:${targetArg}`, invoke)
+      }
+      const result = await runInOperation(ac, () => tabId == null ? guardedInvoke() : collaboration.run(tabId, caller, mutates, guardedInvoke, ac.signal))
       // 旁路审计：AI 在页面上做过什么，落到时间线（写失败不影响调用）
       timeline?.record({
         kind: 'tool',
@@ -1631,6 +1687,7 @@ async function start(): Promise<void> {
     } catch (e) {
       return { isError: true, content: [{ type: 'text', text: (e as Error)?.message ?? String(e) }] }
     } finally {
+      if (arbiterToken) multiAgentArbiter.endOperation(arbiterToken)
       endOperation(ac)
     }
   }
@@ -2303,6 +2360,12 @@ function askAiAboutSelection(text: string, tab: Tab): void {
  *  3. 状态是拉取式的，UI 自己轮询，主进程不推事件。
  */
 const requireFromMain = createRequire(import.meta.url)
+/** 多 agent 共用一个标签时的仲裁器（导航屏障 / 抢占失败 / 同目标互斥）。 */
+const multiAgentArbiter = new MultiAgentArbiter()
+/** 最近一次「由谁发起」的导航：用来区分我们自己的跳转与页面意外跳转。 */
+const pendingNavigation = new Map<number, { actorId: string; at: number }>()
+/** 每个页面最后一次已知 URL（判断“跳转是否被预期”时用）。 */
+const lastUrlByContents = new Map<number, string>()
 /** 多 agent 仲裁实验用的本地探针页（tools/probe-server.mjs）。 */
 const PROBE_URL = 'http://127.0.0.1:8799/'
 
