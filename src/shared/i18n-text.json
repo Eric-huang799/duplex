@@ -2603,6 +2603,30 @@
     "浏览器设置…",
     "Browser settings…"
   ],
+  "menu.print": [
+    "打印…",
+    "Print…"
+  ],
+  "menu.savePdf": [
+    "另存为 PDF…",
+    "Save as PDF…"
+  ],
+  "menu.inspect": [
+    "检查（开发者工具）",
+    "Inspect (DevTools)"
+  ],
+  "menu.spellAddToDictionary": [
+    "添加到词典",
+    "Add to dictionary"
+  ],
+  "menu.pdfDone": [
+    "已保存 PDF",
+    "PDF saved"
+  ],
+  "menu.pdfFailed": [
+    "保存 PDF 失败：{err}",
+    "Failed to save PDF: {err}"
+  ],
   "risk.title": [
     "{host} 需要注意",
     "A note about {host}"

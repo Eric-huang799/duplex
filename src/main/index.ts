@@ -7,6 +7,7 @@ import {
   Menu,
   nativeTheme,
   session,
+  shell,
   type MenuItemConstructorOptions,
   type Session,
   type WebContents
@@ -1984,6 +1985,21 @@ function createWindow(): void {
       }
     },
     (tab, info) => showPageContextMenu(tab, info),
+    (tab, action) => {
+      // 页面级快捷键：消费者按 Ctrl+P 想打印，开发者按 F12 想调试
+      try {
+        const wc = tab.view.webContents
+        if (wc.isDestroyed()) return
+        if (action === 'devtools') wc.toggleDevTools()
+        else if (action === 'print') {
+          wc.print({}, (success, reason) => {
+            if (!success) logLine(`[print] 打印未完成：${reason ?? 'unknown'}`)
+          })
+        } else if (action === 'savePdf') void saveActivePageAsPdf(wc)
+      } catch (e) {
+        logLine(`[shortcut] 页面快捷键失败：${(e as Error)?.message ?? e}`)
+      }
+    },
     // 隐身标签用各自的内存分区：挂同一套策略，但规则不落盘
     (ses) => {
       attachPermissionHandlers(ses, true)
@@ -2186,8 +2202,64 @@ function askAiAboutSelection(text: string, tab: Tab): void {
   }
 }
 
+/** 另存为 PDF：用 Chromium 自带的 printToPDF，落盘后定位到文件。 */
+async function saveActivePageAsPdf(wc: WebContents | null): Promise<void> {
+  if (!wc || !win || wc.isDestroyed()) return
+  try {
+    const title = wc.getTitle() || 'page'
+    const safe = title.replace(/[\\/:*?"<>|]/g, '_').replace(/^[.\s]+|[.\s]+$/g, '').slice(0, 80) || 'page'
+    const stamp = new Date().toISOString().slice(0, 10)
+    const picked = await dialog.showSaveDialog(win, {
+      title: mt('menu.savePdf'),
+      defaultPath: path.join(app.getPath('downloads'), `${stamp}_${safe}.pdf`),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (picked.canceled || !picked.filePath) return
+    const data = await wc.printToPDF({ printBackground: true, pageSize: 'A4' })
+    fs.writeFileSync(picked.filePath, data)
+    shell.showItemInFolder(picked.filePath)
+    timeline?.record({ kind: 'takeover', detail: `导出 PDF：${path.basename(picked.filePath)}` })
+  } catch (e) {
+    logLine(`[print] 另存 PDF 失败：${(e as Error)?.message ?? e}`)
+    sendBrowserShortcut('menu:pdf-failed')
+  }
+}
+
 function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
   const template: MenuItemConstructorOptions[] = []
+  // 拼写建议必须排在最前：用户在输入框里右键时，第一诉求就是改正拼错的词。
+  if (info.misspelledWord) {
+    const word = info.misspelledWord
+    const wc0 = tab.view.webContents
+    for (const suggestion of info.dictionarySuggestions) {
+      template.push({
+        label: suggestion,
+        click: () => {
+          try {
+            wc0.replaceMisspelling(suggestion)
+          } catch {
+            /* 页面已销毁 */
+          }
+        }
+      })
+    }
+    if (info.dictionarySuggestions.length === 0) {
+      template.push({ label: word, enabled: false })
+    }
+    template.push(
+      {
+        label: mt('menu.spellAddToDictionary'),
+        click: () => {
+          try {
+            wc0.session.addWordToSpellCheckerDictionary(word)
+          } catch {
+            /* 词库不可用 */
+          }
+        }
+      },
+      { type: 'separator' }
+    )
+  }
   const copyText = (text: string, action: string): void => {
     try {
       clipboard.writeText(text)
@@ -2304,7 +2376,38 @@ function showPageContextMenu(tab: Tab, info: PageContextMenuInfo): void {
     },
     { type: 'separator' },
     { label: mt('menu.copyPageUrl'), enabled: pageUrl !== '', click: () => copyText(pageUrl, 'menu:copied-url') },
-    { label: mt('menu.copyPageMarkdown'), enabled: pageUrl !== '', click: () => copyPageAsMarkdown(wcAtClick()) }
+    { label: mt('menu.copyPageMarkdown'), enabled: pageUrl !== '', click: () => copyPageAsMarkdown(wcAtClick()) },
+    { type: 'separator' },
+    // 消费级浏览器基本功：打印 / 另存 PDF / 页面开发者工具
+    {
+      label: mt('menu.print'),
+      enabled: pageUrl !== '',
+      click: () => {
+        const wc = wcAtClick()
+        if (!wc) return
+        try {
+          wc.print({}, (success, reason) => {
+            if (!success) logLine(`[print] 打印未完成：${reason ?? 'unknown'}`)
+          })
+        } catch (e) {
+          logLine(`[print] 打印失败：${(e as Error)?.message ?? e}`)
+        }
+      }
+    },
+    { label: mt('menu.savePdf'), enabled: pageUrl !== '', click: () => void saveActivePageAsPdf(wcAtClick()) },
+    {
+      label: mt('menu.inspect'),
+      enabled: pageUrl !== '',
+      click: () => {
+        const wc = wcAtClick()
+        if (!wc) return
+        try {
+          wc.inspectElement(info.px, info.py)
+        } catch (e) {
+          logLine(`[inspect] 打开开发者工具失败：${(e as Error)?.message ?? e}`)
+        }
+      }
+    }
   )
   popupAppMenu(template, info.x, info.y)
 }

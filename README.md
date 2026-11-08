@@ -310,6 +310,12 @@ Debug helpers:
 
 **Does Duplex replace my everyday browser?** It is a separate browser, designed to be the shared browser for you and an AI. It does not load your Chrome profile or Chrome extensions.
 
+**Why is there no Chrome extension support?** Electron only implements a subset of the extension APIs, and Manifest V3's declarative networking model — the part ad blockers and password managers depend on — is largely unsupported. Rather than ship a half-working extension surface, Duplex implements the capabilities that matter inside the browser itself: a network-layer ad blocker with EasyList rules, per-site permission control, read screenshots and printing. Extensions stay out of the product on purpose, not by omission.
+
+**Does Duplex store my passwords?** Not yet, and that is deliberate: credential storage is the one feature where a wrong implementation is worse than no implementation. The encrypted vault and origin-scoped autofill layer are built and tested, but they are not wired to the UI, so nothing is saved today. When they are, the rule will be: exact-origin matching, no agent access to the vault, and no cloud sync.
+
+**How do I get updates?** Builds carry an update feed and check for a new version at startup; when one is ready the app offers "restart to update". Source builds simply pull and rebuild.
+
 **Does it work with a ChatGPT or Claude subscription?** The built-in model uses an OpenAI-compatible API and your API key. Codex and Claude Code use their own CLIs and their own authentication; Duplex does not reuse a ChatGPT web session.
 
 **Does an agent open Duplex automatically?** No. Standalone Codex, Claude Code and opencode sessions do not receive Duplex's MCP tools. Browser control is enabled for a panel-driven launch, resume or opencode message.

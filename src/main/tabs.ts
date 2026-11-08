@@ -15,11 +15,18 @@ export interface PageContextMenuInfo {
   /** Window coordinates (the page view's own offset is already applied). */
   x: number
   y: number
+  /** 页面内坐标：`inspectElement` 需要这个，不能用窗口坐标。 */
+  px: number
+  py: number
   linkURL: string
   srcURL: string
   mediaType: 'none' | 'image' | 'audio' | 'video' | 'canvas' | 'file' | 'plugin'
   selectionText: string
   isEditable: boolean
+  /** 拼错的词（Chromium 拼写检查结果）；空串表示没有拼写错误。 */
+  misspelledWord: string
+  /** 该词的词典建议，用于右键菜单的"替换为"。 */
+  dictionarySuggestions: string[]
   editFlags: {
     canCut: boolean
     canCopy: boolean
@@ -65,6 +72,8 @@ export class TabManager {
     private onLoadError?: (info: LoadErrorInfo) => void,
     private onFindResult?: (result: { tabId: number; matches: number; activeMatch: number }) => void,
     private onPageContextMenu?: (tab: Tab, info: PageContextMenuInfo) => void,
+    /** 页面内的浏览器快捷键（打印 / 另存 PDF / 开发者工具），由主进程实现。 */
+    private onPageShortcut?: (tab: Tab, action: 'print' | 'savePdf' | 'devtools') => void,
     /** 隐身标签的独立内存分区交给主进程挂权限策略（规则不落盘）。 */
     private onEphemeralSession?: (ses: Session) => void
   ) {
@@ -126,6 +135,9 @@ export class TabManager {
         nodeIntegration: false,
         sandbox: true,
         backgroundThrottling: false,
+        // Chromium 内置拼写检查：这是消费级浏览器基本功，缺了英文输入用户立刻有感知。
+        // 词库走 Chromium 自带，无需额外依赖；右键菜单的"拼写建议"由主进程提供。
+        spellcheck: true,
         ...(this.overlayPreload ? { preload: this.overlayPreload } : {})
       }
     })
@@ -318,6 +330,22 @@ export class TabManager {
         /* find-result reporting must never break the page */
       }
     })
+    // 页面内的快捷键：Ctrl+P / F12 / Ctrl+Shift+I。
+    // 必须挂在页面 webContents 上——挂在应用窗口上时，焦点在页面里就收不到。
+    wc.on('before-input-event', (event, input) => {
+      if (!this.onPageShortcut) return
+      if (input.type !== 'keyDown') return
+      const ctrl = input.control || input.meta
+      const key = (input.key || '').toLowerCase()
+      let action: 'print' | 'savePdf' | 'devtools' | null = null
+      if (input.key === 'F12' || (ctrl && input.shift && key === 'i')) action = 'devtools'
+      else if (ctrl && key === 'p') action = 'print'
+      else if (ctrl && input.shift && key === 's') action = 'savePdf'
+      if (!action) return
+      event.preventDefault()
+      this.onPageShortcut(tab, action)
+    })
+
     // Page right-click: forward the fields the app-level native menu needs.
     // params.x/y are relative to the page view; translate them into window
     // coordinates so Menu.popup lands under the actual cursor.
@@ -327,11 +355,17 @@ export class TabManager {
         this.onPageContextMenu(tab, {
           x: params.x + this.bounds.x,
           y: params.y + this.bounds.y,
+          px: params.x,
+          py: params.y,
           linkURL: params.linkURL,
           srcURL: params.srcURL,
           mediaType: params.mediaType,
           selectionText: params.selectionText,
           isEditable: params.isEditable,
+          misspelledWord: params.misspelledWord ?? '',
+          dictionarySuggestions: Array.isArray(params.dictionarySuggestions)
+            ? params.dictionarySuggestions.slice(0, 5)
+            : [],
           editFlags: {
             canCut: params.editFlags.canCut,
             canCopy: params.editFlags.canCopy,
