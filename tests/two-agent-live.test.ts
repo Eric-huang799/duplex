@@ -97,6 +97,18 @@ const TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'wait',
+      description: '等待指定输入框被填上内容（用于等另一个 agent 完成它的部分），最多等 8 秒。',
+      parameters: {
+        type: 'object',
+        properties: { target: { type: 'string', enum: ['加数 A', '加数 B', '输入框'] } },
+        required: ['target']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'read',
       description: '读回页面当前状态：按钮被点击的次数、输入框内容。',
       parameters: { type: 'object', properties: {} }
@@ -145,6 +157,9 @@ interface Metrics {
   toolCalls: number
   clicks: number
   waits: number[]
+  /** 调用 wait 工具实际等待的毫秒数（与模型延迟分开统计） */
+  blockedMs: number
+  toolNames: string[]
   errors: string[]
 }
 
@@ -231,7 +246,7 @@ async function runAgent(
   arbiter: MultiAgentArbiter,
   budget: number
 ): Promise<Metrics> {
-  const metrics: Metrics = { actor, modelCalls: 0, toolCalls: 0, clicks: 0, waits: [], errors: [] }
+  const metrics: Metrics = { actor, modelCalls: 0, toolCalls: 0, clicks: 0, waits: [], blockedMs: 0, toolNames: [], errors: [] }
   const messages: Array<Record<string, unknown>> = [
     { role: 'system', content: '你是一个浏览器 agent。只用提供的工具完成任务，不要多也不要少。' },
     { role: 'user', content: instruction }
@@ -262,6 +277,7 @@ async function runAgent(
 
     for (const call of reply.toolCalls) {
       metrics.toolCalls++
+      metrics.toolNames.push(call.name)
       try {
         if (call.name === 'click') {
           const selector = TARGETS[String(call.args['target'] ?? '')] ?? TARGETS['按钮']
@@ -280,6 +296,21 @@ async function runAgent(
             await new Promise((resolve) => setTimeout(resolve, 60))
           })
           messages.push({ role: 'tool', tool_call_id: call.id, content: `typed into ${selector}: ${text}` })
+        } else if (call.name === 'wait') {
+          // 真等页面条件：这段时间不算模型轮次，正是 wait 工具要省下的成本
+          const selector = TARGETS[String(call.args['target'] ?? '')] ?? TARGETS['输入框']
+          const startedWait = Date.now()
+          await page.waitForFunction(
+            (sel: string) => {
+              const el = document.querySelector(sel) as HTMLInputElement | null
+              return Boolean(el) && String(el?.value ?? '').trim() !== ''
+            },
+            selector,
+            { timeout: 8000 }
+          )
+          const waited = Date.now() - startedWait
+          metrics.blockedMs += waited
+          messages.push({ role: 'tool', tool_call_id: call.id, content: `ready after ${waited}ms` })
         } else {
           const state = await pageState(page)
           messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(state) })
@@ -332,6 +363,8 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
       toolCalls: m.toolCalls,
       clicks: m.clicks,
       modelMsTotal: m.waits.reduce((a, b) => a + b, 0),
+      blockedMs: m.blockedMs,
+      toolNames: m.toolNames,
       errors: m.errors
     }))
 
@@ -415,8 +448,8 @@ describe.skipIf(!enabled)('双 agent 真模型共用同一标签', () => {
       runAgent(
         'agent-1',
         '目标：点击"求和"。规则：你只能填"加数 A"（填 6），绝不能改"加数 B"。每次操作前先 read。' +
-          '如果 read 显示加数 B 仍为空，就继续 read 等待（不要点求和、也不要自己填 B）。' +
-          '等到两个加数都不为空后再点击"求和"，最后 read 一次确认结果。',
+          '如果 read 显示加数 B 为空，必须调用 wait 工具等「加数 B」被填好（wait 就是为这个场景提供的，禁止用 read 轮询等待）。' +
+          'wait 返回后再 read 一次确认两个加数都非空，然后点击"求和"，最后 read 一次。',
         cfg,
         page,
         arbiter,

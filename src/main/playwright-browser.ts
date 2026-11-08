@@ -666,10 +666,31 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
         checkCancelled()
         return { waitedMs: Date.now() - started }
       }
+      // 等"另一个 agent 把某个输入框填好"是多 agent 协作里最常见的等待，
+      // 但它既不是"选择器出现"也不是"页面文本包含"——所以补 hasValue / value 两种条件。
+      const wantsValue = typeof args.value === 'string'
+      const wantsNonEmpty = args.hasValue === true
+      /** 等待命中时一并回传观察到的值：省掉 agent 等待后的那次 read（一次模型轮次）。 */
+      let observed: string | undefined
       while (Date.now() - started < timeout) {
         checkCancelled()
-        const found = args.selector ? await (await locatorForTarget(page, String(args.selector), scope)).count() > 0 : await page.getByText(String(args.text), { exact: false }).count() > 0
-        if (found) return { found: true, waitedMs: Date.now() - started }
+        const found = args.selector
+          ? await (async (): Promise<boolean> => {
+              const locator = await locatorForTarget(page, String(args.selector), scope)
+              if ((await locator.count()) === 0) return false
+              if (!wantsValue && !wantsNonEmpty) return true
+              const current = await locator
+                .first()
+                .evaluate((node) => {
+                  const el = node as unknown as { value?: unknown; textContent?: string | null }
+                  return el.value !== undefined ? String(el.value) : (el.textContent ?? '')
+                })
+                .catch(() => '')
+              observed = current
+              return wantsValue ? current === String(args.value) : current.trim() !== ''
+            })()
+          : (await page.getByText(String(args.text), { exact: false }).count()) > 0
+        if (found) return { found: true, waitedMs: Date.now() - started, ...(observed !== undefined ? { value: observed } : {}) }
         await interruptibleSleep(100)
       }
       return { found: false, timeoutMs: timeout }

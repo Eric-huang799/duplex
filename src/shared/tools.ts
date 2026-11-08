@@ -189,11 +189,13 @@ export const toolDefs: ToolDef[] = [
   {
     name: 'wait',
     description:
-      'Wait for time and/or page state. Provide ms, or selector (until it matches), or text (until the page contains it).',
+      'Wait without spending model rounds. Use selector+hasValue to block until another agent fills a field, selector to wait for an element, text to wait for page text, or ms to sleep. Prefer this over repeatedly reading the page while waiting for someone else.',
     input: {
       ms: z.number().optional().describe('Wait this many milliseconds (max 30000)'),
       selector: z.string().optional().describe('Wait until this CSS selector matches'),
       text: z.string().optional().describe('Wait until the page contains this text'),
+      hasValue: z.boolean().optional().describe('With selector: wait until that field is non-empty'),
+      value: z.string().optional().describe('With selector: wait until that field equals this exact value'),
       timeout: z.number().optional().describe('Max wait for selector/text in ms (default 10000)'),
       tabId: z.number().optional()
     }
