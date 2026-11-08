@@ -288,7 +288,8 @@ function attachAdblock(ses: Session): void {
 
 function attachCosmeticFiltering(): void {
   app.on('web-contents-created', (_event, wc) => {
-    if (wc.getType() !== 'browserView') return // 'window' 是应用自身 UI，不注入
+    // 同 challenge 监控：按身份排除应用自身 UI（getType() 一律是 'window'）
+    if (!win || wc.id === win.webContents.id) return
     const refresh = (): void => {
       void (async () => {
         const previous = cosmeticCssKeys.get(wc.id)
@@ -307,6 +308,7 @@ function attachCosmeticFiltering(): void {
         if (!css) return
         try {
           cosmeticCssKeys.set(wc.id, await wc.insertCSS(css, { cssOrigin: 'user' }))
+          logLine(`[adblock] 元素隐藏已注入 bytes=${css.length} url=${url.slice(0, 80)}`)
         } catch {
           /* frame already gone */
         }
@@ -399,14 +401,25 @@ const challengeContents = new Set<number>()
  */
 function attachChallengeWatch(): void {
   app.on('web-contents-created', (_event, wc) => {
-    if (wc.getType() !== 'browserView') return
+    // 实测：WebContentsView 的 contents 与 iframe 的 getType() 全都返回 'window'，
+    // 用类型名区分页面与应用自身 UI 是错的（会把监控整体静默关掉）。
+    // 唯一可靠的判据是身份：应用自己的 UI 就是 win.webContents。
+    if (!win || wc.id === win.webContents.id) return
     wc.on('did-finish-load', () => {
       try {
         const url = wc.getURL()
-        const verdict = detectChallenge({ url, title: wc.getTitle() })
+        const title = wc.getTitle()
+        const verdict = detectChallenge({ url, title })
+        if (!verdict.challenge) {
+          challengeContents.delete(wc.id)
+          return
+        }
+        logLine(
+          `[challenge] 检测到 ${verdict.kind ?? 'unknown'}：${url.slice(0, 100)} ` +
+            `conf=${verdict.confidence}（${verdict.evidence ?? ''}）`
+        )
         if (shouldPauseAgent(verdict)) {
           challengeContents.add(wc.id)
-          logLine(`[challenge] 检测到 ${verdict.kind ?? 'unknown'}：${url}（${verdict.evidence ?? ''}）`)
           const tabId = tabIdOfContents(wc)
           try {
             win?.webContents.send('site:risk', {
@@ -418,8 +431,6 @@ function attachChallengeWatch(): void {
             /* window closing */
           }
           if (tabId != null) logLine(`[challenge] AI 已在标签 ${tabId} 上暂停`)
-        } else {
-          challengeContents.delete(wc.id)
         }
       } catch {
         /* 页面已销毁 */

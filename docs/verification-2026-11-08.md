@@ -38,6 +38,31 @@ node tools/probe-server.mjs 8799     # 本地静态服务
 修法是关掉 `AutomationControlled` 这个 blink feature——引擎行为一点没变，只是不再对外
 宣布"我是被自动化驱动的"。**这不是破解验证码**，验证码交给用户（见 §四）。
 
+### 2.1 顺带挖出的更严重问题：两个功能一直是死代码
+
+做验证码交接的端到端测试时，日志里连监控注册的痕迹都没有。查下去发现：
+
+```
+[challenge] contents created type=window
+[challenge] contents created type=window      ← 每个都是 window
+```
+
+**`webContents.getType()` 对 WebContentsView 的页面、甚至 iframe 一律返回 `'window'`。**
+而元素隐藏与挑战监控原来都写着 `if (wc.getType() !== 'browserView') return`——于是
+**两者自上线起就从未执行过**：元素隐藏一条 CSS 都没注入，挑战检测一次都没跑。
+
+这是"看起来接好了、实际没接"的典型：没有报错、没有日志、开关能点、状态能读。
+修正判据为**身份比较**（`wc.id === win.webContents.id` 才是应用自身 UI），两处都改。
+修完后立刻验证：
+
+```
+[adblock] 元素隐藏已注入 bytes=224640 url=http://127.0.0.1:8799/
+[challenge] 检测到 unknown：http://127.0.0.1:8799/challenge conf=0.85（验证路径）
+[challenge] AI 已在标签 10 上暂停
+```
+
+全仓再查 `getType()`，只有这两处，没有第三个受害者。
+
 ---
 
 ## 三、广告拦截：从"空转"到真的拦
@@ -91,6 +116,21 @@ fetch('https://example.com/favicon.ico')
 
 反例测试确保不误报：普通文章里的 "verification"、普通 YouTube 嵌入、普通登录页都不触发。
 
+### 4.1 端到端实测（不是只有单测）
+
+造了一个 `/challenge` 测试页（标题 `Verify you are human` + 正文"请完成安全验证" +
+reCAPTCHA iframe），在运行中的实例里打开，然后让 AI 点击页面：
+
+```
+[challenge] 检测到 unknown：http://127.0.0.1:8799/challenge conf=0.85（验证路径）
+[challenge] AI 已在标签 10 上暂停
+
+click → 这个页面要求人工验证（人机验证/挑战页）。AI 已暂停：请告知用户在浏览器里
+         手动完成验证，完成后你再继续。不要尝试自动通过验证码，也不要换入口绕过。
+```
+
+**修改前同一条点击是成功的（`clicked: true`）**——这就是它作为回归证据的价值。
+
 ---
 
 ## 五、诚实结论：内核这件事，数据说了什么
@@ -140,8 +180,10 @@ UA-CH（`navigator.userAgentData.brands`）实测是：
 2. **UA-CH brands 仍是 Chromium**（需品牌化构建，见 §5.1）。
 3. **`data-page-token` 仍是一个属性**，只是不再带产品名。彻底方案是改成不落 DOM 的
    Symbol 属性或主进程侧映射，会牵动标注/导航校验，单独一轮做。
-4. **验证码交接只在单测层面验证过**，没有在真实站点上端到端跑一次（需要真实触发挑战）。
+4. **元素隐藏的通用规则每页注入约 224 KB CSS**（全部 origin 无关规则）。功能正确，但
+   大站点上可能带来样式重算开销，值得按"当前站点命中的规则"裁剪后再注入。
 5. `list_tabs` 在会话没有绑定标签时可能报"没有任务标签"，需要复核（本轮遇到过一次）。
+6. 元素隐藏对同一页面会重复注入（多个 contents 各注入一次），可去重。
 
 ---
 

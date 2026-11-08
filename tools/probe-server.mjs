@@ -10,6 +10,17 @@ const page = path.join(here, 'detection-harness.html')
 const port = Number(process.argv[2] ?? 8799)
 
 const server = http.createServer((req, res) => {
+  if (req.url?.startsWith('/challenge')) {
+    // 用于端到端验证"检测到挑战就暂停 AI"：标题与文本都命中检测规则
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(
+      '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Verify you are human</title></head>' +
+        '<body><h1>请完成安全验证</h1><p>unusual traffic from your computer network</p>' +
+        '<iframe src="https://www.google.com/recaptcha/api2/anchor?k=demo" width="300" height="80"></iframe>' +
+        '</body></html>'
+    )
+    return
+  }
   if (req.url === '/' || req.url?.startsWith('/?')) {
     fs.readFile(page, 'utf8', (error, html) => {
       if (error) {
