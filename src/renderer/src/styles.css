@@ -3045,3 +3045,14 @@ button.start-engine:hover {
 .perm-log > summary::before { content: '▸ '; }
 .perm-log[open] > summary::before { content: '▾ '; }
 .perm-log-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+
+/* 并行会话徽标：有后台会话在跑时出现在头部状态旁 */
+.panel-parallel {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--hover, rgba(127, 140, 160, 0.16));
+  border: 1px solid var(--line);
+  color: var(--text-dim, inherit);
+}

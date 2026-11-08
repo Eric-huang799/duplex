@@ -194,10 +194,16 @@ export class RefRegistry {
     this.idleTtlMs = Math.max(0, options.idleTtlMs ?? IDLE_ACTOR_TTL_MS)
   }
 
-  /** 用于拼进 ref 前缀的稳定短标识（保持可读；调用者 id 本来就被限制为 ASCII 标识符）。 */
+  /**
+   * 用于拼进 ref 前缀的稳定短标识。
+   *
+   * 不能包含冒号：ref 的语法是 `a<tag>:e12`，而内置并行会话的 caller 形如
+   * `builtin:demo-a`，直接拼出来会是 `abuiltin:demo-a:e12`——语义相同但可读性差，
+   * 且让"最后一个冒号前是命名空间"的解析规则变得脆弱。这里把冒号也换成短横线。
+   */
   actorTag(actorId: string): string {
     const tag = String(actorId || 'agent')
-      .replace(/[^A-Za-z0-9._:-]/g, '-')
+      .replace(/[^A-Za-z0-9._-]/g, '-')
       .slice(0, 64)
     return tag || 'agent'
   }

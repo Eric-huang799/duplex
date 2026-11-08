@@ -2598,7 +2598,10 @@
   "panel.permissionLog": [
     "已处理的授权记录（{n}）",
     "Resolved approvals ({n})"
-  ],  "panel.playbooks": [
+  ],    "panel.parallelDemo": [
+    "并行演示：两个 agent 同时操作",
+    "Parallel demo: two agents at once"
+  ],"panel.playbooks": [
     "预置任务",
     "Playbooks"
   ],

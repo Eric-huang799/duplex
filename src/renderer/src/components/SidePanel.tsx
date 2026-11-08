@@ -58,6 +58,10 @@ interface Props {
   onConfirmRespond: (id: number, ok: boolean) => void
   onAgentSessionDeleted?: () => void
   initialShowProviders?: boolean
+  /** 并行内置会话：运行中的会话 id 与各自的工具调用次数。 */
+  parallel?: { running: string[]; counts: Record<string, number> }
+  /** 一键启动两个并行会话的演示（验收用）。 */
+  onStartParallelDemo?: () => void
   /** 划词即问：主进程推来的选中文字（ts 用于去重，同一段只填一次）。 */
   selectionAsk?: { text: string; url?: string; ts: number } | null
 }
@@ -160,6 +164,8 @@ export function SidePanel({
   onConfirmRespond,
   onAgentSessionDeleted,
   initialShowProviders,
+  parallel,
+  onStartParallelDemo,
   selectionAsk
 }: Props): React.JSX.Element {
   const { t, lang } = useI18n()
@@ -779,6 +785,14 @@ export function SidePanel({
                 ? t('panel.agentReady')
                 : t('panel.agentUnconfigured')}
           </span>
+          {parallel && parallel.running.length > 0 && (
+            <span
+              className="panel-parallel"
+              title={`并行会话：${parallel.running.join(', ')}`}
+            >
+              ⚡{parallel.running.length}
+            </span>
+          )}
           {/* 模型选择单独放在头部：切换模型是高频动作，不该每次都展开面板 */}
           {isAgent && providers.length > 0 && (
             <select
@@ -957,6 +971,18 @@ export function SidePanel({
                   <strong style={{ fontSize: 12.5 }}>{t('panel.playbooks')}</strong>
                   <button className="session-btn" onClick={() => setShowPlaybooks(false)}>✕</button>
                 </div>
+                {onStartParallelDemo && (
+                  <button
+                    className="session-btn"
+                    style={{ width: '100%', marginBottom: 8, justifyContent: 'center' }}
+                    onClick={() => {
+                      onStartParallelDemo()
+                      setShowPlaybooks(false)
+                    }}
+                  >
+                    ⚡ {t('panel.parallelDemo')}
+                  </button>
+                )}
                 {playbookGroups.map((group) => (
                   <div key={group.category} style={{ marginBottom: 8 }}>
                     <div style={{ fontSize: 10.5, opacity: 0.65, marginBottom: 3 }}>{group.category}</div>

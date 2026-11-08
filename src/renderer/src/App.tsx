@@ -272,6 +272,54 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  // 并行内置会话：订阅后台事件维护"运行中 + 各自工具调用次数"。
+  // 事件只带 sessionId，不混进当前对话；这里只做状态与徽标。
+  const [parallel, setParallel] = useState<{ running: string[]; counts: Record<string, number> }>({
+    running: [],
+    counts: {}
+  })
+
+  useEffect(() => {
+    const off = window.cobrowse.onAgentBackground(({ sessionId, event }) => {
+      setParallel((prev) => {
+        const counts = { ...prev.counts }
+        if (event['kind'] === 'tool') counts[sessionId] = (counts[sessionId] ?? 0) + 1
+        const running = prev.running.includes(sessionId) ? prev.running : [...prev.running, sessionId]
+        return { running, counts }
+      })
+    })
+    const timer = window.setInterval(() => {
+      void window.cobrowse.agentParallelRunning().then((running) => {
+        setParallel((prev) => {
+          const counts: Record<string, number> = {}
+          for (const id of running) counts[id] = prev.counts[id] ?? 0
+          return { running, counts }
+        })
+      })
+    }, 2000)
+    return () => {
+      off()
+      window.clearInterval(timer)
+    }
+  }, [])
+
+  const startParallelDemo = useCallback((): void => {
+    // 打开探针页，再让两个会话同时操作它（验收用；探针服务：node tools\probe-server.mjs 8799）
+    void window.cobrowse.tabAction({ type: 'newTab', url: 'http://127.0.0.1:8799/' })
+    // 每次演示用新会话 id：复用旧 id 会带着上一轮的 ref 历史，导致快照/点击互相干扰
+    const stamp = Date.now().toString(36)
+    window.setTimeout(() => {
+      void window.cobrowse.agentParallelStart(
+        '点击页面上的"计数按钮"两次，每次先 snapshot 看一下计数。只用工具，不要写长解释。',
+        `demo-a-${stamp}`
+      )
+      void window.cobrowse.agentParallelStart(
+        '在页面的输入框里输入 duplex，然后 evaluate 读回它的值。只用工具，不要写长解释。',
+        `demo-b-${stamp}`
+      )
+    }, 1500)
+  }, [])
+
   useEffect(() => {
     setChromeOverlay('library', library !== null)
     return () => setChromeOverlay('library', false)
@@ -928,6 +976,8 @@ export default function App(): React.JSX.Element {
               confirms={confirms}
               onConfirmRespond={respondConfirm}
               initialShowProviders={initialShowProviders}
+              parallel={parallel}
+              onStartParallelDemo={startParallelDemo}
               selectionAsk={selectionAsk}
               onAgentSessionDeleted={() => setAgentEvents([])}
             />

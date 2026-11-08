@@ -148,6 +148,15 @@ interface CobrowseApi {
   agentReset(): Promise<unknown>
   agentNewSession(): Promise<{ ok: boolean; error?: string }>
   agentSessions(): Promise<Array<{ id: string; title: string; updatedAt: number; current: boolean }>>
+  /** 并行内置会话：启动一个后台会话（不打断当前对话）。 */
+  agentParallelStart(
+    text: string,
+    sessionId?: string
+  ): Promise<{ ok: true; sessionId: string } | { ok: false; error: string }>
+  agentParallelRunning(): Promise<string[]>
+  onAgentBackground(
+    cb: (payload: { sessionId: string; event: Record<string, unknown> }) => void
+  ): () => void
   agentSwitchSession(id: string): Promise<{ ok: boolean; error?: string }>
   agentDeleteSession(id: string): Promise<{ ok: boolean; error?: string }>
   agentEvents(): Promise<Array<MirrorEvent & { info?: string }>>

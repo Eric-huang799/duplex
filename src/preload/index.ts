@@ -271,6 +271,21 @@ const api = {
     ipcRenderer.on('agent:event', listener)
     return () => ipcRenderer.removeListener('agent:event', listener)
   },
+  /** 并行内置会话：启动一个后台会话（不打断当前对话）。 */
+  agentParallelStart: (text: string, sessionId?: string) =>
+    ipcRenderer.invoke('agent:parallel-start', text, sessionId) as Promise<
+      { ok: true; sessionId: string } | { ok: false; error: string }
+    >,
+  agentParallelRunning: () => ipcRenderer.invoke('agent:parallel-running') as Promise<string[]>,
+  /** 后台会话事件（带 sessionId），用于显示"运行中"与会话级日志。 */
+  onAgentBackground: (
+    cb: (payload: { sessionId: string; event: Record<string, unknown> }) => void
+  ): (() => void) => {
+    const listener = (_e: unknown, payload: { sessionId: string; event: Record<string, unknown> }): void =>
+      cb(payload)
+    ipcRenderer.on('agent:background-event', listener)
+    return () => ipcRenderer.removeListener('agent:background-event', listener)
+  },
   agentSend: (text: string, options?: { interrupt?: boolean }) => ipcRenderer.invoke('agent:send', text, options) as Promise<unknown>,
   agentAbort: () => ipcRenderer.invoke('agent:abort') as Promise<unknown>,
   agentReset: () => ipcRenderer.invoke('agent:reset') as Promise<unknown>,

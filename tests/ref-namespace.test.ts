@@ -107,11 +107,12 @@ describe('ref 命名空间', () => {
     // 自己的命名空间写法可解析成同一个 base ref。
     expect(registry.claim(1, 'agent-a', registry.formatRef('agent-a', 'e12')).baseRef).toBe('e12')
 
-    // 真实 MCP caller id 含冒号（bridge:<hash>）；前缀按最后一个冒号切分。
+    // 真实 MCP caller id 含冒号（bridge:<hash>）；命名空间里冒号被替换成短横线，
+    // 保证 ref 语法 `a<tag>:e12` 只有唯一的分隔冒号。
     registry.recordSnapshot(1, 'bridge:abc123', 'doc-1', [entry('e7')])
-    expect(registry.formatRef('bridge:abc123', 'e7')).toBe('abridge:abc123:e7')
-    expect(registry.claim(1, 'bridge:abc123', 'abridge:abc123:e7').baseRef).toBe('e7')
-    expect(() => registry.claim(1, 'agent-b', 'abridge:abc123:e7')).toThrow(/命名空间/)
+    expect(registry.formatRef('bridge:abc123', 'e7')).toBe('abridge-abc123:e7')
+    expect(registry.claim(1, 'bridge:abc123', 'abridge-abc123:e7').baseRef).toBe('e7')
+    expect(() => registry.claim(1, 'agent-b', 'abridge-abc123:e7')).toThrow(/命名空间/)
   })
 
   it('单 agent 的旧写法 e12 仍然可用，快照也不加前缀', () => {
