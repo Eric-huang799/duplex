@@ -1,6 +1,6 @@
 # duplex-bridge
 
-stdio MCP bridge for **[Duplex](https://github.com/Eric-huang799/duplex)** — a browser shared by a human and an AI. It exposes 24 browser tools (navigate, click, type, snapshot, screenshot, annotations, …) over the Model Context Protocol and forwards them to the Duplex app running on your machine.
+stdio MCP bridge for **[Duplex](https://github.com/Eric-huang799/duplex)** — a browser shared by a human and an AI. It exposes 25 browser tools (navigate, click, type, snapshot, screenshot, annotations, …) over the Model Context Protocol and forwards them to the Duplex app running on your machine.
 
 ## Requirements
 

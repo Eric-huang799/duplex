@@ -63,7 +63,7 @@ Duplex 是一个真正的桌面浏览器，同时为人和 AI 设计。AI 在你
 
 - **一个真正的浏览器** —— 多标签、地址栏搜索（百度 / Bing / Google）、前进 / 后退 / 刷新、加载状态、主题、壁纸起始页、可自定义快捷键、完整书签管理与会话恢复。
 - **人机协作（以人为先）** —— 每个 AI 任务绑定在自己的标签上。你滚动、输入或聚焦时，AI 继续读取但暂停该页的修改；状态条列出人工接管的页面，点一下即可逐页交还。
-- **24 个浏览器工具** —— `snapshot` 把页面压缩成带 `[eN]` ref 的紧凑 DOM 大纲；点击、输入、拖拽与读取走浏览器自身 Chromium 上的 Playwright locator，支持 iframe、开放 shadow DOM 与可取消等待。桥接还向内置 agent 提供 6 个 skill/文件工具。
+- **25 个浏览器工具** —— `snapshot` 把页面压缩成带 `[eN]` ref 的紧凑 DOM 大纲；读取、点击与输入都走进程内执行（`executeJavaScript` / `sendInputEvent`），动作本身不再需要 DevTools 附着——元素定位仍经 Playwright（CDP）。支持 iframe、开放 shadow DOM 与可取消等待。
 - **面板驱动的 agent 控制** —— Codex 与 Claude Code 只在面板启动或续接的这一次调用中获得 MCP 服务；opencode 使用专用 `duplex` agent。独立 agent 拿不到浏览器控制权，也不会自行打开 Duplex。
 - **内置模型** —— 接入任意 OpenAI 兼容服务商（DeepSeek、Kimi、Qwen、GLM、Ollama 等），可从 opencode 导入配置，让浏览器通过工具与 skills 自己工作。
 - **可见的操作** —— 光标环、元素高亮与状态条展示 AI 正在做什么；页面标注允许你画框、圈、箭头或点选并附上问题。
@@ -222,7 +222,7 @@ node C:\path\to\Duplex\dist-bridge\index.cjs
 | `annotation_mode` | 进入 / 退出标注模式（人在页面上画框 / 圈 / 箭头 / 点选并提问） |
 | `evaluate` | 在页面中执行 JS，返回可 JSON 序列化的结果 |
 
-同一个桥接还向内置 agent 提供 6 个 skill/文件工具：`read_skill`、`list_skill_files`、`read_skill_file`、`run_skill_script`、`write_file`、`run_command`。
+内置 agent 另外有 6 个 skill/文件工具（`read_skill`、`list_skill_files`、`read_skill_file`、`run_skill_script`、`write_file`、`run_command`），它们标记为 `internal`：桥接与应用自身的 MCP 端点都会跳过，外部客户端看不到。
 
 ## 工作原理
 

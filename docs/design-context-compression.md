@@ -1,6 +1,6 @@
 # 设计：长会话上下文压缩（替代"截断丢信息"）
 
-> 现状：`runtime.ts` 在历史超限时用 `truncateWithMarker` 截断，并插入一条
+> 现状：`src/main/agent/runtime.ts` 在历史超限时用 `truncateWithMarker` 截断，并插入一条
 > `sys-history-truncated` 系统提示。信息是真丢了——之后的回答可能出现"你刚才说的那个"对不上。
 
 ## 一、目标

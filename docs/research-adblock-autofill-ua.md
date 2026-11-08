@@ -1,7 +1,7 @@
 # 研究：广告拦截 / 密码自动填充 / UA 伪装
 
 > 2026-11-07 · 基于当前代码事实：**三项均无实现**（全仓无 `setUserAgent` / `webRequest` / `loadExtension` / `safeStorage`）。
-> 页面注入点已具备：`tabs.ts:129` 给每个标签注入 `out/preload/overlay.cjs`，元素隐藏类逻辑可以挂在这里。
+> 页面注入点已具备：`src/main/tabs.ts:141` 给每个标签注入 `out/preload/overlay.cjs`，元素隐藏类逻辑可以挂在这里。
 
 ---
 

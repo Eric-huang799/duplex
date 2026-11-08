@@ -32,9 +32,13 @@
 
 *A harder, unscripted test: with no spreadsheet-specific skill installed, the built-in model used the stock API and a few simple automation skills to push a whole grade sheet into Excel for the web. It worked, but it was slow and token-heavy — a feasibility demo, not a recommended workflow. The screenshot shows the resulting sheet in the current UI.*
 
-## 0.2.10: the panel-scoped agent release
+## 0.3.0-beta.1: the governance release
 
-0.2.10 makes the boundary between an AI and your browser explicit: **an agent gets browser control only when you start or continue it from Duplex.** Nothing is installed globally behind your back.
+0.3.0-beta.1 makes the boundary between an AI and your browser explicit **and enforced**: sensitive sites require your consent before the agent may enter, site permissions are revocable per origin, and the agent stops when a page asks for human verification instead of trying to get past it.
+
+Highlights: reads and clicks/typing moved in-process (no DevTools attachment needed for the action itself), ad blocking with EasyList rules actually injected, page DevTools (F12), printing and Save as PDF, spellcheck suggestions, ten preset tasks, chat export to Markdown, and a browser settings panel that also rolls back agent-made changes.
+
+Previous: 0.2.10 introduced the panel-scoped agent model — **an agent gets browser control only when you start or continue it from Duplex.** Nothing is installed globally behind your back.
 
 - **Bilingual interface** — the renderer, native menus, context menus, dialogs and the annotation overlay switch between Simplified Chinese and English. Follow the system locale or pin a language from the tools menu.
 - **In-app search-engine menu** — the address-bar engine picker is a themed in-app dropdown for Baidu, Bing and Google; it no longer depends on a native popup menu.
@@ -63,7 +67,7 @@ It is not a browser wrapper around a remote agent. It is the browser.
 
 - **A real browser** — tabs, address bar with search (Baidu / Bing / Google), back / forward / reload, loading state, themes, a wallpaper start page, customizable keyboard shortcuts, a full bookmark manager and session restore.
 - **Human-first collaboration** — each AI task is bound to its tab. While you scroll, type or focus something, the AI keeps reading but pauses its own modifications on that page. A status bar lists human-controlled pages and hands each one back with a click.
-- **25 browser tools** — `snapshot` turns a page into a compact DOM outline with `[eN]` refs; reads, clicks and typing now run **in-process** (`executeJavaScript` / `sendInputEvent`) so they no longer need a DevTools attachment, with iframe and open-shadow support and cancellable waits. Skill and file tools exist for the built-in agent but are `internal` and are never exposed to MCP clients.
+- **25 browser tools** — `snapshot` turns a page into a compact DOM outline with `[eN]` refs; reads, clicks and typing run in-process (`executeJavaScript` / `sendInputEvent`), so the action itself no longer needs a DevTools attachment — locating the element still goes through Playwright over CDP. Iframe and open-shadow support, cancellable waits.
 - **Panel-scoped agent control** — Codex and Claude Code get an MCP server only for a panel-driven launch or resume; opencode gets a dedicated `duplex` agent. Standalone agents do not get browser control and do not open Duplex on their own.
 - **Built-in agent** — connect any OpenAI-compatible provider (DeepSeek, Kimi, Qwen, GLM, Ollama, …), import providers from opencode, and let the browser drive itself with tools and skills.
 - **Visible actions** — a cursor ring, element highlight and status bar show what the AI is doing; page annotations let you draw a box, circle, arrow or point and attach a question.
@@ -132,7 +136,7 @@ npm start      # preview the production build
 
 ## Connect your agents
 
-The important rule in 0.2.10: **standalone agent sessions do not get Duplex's browser tools.** The tools are injected for a single panel-driven launch or resume. This keeps the default safe: an agent working in a terminal will not silently open a browser or take over your session.
+The important rule since 0.2.10: **standalone agent sessions do not get Duplex's browser tools.** The tools are injected for a single panel-driven launch or resume. This keeps the default safe: an agent working in a terminal will not silently open a browser or take over your session.
 
 ### Built-in model
 
@@ -207,7 +211,7 @@ The bridge proxies tool calls to the running app and can launch it when it is no
 
 | Tool | Description |
 |---|---|
-| `list_tabs` / `new_tab` / `close_tab` / `switch_tab` | Tab management — human and AI share the same tabs |
+| `list_tabs` / `new_tab` / `close_tab` / `switch_tab` / `resume_tab` | Tab management — human and AI share the same tabs; `resume_tab` clears a stale lock or a human-handover pause |
 | `navigate` / `search` / `history` | Open a URL (auto-searches if not a URL), search (Baidu default, or Bing / Google), back / forward / reload |
 | `snapshot` | Page as text — compact DOM outline; interactive elements carry `[eN]` refs |
 | `get_html` / `query` | Raw HTML, or detailed info for elements matching a CSS selector |
@@ -222,7 +226,7 @@ The bridge proxies tool calls to the running app and can launch it when it is no
 | `annotation_mode` | Enter/exit the annotation overlay (human draws a box/circle/arrow/point + question) |
 | `evaluate` | Evaluate JS in the page; returns JSON-serializable results |
 
-The same bridge also exposes six skill/file tools used by the built-in agent: `read_skill`, `list_skill_files`, `read_skill_file`, `run_skill_script`, `write_file`, `run_command`.
+The built-in agent has six additional skill/file tools (`read_skill`, `list_skill_files`, `read_skill_file`, `run_skill_script`, `write_file`, `run_command`). They are marked `internal`: the bridge and the app's own MCP endpoint both skip them, so an external MCP client never sees them.
 
 ## How it works
 
@@ -271,13 +275,13 @@ Duplex gives an AI access to your **real browser session**, including login stat
 - Codex / Claude Code sessions are mirrored from local transcripts; their formats are controlled by those CLIs. Ambiguous launch identities are refused rather than guessed.
 - Gemini, Qwen and custom CLIs are mirrored and can be launched, but do not automatically receive Duplex's MCP tools.
 - opencode message de-duplication relies on the plugin; if it stays disconnected longer than the lease, an accepted-but-unacknowledged message may be delivered twice. Exact dedupe needs upstream message IDs.
-- Direct MCP clients each get a per-process caller identity; an explicit task start / end / handoff protocol is planned for 0.3.0.
+- Direct MCP clients each get a per-process caller identity; an explicit task start / end / handoff protocol is planned for 0.3.x.
 - Built-in multimodal image context, site-specific custom widgets and cross-platform interaction have not been fully verified. Windows is the primary target; macOS/Linux builds are provided but less tested.
 - The built-in agent is a convenience option: local or smaller models are noticeably less reliable at long tool-use chains than a full opencode setup.
 
 ## Roadmap
 
-- **v0.3.0 — collaboration, continued.**
+- **v0.3.x — collaboration, continued.**
   - An explicit task-lifecycle / handoff protocol for MCP callers (start, end, restore) and finer-grained cancellable action steps.
   - Fallbacks for `contenteditable` and custom widgets; a richer CLI session lifecycle; multimodal verification.
   - Community backlog: command palette, tab search, reader mode, bookmark HTML import / export, and more — tracked in `docs/待办与用户反馈.md`.
@@ -287,7 +291,7 @@ Duplex gives an AI access to your **real browser session**, including login stat
 ```bash
 npm run dev        # dev mode (electron-vite, HMR for the renderer)
 npm run typecheck  # TypeScript checks (node + web)
-npm test           # unit tests (vitest, 340+ cases)
+npm test           # unit tests (vitest, 599 cases)
 npm run smoke      # end-to-end smoke test (launches the bridge and a real browser)
 npm run dist       # build the Windows installer (electron-builder)
 ```
@@ -314,7 +318,7 @@ Debug helpers:
 
 **Does Duplex store my passwords?** Not yet, and that is deliberate: credential storage is the one feature where a wrong implementation is worse than no implementation. The encrypted vault and origin-scoped autofill layer are built and tested, but they are not wired to the UI, so nothing is saved today. When they are, the rule will be: exact-origin matching, no agent access to the vault, and no cloud sync.
 
-**How do I get updates?** Builds carry an update feed and check for a new version at startup; when one is ready the app offers "restart to update". Source builds simply pull and rebuild.
+**How do I get updates?** This beta has **no update feed configured yet**, so a new version means downloading it again; once `build.publish` and the signing keys are set, `src/main/updater.ts` starts checking at launch and offers "restart to update". Source builds simply pull and rebuild.
 
 **Does it work with a ChatGPT or Claude subscription?** The built-in model uses an OpenAI-compatible API and your API key. Codex and Claude Code use their own CLIs and their own authentication; Duplex does not reuse a ChatGPT web session.
 
