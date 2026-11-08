@@ -5,8 +5,17 @@ import { join, resolve, sep } from 'node:path'
 import { chromium, type Browser, type Page, type Locator } from 'playwright-core'
 import type { Tab } from './tabs'
 import * as cdp from './cdp'
+import * as scripts from './page-scripts'
+import { currentCaller } from './collaboration'
 import { interruptibleSleep, operationSignal } from './interrupt'
 import { overlaySend } from './overlay'
+import {
+  isRefTarget,
+  parseRefTarget,
+  refRegistry,
+  type RefFingerprint,
+  type RefRegistry
+} from './ref-registry'
 
 let userDataDir = ''
 let connection: Promise<Browser> | null = null
@@ -113,23 +122,65 @@ export async function pageForTab(tab: Tab): Promise<Page> {
   throw new Error(`无法连接标签页 ${tab.id} 的 Chromium 页面`)
 }
 
-/** CSS pierces open shadow roots; `iframe-selector >>> inner-selector` enters frames. */
-export async function locatorForTarget(page: Page, target: string): Promise<Locator> {
+/** Ref parsing needs to know which tab and which agent (namespace) is acting. */
+export interface RefScope {
+  tabId: number
+  actorId: string
+  /** Test seam; production uses the process-wide registry. */
+  registry?: RefRegistry
+}
+
+interface RefProbeResult {
+  error?: string
+  documentToken?: string
+  fingerprint?: RefFingerprint
+}
+
+/**
+ * CSS pierces open shadow roots; `iframe-selector >>> inner-selector` enters frames.
+ *
+ * For snapshot refs the main-process registry owns the namespace and fingerprint:
+ * the prefixed form is rejected for the wrong caller before the page is touched,
+ * and the page is probed read-only so the stored fingerprint can be re-checked.
+ */
+export async function locatorForTarget(
+  page: Page,
+  target: string,
+  scope?: RefScope
+): Promise<Locator> {
   checkCancelled()
-  if (/^e\d+$/.test(target)) {
-    const identity = await page.evaluate(ref => {
-      const state = (window as any).__cobrowse
-      const el = state?.refMap?.get(ref) as Element | undefined
-      const meta = state?.refMeta?.get(ref)
-      if (!el?.isConnected) throw new Error('元素引用已失效，请重新 snapshot')
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160)
-      if (meta && (meta.tag !== el.tagName || meta.text !== text || meta.href !== el.getAttribute('href') || meta.type !== el.getAttribute('type'))) {
-        throw new Error('元素内容已变化，请重新 snapshot 后选择目标')
+  const parsed = parseRefTarget(target)
+  if (parsed.kind === 'ref') {
+    if (!scope) throw new Error('内部错误：解析 snapshot ref 需要标签与调用者信息')
+    const registry = scope.registry ?? refRegistry
+    const claim = registry.claim(scope.tabId, scope.actorId, target)
+    const probe = (await page.evaluate(scripts.buildRefProbeScript(claim.baseRef))) as
+      | RefProbeResult
+      | null
+    if (!probe || probe.error || !probe.fingerprint) {
+      if (probe?.error === 'detached') {
+        throw new Error(`ref "${claim.baseRef}" 已失效：元素已从页面移除，请重新 snapshot。`)
       }
+      throw new Error(
+        `ref "${claim.baseRef}" 在当前页面中不存在（页面可能已导航/刷新，或快照已被清理）；请重新 snapshot。`
+      )
+    }
+    registry.validate(claim, probe.documentToken ?? '', probe.fingerprint)
+    // Reuse the existing locator plumbing (not a new fingerprint): mark the
+    // element with the base ref only after the fingerprint check has passed.
+    const marked = await page.evaluate((ref: string) => {
+      const state = (window as unknown as {
+        __cobrowse?: { refMap?: Map<string, Element> }
+      }).__cobrowse
+      const el = state?.refMap?.get(ref)
+      if (!el) return false
       el.setAttribute('data-duplex-ref', ref)
-      return ref
-    }, target)
-    return page.locator(`[data-duplex-ref="${identity}"]`)
+      return true
+    }, claim.baseRef)
+    if (!marked) {
+      throw new Error(`ref "${claim.baseRef}" 在定位前消失，请重新 snapshot。`)
+    }
+    return page.locator(`[data-duplex-ref="${claim.baseRef}"]`)
   }
   const parts = target.split(/\s+>>>\s+/)
   if (parts.length === 1) return page.locator(target).first()
@@ -359,7 +410,10 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
   checkCancelled()
   const page = await pageForTab(tab)
   const target = String(args.target ?? '')
-  const locator = target ? await locatorForTarget(page, target) : null
+  // Snapshot refs are namespaced per caller; the fingerprint is checked in the
+  // main-process registry against a read-only page probe.
+  const scope: RefScope = { tabId: tab.id, actorId: currentCaller(), registry: refRegistry }
+  const locator = target ? await locatorForTarget(page, target, scope) : null
   switch (name) {
     case 'click':
     case 'dblclick':
@@ -369,7 +423,7 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
         if (name === 'click') { const result = await domClick(locator!); await showTarget(tab, locator!, name); return result }
         throw new Error('用户正在滚动；此动作需要鼠标位置协调。请继续读取或等待用户指示，不要反复重试')
       }
-      if (/^e\d+$/.test(target)) await locatorForTarget(page, target)
+      if (isRefTarget(target)) await locatorForTarget(page, target, scope)
       const box = await locator!.boundingBox({ timeout: 200 })
       const inputTarget = `${Date.now()}-${Math.random()}`
       await locator!.evaluate((el, id) => el.setAttribute('data-ai-target', id), inputTarget, { timeout: 200 })
@@ -430,7 +484,7 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
         await interruptibleSleep(100)
       }
       let next = value
-      if (/^e\d+$/.test(target)) await locatorForTarget(page, target)
+      if (isRefTarget(target)) await locatorForTarget(page, target, scope)
       if (!clear) next = (await locator!.inputValue({ timeout: 200 })) + value
       // 进程内输入：先让页面聚焦并清空，再逐字符发真实 key 事件（不经过 CDP 的 DOM 操作）
       const typeInputPath = (process.env['DUPLEX_INPUT_PATH'] ?? 'auto').toLowerCase()
@@ -472,8 +526,8 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
     }
     case 'drag': {
       if (await humanScrolling(page)) throw new Error('用户正在滚动；拖拽需要鼠标位置协调。请继续读取，不要反复重试')
-      const from = await locatorForTarget(page, String(args.from))
-      const to = await locatorForTarget(page, String(args.to))
+      const from = await locatorForTarget(page, String(args.from), scope)
+      const to = await locatorForTarget(page, String(args.to), scope)
       if (!(await waitReady(from, page, 'click'))) throw new Error('用户正在滚动；拖拽需要鼠标位置协调')
       checkCancelled()
       const fromBox = await from.boundingBox({ timeout: 200 })
@@ -516,7 +570,7 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
     case 'scroll': {
       if (await humanScrolling(page)) return { scrolled: false, note: '用户正在阅读滚动，已保留用户位置；请用 snapshot/query/get_html 继续读取' }
       if (args.selector) {
-        const selected = await locatorForTarget(page, String(args.selector))
+        const selected = await locatorForTarget(page, String(args.selector), scope)
         await selected.scrollIntoViewIfNeeded({ timeout: 200 })
       } else await page.evaluate(({ dx, dy }) => window.scrollBy(dx, dy), { dx: Number(args.dx ?? 0), dy: Number(args.dy ?? (args.dx != null ? 0 : 600)) })
       checkCancelled()
@@ -614,7 +668,7 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
       }
       while (Date.now() - started < timeout) {
         checkCancelled()
-        const found = args.selector ? await (await locatorForTarget(page, String(args.selector))).count() > 0 : await page.getByText(String(args.text), { exact: false }).count() > 0
+        const found = args.selector ? await (await locatorForTarget(page, String(args.selector), scope)).count() > 0 : await page.getByText(String(args.text), { exact: false }).count() > 0
         if (found) return { found: true, waitedMs: Date.now() - started }
         await interruptibleSleep(100)
       }

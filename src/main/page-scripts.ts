@@ -3,13 +3,52 @@
  * Every script is a self-contained IIFE expression.
  *
  * The snapshot script builds a compact text DOM outline where meaningful
- * elements get document-scoped [eN] refs. Three recent snapshots are retained;
+ * elements get document-scoped [eN] refs (or namespaced [a<actor>:eN] refs when
+ * a multi-agent session asks for them). Three recent snapshots are retained;
  * identifiers never restart inside a document or alias across documents.
+ *
+ * The outline is followed by a machine-only trailer carrying each ref's
+ * fingerprint. The main process strips the trailer (the model never sees it)
+ * and stores the fingerprints in memory, so no DOM attribute or page global is
+ * introduced for validation.
  */
+import {
+  FINGERPRINT_TEXT_LIMIT,
+  SNAPSHOT_REF_MARKER
+} from './ref-registry'
 
-export function buildSnapshotScript(): string {
+/** Same fingerprint routine is embedded in the snapshot script and the pre-action probe. */
+function fingerprintHelperSource(): string {
+  return `const __cobrowseFingerprint = (el) => {
+  if (!el) return null;
+  const normalize = (s) => (s == null ? '' : String(s)).replace(/\\s+/g, ' ').trim().slice(0, ${FINGERPRINT_TEXT_LIMIT});
+  const readAttr = (name) => {
+    try { return el.getAttribute ? (el.getAttribute(name) || '') : ''; } catch (e) { return ''; }
+  };
+  let rect = { left: 0, top: 0, x: 0, y: 0, width: 0, height: 0 };
+  try { rect = el.getBoundingClientRect() || rect; } catch (e) {}
+  const left = rect.left != null ? rect.left : (rect.x || 0);
+  const top = rect.top != null ? rect.top : (rect.y || 0);
+  return {
+    tag: String(el.tagName || '').toLowerCase(),
+    text: normalize(el.textContent),
+    x: Math.round(left + (window.scrollX || 0)),
+    y: Math.round(top + (window.scrollY || 0)),
+    w: Math.round(rect.width || 0),
+    h: Math.round(rect.height || 0),
+    href: readAttr('href').slice(0, 160),
+    type: readAttr('type').slice(0, 32)
+  };
+};`
+}
+
+export function buildSnapshotScript(actorTag?: string): string {
+  const namespace = actorTag ? `a${actorTag}:` : ''
   return `(() => {
   const MAX_LINES = 400;
+  const NAMESPACE = ${JSON.stringify(namespace)};
+  const REFS_MARKER = ${JSON.stringify(SNAPSHOT_REF_MARKER)};
+  ${fingerprintHelperSource()}
   const state = window.__cobrowse = window.__cobrowse || {};
   const refMap = state.refMap = state.refMap || new Map();
   const refMeta = state.refMeta = state.refMeta || new Map();
@@ -17,6 +56,7 @@ export function buildSnapshotScript(): string {
   if (!state.nextRef) state.nextRef = Math.floor(Math.random() * 1000000000) * 1000000 + 1;
   let nextRef = state.nextRef;
   const currentRefs = [];
+  const refEntries = [];
   const lines = [];
   let truncated = false;
   let emittedCount = 0;
@@ -80,7 +120,8 @@ export function buildSnapshotScript(): string {
       refMap.set(ref, el);
       currentRefs.push(ref);
       refMeta.set(ref, { tag: el.tagName, text: clean(el.textContent, 160), href: el.getAttribute('href'), type: el.getAttribute('type') });
-      let line = '  '.repeat(depth) + '[' + ref + '] <' + fmtTag(el) + '>';
+      refEntries.push({ ref: ref, fingerprint: __cobrowseFingerprint(el) });
+      let line = '  '.repeat(depth) + '[' + NAMESPACE + ref + '] <' + fmtTag(el) + '>';
       if (tag === 'INPUT') {
         const it = (el.type || 'text').toLowerCase();
         line += ' type=' + it;
@@ -133,18 +174,46 @@ export function buildSnapshotScript(): string {
     for (const ref of generations.shift()) { refMap.delete(ref); refMeta.delete(ref); }
   }
 
+  const documentToken = document.documentElement.getAttribute
+    ? document.documentElement.getAttribute('data-page-token') || 'unmarked'
+    : 'unmarked';
   const header = [
     'url: ' + location.href,
     'title: ' + document.title,
-    'document: ' + (document.documentElement.getAttribute ? document.documentElement.getAttribute('data-page-token') || 'unmarked' : 'unmarked'),
+    'document: ' + documentToken,
     'viewport: ' + innerWidth + 'x' + innerHeight + '  scrollY: ' + Math.round(scrollY) + ' / page: ' + Math.round(document.documentElement.scrollHeight),
-    'refs: [eN] document-scoped; latest three snapshots retained; refresh after page changes',
+    NAMESPACE
+      ? 'refs: [' + NAMESPACE + 'eN] namespaced to this agent; use refs exactly as shown; latest three snapshots retained; refresh after page changes'
+      : 'refs: [eN] document-scoped; latest three snapshots retained; refresh after page changes',
     '---'
   ].join('\\n');
 
   const footer = truncated ? '\\n--- (truncated at ' + MAX_LINES + ' lines; ' + currentRefs.length + ' refs emitted — use query/get_html for the rest)' : '';
+  // Machine-only trailer: the main process strips it and stores the fingerprints
+  // in memory; the model sees only the outline above. No page globals involved.
+  const refsPayload = JSON.stringify({ documentToken: documentToken, refs: refEntries });
 
-  return header + '\\n' + lines.join('\\n') + footer;
+  return header + '\\n' + lines.join('\\n') + footer + REFS_MARKER + refsPayload;
+})()`
+}
+
+/**
+ * Read-only probe used just before a ref action: resolve the page-side element
+ * again and return its current document token + fingerprint. The fingerprint
+ * itself is compared in the main process (never stored in the page).
+ */
+export function buildRefProbeScript(baseRef: string): string {
+  return `(() => {
+  ${fingerprintHelperSource()}
+  const ref = ${JSON.stringify(baseRef)};
+  const state = window.__cobrowse;
+  const el = (state && state.refMap && state.refMap.get(ref)) || null;
+  if (!el) return { error: 'not-found' };
+  if (!el.isConnected) return { error: 'detached' };
+  const documentToken = document.documentElement.getAttribute
+    ? document.documentElement.getAttribute('data-page-token') || 'unmarked'
+    : 'unmarked';
+  return { documentToken: documentToken, fingerprint: __cobrowseFingerprint(el) };
 })()`
 }
 

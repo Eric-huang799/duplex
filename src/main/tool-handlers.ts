@@ -1,6 +1,8 @@
 import type { Tab, TabManager } from './tabs'
 import * as cdp from './cdp'
 import * as scripts from './page-scripts'
+import { currentCaller } from './collaboration'
+import { parseSnapshotEnvelope, refRegistry } from './ref-registry'
 import { markAiActive, overlaySend, takeoverHint } from './overlay'
 import { currentLang } from './i18n'
 import { operationSignal } from './interrupt'
@@ -108,6 +110,7 @@ async function dispatch(
     case 'close_tab': {
       const id = Number(args.tabId)
       const ok = tabs.closeTab(id)
+      if (ok) refRegistry.forgetTab(id)
       return ok ? text(`closed tab ${id}`) : errorText(`no tab with id ${id}`)
     }
 
@@ -227,11 +230,29 @@ async function dispatch(
 
     case 'snapshot': {
       const tab = tabs.requireTab(args.tabId as number | undefined)
+      // Multi-agent: once another caller has snapshotted this tab, show refs
+      // namespaced as a<actor>:eN so two agents cannot mix up e12/e13.
+      const actorId = currentCaller()
+      const namespaced = refRegistry.hasOtherActor(tab.id, actorId)
       let outline: string | null = null
       let evalError: string | null = null
       try {
-        const r = await cdp.evalInPage<string>(tab, scripts.buildSnapshotScript())
-        if (typeof r === 'string' && r) outline = r
+        const expression = scripts.buildSnapshotScript(
+          namespaced ? refRegistry.actorTag(actorId) : undefined
+        )
+        const raw = await cdp.evalInPage<string>(tab, expression)
+        if (typeof raw === 'string' && raw) {
+          const envelope = parseSnapshotEnvelope(raw)
+          if (envelope) {
+            // Fingerprints travel snapshot -> main process only; the page keeps
+            // no extra DOM attribute or global for them.
+            refRegistry.recordSnapshot(tab.id, actorId, envelope.documentToken, envelope.refs)
+            outline = envelope.outline
+          } else {
+            outline = raw
+          }
+          if (!outline) outline = null
+        }
       } catch (e) {
         evalError = (e as Error)?.message ?? String(e)
       }

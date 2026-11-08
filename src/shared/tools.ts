@@ -13,6 +13,10 @@ export interface ToolDef {
   internal?: boolean
 }
 
+/** Ref targets: legacy plain form, multi-agent namespaced form, or a CSS selector. */
+const REF_TARGET_DESC =
+  'ref from snapshot: "e12" (single-agent) or "a<actor>:e12" (multi-agent session, copy exactly as shown), or a CSS selector'
+
 export const toolDefs: ToolDef[] = [
   {
     name: 'list_tabs',
@@ -61,7 +65,7 @@ export const toolDefs: ToolDef[] = [
   {
     name: 'snapshot',
     description:
-      'Text snapshot of the page: compact DOM outline with [eN] refs for actionable/labeled elements. Use the refs with click/type. This is the primary way to "see" the page.',
+      'Text snapshot of the page: compact DOM outline with [eN] refs for actionable/labeled elements. Use the refs with click/type. In multi-agent sessions refs are namespaced as [a<actor>:eN] — pass them back exactly as shown. Refs are invalidated when their element changes; snapshot again after page changes. This is the primary way to "see" the page.',
     input: { tabId: z.number().optional() }
   },
   {
@@ -96,9 +100,9 @@ export const toolDefs: ToolDef[] = [
   {
     name: 'click',
     description:
-      'Click an element, identified by a [ref] from snapshot (e.g. "e12") or a CSS selector.',
+      'Click an element, identified by a [ref] from snapshot (e.g. "e12", or "a<actor>:e12" in multi-agent sessions) or a CSS selector.',
     input: {
-      target: z.string().describe('ref like "e12" or CSS selector'),
+      target: z.string().describe(REF_TARGET_DESC),
       tabId: z.number().optional()
     }
   },
@@ -107,7 +111,7 @@ export const toolDefs: ToolDef[] = [
     description:
       'Type text into an input/textarea/contenteditable, by ref or CSS selector. Optionally press Enter after.',
     input: {
-      target: z.string(),
+      target: z.string().describe(REF_TARGET_DESC),
       text: z.string(),
       clear: z.boolean().optional().describe('Clear existing value first (default true)'),
       submit: z.boolean().optional().describe('Press Enter after typing'),
@@ -129,7 +133,10 @@ export const toolDefs: ToolDef[] = [
     input: {
       dy: z.number().optional().describe('Pixels to scroll vertically (default 600)'),
       dx: z.number().optional().describe('Pixels to scroll horizontally (default 0)'),
-      selector: z.string().optional().describe('Scroll this element into view instead'),
+      selector: z
+        .string()
+        .optional()
+        .describe('Scroll this element into view instead (CSS selector or snapshot ref)'),
       tabId: z.number().optional()
     }
   },
@@ -138,7 +145,7 @@ export const toolDefs: ToolDef[] = [
     description:
       'Move the mouse over an element (ref or CSS selector) to trigger hover menus/tooltips; the pointer stays there.',
     input: {
-      target: z.string(),
+      target: z.string().describe(REF_TARGET_DESC),
       tabId: z.number().optional()
     }
   },
@@ -146,7 +153,7 @@ export const toolDefs: ToolDef[] = [
     name: 'dblclick',
     description: 'Double-click an element by ref or CSS selector.',
     input: {
-      target: z.string(),
+      target: z.string().describe(REF_TARGET_DESC),
       tabId: z.number().optional()
     }
   },
@@ -155,8 +162,8 @@ export const toolDefs: ToolDef[] = [
     description:
       'Drag from one point/element to another (refs or CSS selectors) using real mouse events.',
     input: {
-      from: z.string().describe('Source element ref or CSS selector'),
-      to: z.string().describe('Target element ref or CSS selector'),
+      from: z.string().describe(`Source element ${REF_TARGET_DESC}`),
+      to: z.string().describe(`Target element ${REF_TARGET_DESC}`),
       tabId: z.number().optional()
     }
   },
@@ -165,7 +172,7 @@ export const toolDefs: ToolDef[] = [
     description:
       'Select an option in a native <select> element by visible text or value. For custom dropdowns, click the trigger then click the option.',
     input: {
-      target: z.string(),
+      target: z.string().describe(REF_TARGET_DESC),
       option: z.string().describe('Visible option text or value (exact or substring)'),
       tabId: z.number().optional()
     }
@@ -174,7 +181,7 @@ export const toolDefs: ToolDef[] = [
     name: 'upload',
     description: 'Set files on an <input type="file"> element (absolute local file paths).',
     input: {
-      target: z.string(),
+      target: z.string().describe(REF_TARGET_DESC),
       files: z.array(z.string()).describe('Absolute local file paths'),
       tabId: z.number().optional()
     }
