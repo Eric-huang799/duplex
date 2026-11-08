@@ -399,6 +399,18 @@ function topOriginOfWebContents(wc: WebContents | null): string | null {
 
 app.commandLine.appendSwitch('remote-debugging-address', '127.0.0.1')
 app.commandLine.appendSwitch('remote-debugging-port', '0')
+/**
+ * 关掉 Blink 的自动化标记。
+ *
+ * 实测（tools/detection-harness.html）：只要 Playwright 通过 CDP 接管，
+ * `navigator.webdriver` 就是 true —— 这是站点判定"这是机器人"最直接的一条信号，
+ * 也是我们会被人机验证拦下的首要原因。`AutomationControlled` 这个 blink feature
+ * 控制的正是向 JS 暴露的那个标记，关掉后引擎层面的行为没有任何变化。
+ *
+ * 这条只抹掉"我们自己造成的痕迹"：AI 是在用户自己的已登录会话里代操作，
+ * 不该冒充一个被自动化工具驱动的浏览器。它不是用来破解验证码的。
+ */
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
 const TOKEN = crypto.randomBytes(24).toString('hex')
 const LOG_FILE = path.join(cobrowseDir(), 'app.log')
 

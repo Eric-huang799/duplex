@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Duplex 自动化特征探针</title>
+    <style>
+      body { font: 13px/1.6 ui-monospace, monospace; background: #12161d; color: #e8eef7; padding: 28px; }
+      h1 { font-size: 16px; margin: 0 0 4px; }
+      p.hint { color: #8b98ab; margin: 0 0 20px; }
+      table { border-collapse: collapse; width: 100%; max-width: 900px; }
+      td { padding: 6px 10px; border-bottom: 1px solid #222a35; vertical-align: top; }
+      td:first-child { color: #9fb0c7; width: 260px; }
+      .bad { color: #ff8a8a; }
+      .ok { color: #5fd28a; }
+      .warn { color: #ffc36b; }
+    </style>
+  </head>
+  <body>
+    <h1>Duplex 自动化特征探针</h1>
+    <p class="hint">
+      这个页面只做一件事：从**页面自己的视角**列出它能看到的自动化痕迹。请在 Duplex 里打开
+      http://127.0.0.1:8799/ ，然后用 evaluate 调用 window.__PROBE__() 取回 JSON。
+    </p>
+    <table id="out"></table>
+
+    <script>
+      /** 判断某个函数看起来是不是原生实现。 */
+      function isNative(fn) {
+        try {
+          return /\{\s*\[native code\]\s*\}/.test(Function.prototype.toString.call(fn))
+        } catch {
+          return false
+        }
+      }
+
+      /** 统计带 data-duplex* 属性的元素数量：这是我们自己留下的最强记号。 */
+      function countDuplexAttrs() {
+        let count = 0
+        const names = new Set()
+        try {
+          for (const el of document.querySelectorAll('*')) {
+            for (const attr of el.attributes) {
+              if (attr.name.indexOf('data-duplex') === 0) {
+                count++
+                names.add(attr.name)
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+        return { count, names: [...names].sort() }
+      }
+
+      /** 页面能看到的 Duplex 全局残留。 */
+      function duplexGlobals() {
+        const found = []
+        try {
+          for (const key of Object.keys(window)) {
+            if (/duplex/i.test(key)) found.push(key)
+          }
+        } catch {
+          /* ignore */
+        }
+        return found.sort()
+      }
+
+      /** 判断是否有 Chromium 自动化常见的全局（ChromeDriver / Puppeteer / Playwright）。 */
+      function automationGlobals() {
+        const candidates = ['__webdriver_evaluate', '__selenium_evaluate', '__driver_evaluate', '$cdc_asdjflasutopfhvcZLmcfl_', '__playwright', '__puppeteer_evaluation_script__']
+        return candidates.filter((key) => key in window)
+      }
+
+      window.__PROBE__ = function probe() {
+        let uaData = null
+        try {
+          uaData = navigator.userAgentData
+            ? {
+                brands: navigator.userAgentData.brands.map((b) => b.brand + '/' + b.version),
+                mobile: navigator.userAgentData.mobile,
+                platform: navigator.userAgentData.platform
+              }
+            : null
+        } catch {
+          /* ignore */
+        }
+
+        let webgl = null
+        try {
+          const canvas = document.createElement('canvas')
+          const gl = canvas.getContext('webgl')
+          const info = gl && gl.getExtension('WEBGL_debug_renderer_info')
+          webgl = info
+            ? { vendor: gl.getParameter(info.UNMASKED_VENDOR_WEBGL), renderer: gl.getParameter(info.UNMASKED_RENDERER_WEBGL) }
+            : 'no-debug-extension'
+        } catch (error) {
+          webgl = 'error'
+        }
+
+        const markers = countDuplexAttrs()
+        return {
+          url: location.href,
+          webdriver: navigator.webdriver,
+          ua: navigator.userAgent,
+          uaData,
+          languages: navigator.languages ? [...navigator.languages] : [],
+          plugins: navigator.plugins.length,
+          hardwareConcurrency: navigator.hardwareConcurrency,
+          deviceMemory: 'deviceMemory' in navigator ? navigator.deviceMemory : 'undefined',
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          webgl,
+          // 我们自己的痕迹
+          duplexAttrs: markers,
+          duplexGlobals: duplexGlobals(),
+          overlayHost: !!document.querySelector('[data-duplex-overlay], #duplex-overlay, .duplex-overlay'),
+          // 通用自动化痕迹
+          automationGlobals: automationGlobals(),
+          // 原生性检查：被替换过的方法会失去 [native code]
+          nativeChecks: {
+            eval: isNative(window.eval),
+            querySelector: isNative(Document.prototype.querySelector),
+            addEventListener: isNative(EventTarget.prototype.addEventListener),
+            fetch: isNative(window.fetch)
+          },
+          // 通知权限：CDP 授权过的站点会与浏览器真实状态不一致
+          notificationPermission: typeof Notification === 'undefined' ? 'n/a' : Notification.permission
+        }
+      }
+
+      const data = window.__PROBE__()
+      const rows = []
+      for (const [key, value] of Object.entries(data)) {
+        let cls = ''
+        if (key === 'webdriver') cls = value === true ? 'bad' : 'ok'
+        if (key === 'duplexAttrs' && value.count > 0) cls = 'bad'
+        if (key === 'duplexGlobals' && value.length > 0) cls = 'bad'
+        if (key === 'overlayHost') cls = value ? 'warn' : 'ok'
+        rows.push(
+          '<tr><td>' + key + '</td><td class="' + cls + '">' +
+            (typeof value === 'object' ? JSON.stringify(value) : String(value)) +
+          '</td></tr>'
+        )
+      }
+      document.getElementById('out').innerHTML = rows.join('')
+    </script>
+  </body>
+</html>

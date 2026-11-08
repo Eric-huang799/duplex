@@ -21,6 +21,25 @@ export async function closePlaywright(): Promise<void> {
   if (current) await (await current).close().catch(() => undefined)
 }
 
+/**
+ * 让 `evaluate` 同时接受"裸表达式"和"带 return 的语句块"。
+ *
+ * 脚本会被拼进一个 async 箭头函数体里执行，所以裸表达式（`document.title`）
+ * 的求值结果会被丢掉、返回 undefined。小模型尤其常犯这个错，然后拿到
+ * "returned undefined" 却不知道原因。这里先用 `new Function` 做**静态语法
+ * 检查**（不执行）：能作为表达式解析就补上 `return (...)`，否则原样执行。
+ */
+function wrapEvaluateScript(script: string): string {
+  if (/\breturn\b/.test(script)) return script
+  try {
+    // 只做解析，不执行；语法不通说明是语句块，按原样交给页面
+    new Function(`return (${script})`)
+    return `return (${script})`
+  } catch {
+    return script
+  }
+}
+
 function checkCancelled(): void {
   if (operationSignal()?.aborted) throw new Error('操作已被用户中断，请等待下一步指示')
 }
@@ -348,8 +367,7 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
       checkCancelled()
       return page.evaluate(() => ({ scrollX: window.scrollX, scrollY: window.scrollY }))
     }
-    case 'evaluate': {
-      const session = await page.context().newCDPSession(page)
+    case 'evaluate': {      const session = await page.context().newCDPSession(page)
       const signal = operationSignal()
       const id = `${Date.now()}-${Math.random()}`
       const cancel = () => {
@@ -401,9 +419,9 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
           }, set(target, key, value) { return Reflect.set(target, key, value, target); } });
           try {
             return await Promise.race([aborted, (async (window, globalThis, setTimeout, setInterval, requestAnimationFrame, fetch, signal) => {
-              ${String(args.script)}\n
+              ${wrapEvaluateScript(String(args.script))}\n
             })(proxy, proxy, timeout, interval, raf, fetchScoped, controller.signal)]);
-          } finally { stop(); state.delete(${JSON.stringify(id)}); }
+          } finally { stop(); state.delete(${JSON.stringify(id)}); if (state.size === 0) { try { delete root.__duplexEvaluations } catch (e) {} } }
         })()`)
         checkCancelled()
         return result

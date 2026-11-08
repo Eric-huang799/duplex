@@ -222,7 +222,7 @@ export const toolDefs: ToolDef[] = [
   {
     name: 'evaluate',
     description:
-      'Run JavaScript in the page and return the JSON-serializable result. Powerful; prefer snapshot/query when possible.',
+      'Run JavaScript in the page and return the JSON-serializable result. Both a bare expression ("document.title") and statements using "return x" are accepted. Powerful; prefer snapshot/query when possible.',
     input: {
       script: z.string().describe('JS expression or statements; use "return x" for a value'),
       tabId: z.number().optional()
