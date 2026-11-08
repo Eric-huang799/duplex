@@ -27,25 +27,33 @@
 }
 
 .map-tabs {
-  display: flex;
+  display: grid;
+  /* 四个 tab 排成 2×2：中文标签在窄侧栏里一行放不下四个，平铺会挤成两行字 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px;
-  padding: 0 10px 6px;
+  padding: 0 10px 8px;
 }
 
 .map-tab {
-  flex: 1;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 5px 8px;
   border-radius: 7px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-faint, #9aa4b2);
   font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
 }
 
 .map-tab.on {
-  border-color: var(--border, rgba(255, 255, 255, 0.16));
-  color: inherit;
+  /* 选中态必须明显：浅色主题下只换边框几乎看不出来 */
+  border-color: var(--line);
+  background: var(--hover, rgba(127, 140, 160, 0.16));
+  color: var(--text, inherit);
+  font-weight: 600;
 }
 
 .map-body {

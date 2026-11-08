@@ -922,7 +922,10 @@ body {
   background: var(--bg-panel);
   border-left: 1px solid var(--line-soft);
   flex-shrink: 0;
-  animation: panel-arrive 180ms ease-out both;
+  /* 刻意不用 fill-mode：`both/forwards` 会让 translateX(0) 永久生效，
+     而 transform 会成为 position:fixed 的包含块——下拉遮罩就只覆盖侧栏、
+     点页面别处关不掉面板。 */
+  animation: panel-arrive 180ms ease-out;
 }
 
 @keyframes panel-arrive { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
@@ -1084,6 +1087,10 @@ body {
   padding: 0 10px;
   border-bottom: 1px solid var(--line-soft);
   flex-shrink: 0;
+  /* 必须高于下拉遮罩（z-index 39），否则面板一打开，头部按钮就被遮罩吞掉，
+     用户第一反应就是"点不开"。 */
+  position: relative;
+  z-index: 41;
 }
 
 .dot {
@@ -1136,9 +1143,10 @@ body {
   max-height: min(70vh, 560px);
   overflow-y: auto;
   border-radius: 12px;
-  border: 1px solid var(--line-soft);
-  background: var(--bg-panel);
-  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.45);
+  /* 必须用不透明底色（--bg-panel 是 0.66 半透明，底下聊天内容会透出来） */
+  background: var(--menu-bg);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-pop);
 }
 
 .panel-pop-backdrop {

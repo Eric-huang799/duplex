@@ -57,7 +57,9 @@ export function SkillsPanel({
 
   // Clicking outside collapses the panel; a pending Codex confirmation is
   // dismissed on the first outside click instead of losing both at once.
+  // 内嵌在「模型与授权」里时交给外层遮罩处理，否则点 tab 就会被当成外部点击。
   useEffect(() => {
+    if (embedded) return
     const onDown = (event: MouseEvent): void => {
       const target = event.target instanceof Element ? event.target : null
       if (target && (rootRef.current?.contains(target) || target.closest('[data-panel-toggle="skills"]'))) return
@@ -69,7 +71,7 @@ export function SkillsPanel({
     }
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
-  }, [])
+  }, [embedded])
 
   useEffect(() => {
     if (!codexAsk) return

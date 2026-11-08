@@ -133,10 +133,25 @@ export function ProvidersPanel({
 
   // Clicking outside collapses the panel. An open edit form is dismissed
   // first, so a stray click cannot silently discard typed values in one step.
+  //
+  // 内嵌在「模型与授权」里时不监听：外层浮层已经有了点击遮罩，
+  // 这里再监听会把"点浮层里的 tab"当成外部点击，一点就整块关掉。
   useEffect(() => {
+    if (embedded) return
     const onDown = (event: MouseEvent): void => {
       const target = event.target instanceof Element ? event.target : null
-      if (target && (rootRef.current?.contains(target) || target.closest('[data-panel-toggle="providers"]'))) return
+      if (
+        target &&
+        (rootRef.current?.contains(target) ||
+          target.closest('[data-panel-toggle="providers"]') ||
+          target.closest('[data-panel-toggle="model-access"]'))
+      ) {
+        return
+      }
+      if (editingRef.current === undefined) {
+        onCloseRef.current()
+        return
+      }
       if (editingRef.current) {
         setEditing(null)
         return
@@ -145,7 +160,7 @@ export function ProvidersPanel({
     }
     window.addEventListener('mousedown', onDown)
     return () => window.removeEventListener('mousedown', onDown)
-  }, [])
+  }, [embedded])
 
   const applyPreset = (preset: Preset): void => {
     setImportInfo(null)
