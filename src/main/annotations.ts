@@ -178,7 +178,7 @@ export function createAnnotationSubmitHandler(
     }
     try {
       checkCancelled()
-      const documentScript = '({ url: location.href, token: document.documentElement.getAttribute("data-duplex-document") })'
+      const documentScript = '({ url: location.href, token: document.documentElement.getAttribute("data-page-token") })'
       const before = await cdp.evalInPage<{ url: string; token: string | null }>(tab, documentScript)
       checkCancelled()
       if (!before || typeof before.url !== 'string' ||

@@ -45,7 +45,8 @@ export interface RuleLoadOutcome {
 
 const DEFAULT_URLS = [
   'https://easylist.to/easylist/easylist.txt',
-  'https://easylist.to/easylist/easylistchina.txt'
+  // 中国区规则：easylist.to 上没有这个文件（会 404），用 Adblock Plus 的下载站
+  'https://easylist-downloads.adblockplus.org/easylistchina.txt'
 ]
 
 interface CacheMeta {

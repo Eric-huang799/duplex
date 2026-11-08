@@ -33,7 +33,7 @@ describe('annotation source and cancellation', () => {
 
   it('rejects navigation to a different URL before sampling', async () => {
     const { delivered, tabs } = fixture()
-    page.evalInPage.mockImplementation(async (_tab, expression) => expression.includes('data-duplex-document')
+    page.evalInPage.mockImplementation(async (_tab, expression) => expression.includes('data-page-token')
       ? { url: 'https://new.example', token: 'doc-10' } : { ...info, url: 'https://new.example' })
     const submit = createAnnotationSubmitHandler(tabs as never, {} as never, (delivery) => delivered.push(delivery))
     expect((await submit(payload)).ok).toBe(false)
@@ -43,7 +43,7 @@ describe('annotation source and cancellation', () => {
   it('samples and delivers the originating tab when a different tab is active', async () => {
     const { source, delivered, tabs } = fixture()
     page.evalInPage.mockImplementation(async (tab, expression) => {
-      return expression.includes('data-duplex-document')
+      return expression.includes('data-page-token')
         ? { url: 'https://source.example', token: 'doc-10' }
         : { ...info, text: tab === source ? 'Source content' : 'Wrong page' }
     })
@@ -56,7 +56,7 @@ describe('annotation source and cancellation', () => {
 
   it('rejects a replaced document even when its URL has not changed', async () => {
     const { delivered, tabs } = fixture()
-    page.evalInPage.mockImplementation(async (_tab, expression) => expression.includes('data-duplex-document')
+    page.evalInPage.mockImplementation(async (_tab, expression) => expression.includes('data-page-token')
       ? { url: 'https://source.example', token: 'doc-reloaded' } : info)
     const submit = createAnnotationSubmitHandler(tabs as never, {} as never, (delivery) => delivered.push(delivery))
     expect((await submit(payload)).ok).toBe(false)
@@ -66,7 +66,7 @@ describe('annotation source and cancellation', () => {
   it('does not deliver if the document changes while sampling', async () => {
     const { delivered, tabs } = fixture()
     let documentReads = 0
-    page.evalInPage.mockImplementation(async (_tab, expression) => expression.includes('data-duplex-document')
+    page.evalInPage.mockImplementation(async (_tab, expression) => expression.includes('data-page-token')
       ? { url: 'https://source.example', token: ++documentReads === 1 ? 'doc-10' : 'doc-reloaded' } : info)
     const submit = createAnnotationSubmitHandler(tabs as never, {} as never, (delivery) => delivered.push(delivery))
     expect((await submit(payload)).ok).toBe(false)
@@ -77,7 +77,7 @@ describe('annotation source and cancellation', () => {
     const { delivered, tabs } = fixture()
     const ac = beginOperation({ tabId: 10 })
     page.evalInPage.mockImplementation(async (_tab, expression) => {
-      if (expression.includes('data-duplex-document')) return { url: 'https://source.example', token: 'doc-10' }
+      if (expression.includes('data-page-token')) return { url: 'https://source.example', token: 'doc-10' }
       abortOperation({ tabId: 10 })
       return info
     })
@@ -92,7 +92,7 @@ describe('annotation source and cancellation', () => {
     const { delivered, tabs } = fixture()
     let paused = false
     page.evalInPage.mockImplementation(async (_tab, expression) => {
-      if (expression.includes('data-duplex-document')) return { url: 'https://source.example', token: 'doc-10' }
+      if (expression.includes('data-page-token')) return { url: 'https://source.example', token: 'doc-10' }
       paused = true
       return info
     })

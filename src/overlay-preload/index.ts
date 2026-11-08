@@ -408,7 +408,7 @@ function bindingHasModifier(binding: string): boolean {
 
 function setup(): void {
   if (!document.body || document.getElementById(HOST_ID)) return
-  document.documentElement.setAttribute('data-duplex-document', globalThis.crypto.randomUUID())
+  document.documentElement.setAttribute('data-page-token', globalThis.crypto.randomUUID())
   const host = document.createElement('div')
   host.id = HOST_ID
   host.style.cssText =
@@ -1292,7 +1292,7 @@ function submitCard(): void {
   ipcRenderer.send('overlay:event', {
     kind: 'annotationSubmit',
     documentURL: location.href,
-    documentToken: document.documentElement.getAttribute('data-duplex-document'),
+    documentToken: document.documentElement.getAttribute('data-page-token'),
     annotationId: id,
     tool: m.tool,
     rect,
@@ -1348,7 +1348,7 @@ if (
     setup()
     // send ready only after setup registered the overlay:cmd listener, otherwise
     // the hotkey-config reply from the main process is lost
-    ipcRenderer.send('overlay:event', { kind: 'ready', url: location.href, documentURL: location.href, documentToken: document.documentElement.getAttribute('data-duplex-document') })
+    ipcRenderer.send('overlay:event', { kind: 'ready', url: location.href, documentURL: location.href, documentToken: document.documentElement.getAttribute('data-page-token') })
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, { once: true })

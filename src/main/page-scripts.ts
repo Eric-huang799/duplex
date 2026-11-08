@@ -136,7 +136,7 @@ export function buildSnapshotScript(): string {
   const header = [
     'url: ' + location.href,
     'title: ' + document.title,
-    'document: ' + (document.documentElement.getAttribute ? document.documentElement.getAttribute('data-duplex-document') || 'unmarked' : 'unmarked'),
+    'document: ' + (document.documentElement.getAttribute ? document.documentElement.getAttribute('data-page-token') || 'unmarked' : 'unmarked'),
     'viewport: ' + innerWidth + 'x' + innerHeight + '  scrollY: ' + Math.round(scrollY) + ' / page: ' + Math.round(document.documentElement.scrollHeight),
     'refs: [eN] document-scoped; latest three snapshots retained; refresh after page changes',
     '---'
