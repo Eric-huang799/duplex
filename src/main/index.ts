@@ -1485,18 +1485,25 @@ async function start(): Promise<void> {
         if (!tabs?.getTab(tabId)) {
           throw new Error('当前没有可用的标签页：请先用 new_tab 打开一个页面，再重试。')
         }
-        // 人机验证页上 AI 必须停手：不猜、不试、不绕，交给用户
-        const contentsId = tabs?.getTab(tabId)?.view.webContents.id
-        if (!PAGE_READ_TOOLS.has(name) && contentsId != null && challengeContents.has(contentsId)) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text',
-                text: '这个页面要求人工验证（人机验证/挑战页）。AI 已暂停：请告知用户在浏览器里手动完成验证，完成后你再继续。不要尝试自动通过验证码，也不要换入口绕过。'
-              }
-            ]
+        // 人机验证页上 AI 必须停手：不猜、不试、不绕，交给用户。
+        // 用**实时判定**而不是启动时打的标记：用户手动通过验证后（页面跳走），
+        // 下一次调用就应该正常放行；粘住的标记会永久锁死这个标签。
+        const contents = tabs?.getTab(tabId)?.view.webContents
+        if (!PAGE_READ_TOOLS.has(name) && contents) {
+          const live = detectChallenge({ url: contents.getURL(), title: contents.getTitle() })
+          if (shouldPauseAgent(live)) {
+            challengeContents.add(contents.id)
+            return {
+              isError: true,
+              content: [
+                {
+                  type: 'text',
+                  text: '这个页面要求人工验证（人机验证/挑战页）。AI 已暂停：请告知用户在浏览器里手动完成验证，完成后你再继续。不要尝试自动通过验证码，也不要换入口绕过。'
+                }
+              ]
+            }
           }
+          challengeContents.delete(contents.id)
         }
       }
     } catch (e) { return { isError: true, content: [{ type: 'text', text: (e as Error).message }] } }
