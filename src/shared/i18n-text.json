@@ -2623,6 +2623,10 @@
     "存在值得注意的技术特征",
     "Has a technical characteristic worth noting"
   ],
+  "risk.challenge": [
+    "检测到人机验证：AI 已暂停，请手动完成后继续",
+    "Human verification detected: the AI paused, please complete it and continue"
+  ],
   "settings.consents": [
     "AI 已获准访问的站点",
     "Sites the AI is allowed to visit"

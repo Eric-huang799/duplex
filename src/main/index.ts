@@ -81,6 +81,8 @@ import { createSettingToolHandlers } from './agent/setting-tools'
 import { parseFilterList } from './adblock/filter-list'
 import { AdblockEngine } from './adblock/matcher'
 import { cosmeticCssFor } from './adblock/cosmetic'
+import { RuleSource, type RuleFetchResult } from './adblock/rule-source'
+import { net } from 'electron'
 import { saveAdblockEnabled } from './settings'
 import { ensureRestorePoint, restoreFromPoint } from './settings-restore'
 import { isOllamaEndpoint, probeOllamaModel } from './agent/llm/ollama-native'
@@ -137,6 +139,7 @@ import { originOfUrl, type Decision, type PermissionCategory } from '../shared/p
 import { DENIED_GUIDANCE, accessOrigin, decideAccess } from '../shared/access-policy'
 import { assessSiteRisk, shouldWarn } from '../shared/site-risk'
 import { classifySite } from '../shared/sensitive-sites'
+import { detectChallenge, shouldPauseAgent } from '../shared/challenge'
 import { SiteConsentStore } from './site-consent'
 import { StartedSessionTracker } from './integrations/session-events'
 import { openDefaultAppsSettings, registerAsCandidateBrowser } from './browser-registration'
@@ -180,23 +183,75 @@ let adblockEnabled = true
 let adblockStats = { accepted: 0, skipped: 0 }
 const cosmeticCssKeys = new Map<number, string>()
 
-function loadAdblockList(): void {
-  let listText = ''
-  try {
-    const file = app.isPackaged
-      ? path.join(process.resourcesPath, 'adblock', 'easylist.txt')
-      : path.join(app.getAppPath(), 'resources', 'adblock', 'easylist.txt')
-    listText = fs.readFileSync(file, 'utf8')
-  } catch {
-    logLine('[adblock] 未找到规则文件，按空列表运行（不拦截）')
-  }
+function applyRuleText(listText: string, source: string): void {
   const parsed = parseFilterList(listText)
   adblock = new AdblockEngine(parsed)
   adblockStats = { accepted: parsed.stats.accepted, skipped: parsed.stats.skipped }
   logLine(
-    `[adblock] accepted=${adblockStats.accepted} skipped=${adblockStats.skipped} ` +
+    `[adblock] source=${source} accepted=${adblockStats.accepted} skipped=${adblockStats.skipped} ` +
       `domains=${adblock.size.domains} regex=${adblock.size.blockRegex} cosmetic=${adblock.size.cosmetic}`
   )
+}
+
+function loadAdblockList(): void {
+  try {
+    const file = app.isPackaged
+      ? path.join(process.resourcesPath, 'adblock', 'easylist.txt')
+      : path.join(app.getAppPath(), 'resources', 'adblock', 'easylist.txt')
+    applyRuleText(fs.readFileSync(file, 'utf8'), 'bundled')
+  } catch {
+    logLine('[adblock] 未找到内置规则文件，等待联网拉取')
+  }
+}
+
+/** 用 Electron 的 net 取规则：它跟随系统代理，本机不走代理拿不到外网。 */
+function netFetchText(url: string): Promise<RuleFetchResult> {
+  return new Promise<RuleFetchResult>((resolve, reject) => {
+    let settled = false
+    const done = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      fn()
+    }
+    let request: Electron.ClientRequest
+    try {
+      request = net.request({ method: 'GET', url, redirect: 'follow' })
+    } catch (error) {
+      reject(error as Error)
+      return
+    }
+    request.on('error', (error) => done(() => reject(error)))
+    request.on('response', (response) => {
+      if (response.statusCode !== 200) {
+        done(() => reject(new Error(`HTTP ${response.statusCode}`)))
+        return
+      }
+      const chunks: Buffer[] = []
+      response.on('data', (chunk: Buffer) => {
+        chunks.push(chunk)
+      })
+      response.on('end', () => done(() => resolve({ url, body: Buffer.concat(chunks).toString('utf8') })))
+      response.on('error', (error: Error) => done(() => reject(error)))
+    })
+    request.end()
+  })
+}
+
+/** 启动后异步拉取规则：不阻塞窗口，失败退回缓存，全部失败就继续不拦截。 */
+async function refreshAdblockRules(): Promise<void> {
+  try {
+    const source = new RuleSource({ directory: cobrowseDir() }, netFetchText)
+    const outcome = await source.load()
+    if (!adblockEnabled) return
+    logLine(
+      `[adblock] rules source=${outcome.source} bytes=${outcome.text.length} ` +
+        `detail=${JSON.stringify(outcome.perUrl.map((entry) => ({ ok: entry.ok, bytes: entry.bytes, error: entry.error })))}`
+    )
+    if (outcome.text) applyRuleText(outcome.text, outcome.source)
+    else logLine('[adblock] 没有可用的规则，当前不拦截任何请求')
+  } catch (error) {
+    logLine(`[adblock] 规则拉取异常：${(error as Error)?.message ?? error}`)
+  }
 }
 
 /** 应用并持久化总开关。改动前先建还原点（AI 也能走这条路径）。 */
@@ -330,6 +385,58 @@ function withSensitiveHint(text: string): string {
     if (verdict.sensitive) hits.add(`${host}（${verdict.reason ?? '敏感'}）`)
   }
   return hits.size > 0 ? `${text}\n\n⚠ 目标包含敏感站点：${[...hits].join('、')}` : text
+}
+
+/** 处于人机验证状态的 webContents（AI 在这上面必须停手）。 */
+const challengeContents = new Set<number>()
+
+/**
+ * 人机验证/挑战页看门狗。
+ *
+ * 产品决定：不对抗、不破解。检测到挑战就把控制权交回用户——AI 停下来，
+ * 界面提示"请你手动完成验证后继续"。自动过验证码会把产品从"用户授权的代操作"
+ * 变成"对抗平台的爬虫"，账号与法律风险都不划算。
+ */
+function attachChallengeWatch(): void {
+  app.on('web-contents-created', (_event, wc) => {
+    if (wc.getType() !== 'browserView') return
+    wc.on('did-finish-load', () => {
+      try {
+        const url = wc.getURL()
+        const verdict = detectChallenge({ url, title: wc.getTitle() })
+        if (shouldPauseAgent(verdict)) {
+          challengeContents.add(wc.id)
+          logLine(`[challenge] 检测到 ${verdict.kind ?? 'unknown'}：${url}（${verdict.evidence ?? ''}）`)
+          const tabId = tabIdOfContents(wc)
+          try {
+            win?.webContents.send('site:risk', {
+              url,
+              level: 'warn',
+              reasons: ['challenge']
+            })
+          } catch {
+            /* window closing */
+          }
+          if (tabId != null) logLine(`[challenge] AI 已在标签 ${tabId} 上暂停`)
+        } else {
+          challengeContents.delete(wc.id)
+        }
+      } catch {
+        /* 页面已销毁 */
+      }
+    })
+    wc.on('did-navigate', () => challengeContents.delete(wc.id))
+    wc.on('destroyed', () => challengeContents.delete(wc.id))
+  })
+}
+
+/** 由 webContents 反查标签号。 */
+function tabIdOfContents(wc: Electron.WebContents): number | null {
+  for (const info of tabs?.list() ?? []) {
+    const tab = tabs?.getTab(info.id)
+    if (tab?.view.webContents.id === wc.id) return info.id
+  }
+  return null
 }
 
 /** 把站点权限策略挂到一个 Session 上（隐身分区传 ephemeral: true，规则不落盘）。 */
@@ -1276,7 +1383,9 @@ async function start(): Promise<void> {
   adblockEnabled = settings.adblockEnabled !== false
   if (adblockEnabled) loadAdblockList()
   else logLine('[adblock] 已在设置中关闭')
+  void refreshAdblockRules()
   attachCosmeticFiltering()
+  attachChallengeWatch()
   nativeTheme.themeSource = settings.theme
   if (settings.aiPaused) {
     // the emergency stop survives restarts until the user explicitly resumes
@@ -1353,6 +1462,19 @@ async function start(): Promise<void> {
         tabId = collaboration.resolveTab(caller, usable, tabs?.activeId ?? null)
         if (!tabs?.getTab(tabId)) {
           throw new Error('当前没有可用的标签页：请先用 new_tab 打开一个页面，再重试。')
+        }
+        // 人机验证页上 AI 必须停手：不猜、不试、不绕，交给用户
+        const contentsId = tabs?.getTab(tabId)?.view.webContents.id
+        if (!PAGE_READ_TOOLS.has(name) && contentsId != null && challengeContents.has(contentsId)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: '这个页面要求人工验证（人机验证/挑战页）。AI 已暂停：请告知用户在浏览器里手动完成验证，完成后你再继续。不要尝试自动通过验证码，也不要换入口绕过。'
+              }
+            ]
+          }
         }
       }
     } catch (e) { return { isError: true, content: [{ type: 'text', text: (e as Error).message }] } }

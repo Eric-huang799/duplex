@@ -20,7 +20,8 @@ const REASON_LABEL: Record<string, string> = {
   punycode: 'risk.punycode',
   'credentials-in-url': 'risk.credentials',
   'unusual-port': 'risk.port',
-  'long-host': 'risk.longHost'
+  'long-host': 'risk.longHost',
+  challenge: 'risk.challenge'
 }
 
 /**
