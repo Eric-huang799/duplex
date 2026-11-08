@@ -32,6 +32,20 @@
       </button>
       <span id="probe-count" style="margin-left: 12px">0</span>
     </p>
+    <p>
+      <input
+        id="probe-input"
+        placeholder="输入路径测试框"
+        style="font: inherit; padding: 7px 12px; width: 320px; border-radius: 8px; border: 1px solid #2a3543; background: #0d1117; color: #e8eef7"
+      />
+      <span id="probe-input-echo" style="margin-left: 12px; color: #8b98ab"></span>
+    </p>
+    <script>
+      document.getElementById('probe-input').addEventListener('input', (event) => {
+        document.getElementById('probe-input-echo').textContent =
+          'input 事件：' + event.target.value.length + ' 字符'
+      })
+    </script>
 
     <script>
       window.__CLICKS__ = { count: 0, trusted: [], lastAt: 0 }

@@ -304,6 +304,57 @@ async function inputAction(
   return { x: point.x, y: point.y }
 }
 
+/**
+ * 进程内输入文本：聚焦与清空交给页面（executeJavaScript），逐字符用
+ * `sendInputEvent({ type: 'char' })` 发真实按键事件，最后核对元素值。
+ *
+ * 不用 Playwright 的 `fill`——那是 CDP 的 DOM 操作，正是我们要去掉的路径。
+ * 返回 null 表示这条路径不适用（不可编辑、非输入框、值对不上），调用方应回退。
+ */
+async function inputTypeInProcess(
+  tab: Tab,
+  locator: Locator,
+  text: string,
+  clear: boolean
+): Promise<{ value: string } | null> {
+  const prepared = await locator
+    .evaluate((el, opts) => {
+      const field = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+      const editable = (el as HTMLElement).isContentEditable === true
+      if (!field && !editable) return { ok: false as const }
+      if (field && ((el as HTMLInputElement).disabled || (el as HTMLInputElement).readOnly)) {
+        return { ok: false as const }
+      }
+      ;(el as HTMLElement).focus()
+      if (opts.clear) {
+        if (field) {
+          const proto =
+            el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype
+          Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(el, '')
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+        } else {
+          ;(el as HTMLElement).textContent = ''
+        }
+      }
+      return { ok: true as const }
+    }, { clear })
+    .catch(() => null)
+  if (!prepared || !prepared.ok) return null
+
+  const wc = tab.view.webContents
+  for (const ch of Array.from(text)) {
+    wc.sendInputEvent({ type: 'char', keyCode: ch })
+    await interruptibleSleep(2)
+  }
+  const value = await locator
+    .evaluate((el) => {
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value
+      return (el as HTMLElement).textContent ?? ''
+    })
+    .catch(() => null)
+  return typeof value === 'string' ? { value } : null
+}
+
 export async function performPageAction(tab: Tab, name: string, args: Record<string, unknown>): Promise<unknown> {
   checkCancelled()
   const page = await pageForTab(tab)
@@ -381,17 +432,41 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
       let next = value
       if (/^e\d+$/.test(target)) await locatorForTarget(page, target)
       if (!clear) next = (await locator!.inputValue({ timeout: 200 })) + value
-      await withAiInput(page, { kind: 'type', text: next }, () => locator!.fill(next, { timeout: 200 }))
+      // 进程内输入：先让页面聚焦并清空，再逐字符发真实 key 事件（不经过 CDP 的 DOM 操作）
+      const typeInputPath = (process.env['DUPLEX_INPUT_PATH'] ?? 'auto').toLowerCase()
+      let typeMode = 'playwright'
+      if (typeInputPath !== 'cdp') {
+        suppressHumanActivity()
+        const typed = await inputTypeInProcess(tab, locator!, next, clear)
+        if (typed && typed.value === next) {
+          typeMode = 'process-input'
+        } else if (typed) {
+          // 值对不上（maxlength、被页面脚本改写、CJK 字符没进去等）：回退，别假装成功
+          cdp.logIo(
+            `[io] 输入回退 Playwright：期望 ${next.length} 字符，实际 ${typed.value.length} 字符`
+          )
+        }
+      }
+      if (typeMode !== 'process-input') {
+        await withAiInput(page, { kind: 'type', text: next }, () => locator!.fill(next, { timeout: 200 }))
+      }
       // 文本已经进了输入框：取消只阻止后续的 Enter，不能说"没填"
       const cancelledAfterFill = isCancelled()
-      if (!cancelledAfterFill && args.submit)
-        await withAiInput(page, { kind: 'key', key: 'Enter' }, () => locator!.press('Enter', { timeout: 200, noWaitAfter: true }))
+      if (!cancelledAfterFill && args.submit) {
+        if (typeMode === 'process-input') {
+          const wc = tab.view.webContents
+          wc.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' })
+          wc.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' })
+        } else {
+          await withAiInput(page, { kind: 'key', key: 'Enter' }, () => locator!.press('Enter', { timeout: 200, noWaitAfter: true }))
+        }
+      }
       const payload = {
         filled: true,
         target,
         length: next.length,
         submitted: args.submit === true && !cancelledAfterFill,
-        mode: 'playwright'
+        mode: typeMode
       }
       return cancelledAfterFill ? performedButCancelled('文本已填入输入框', payload) : payload
     }
