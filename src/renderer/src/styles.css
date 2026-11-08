@@ -1107,9 +1107,44 @@ body {
 }
 
 .panel-status {
-  flex: 1;
+  flex: 1 1 auto;
+  /* 头部塞进模型下拉后，状态文字必须能被压缩省略，否则会顶出容器 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--text-dim);
   font-size: 12px;
+}
+
+/* 头部按钮/下拉不参与压缩；只有状态文字让位 */
+.panel-header > button,
+.panel-header > select {
+  flex: 0 0 auto;
+}
+
+/*
+ * 头部面板统一做成"下拉页"：绝对定位浮在内容之上，不再把聊天区往下推。
+ * 同一时刻只允许一个打开（由 SidePanel 的状态保证）。
+ */
+.panel-pop {
+  position: absolute;
+  top: 108px;
+  left: 8px;
+  right: 8px;
+  z-index: 40;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-panel);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.45);
+}
+
+.panel-pop-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
 }
 
 .panel-list .msg,

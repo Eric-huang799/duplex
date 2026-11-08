@@ -9,8 +9,6 @@ import { ToolCard } from './ToolCard'
 import { PermissionCard, type PermissionRequest } from './PermissionCard'
 import { MarkdownProse } from './Markdown'
 import { ModelAccessPanel } from './ModelAccessPanel'
-import { TimelinePanel } from './TimelinePanel'
-import { SkillsPanel } from './SkillsPanel'
 import { ExternalToolPanel, type AgentToolInfo } from './ExternalToolPanel'
 import { useI18n } from '../i18n'
 import { mirrorKey } from '../../../shared/mirror-key'
@@ -176,7 +174,6 @@ export function SidePanel({
   const [providers, setProviders] = useState<Array<{ id: string; name?: string; model: string }>>([])
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null)
   const [showPlaybooks, setShowPlaybooks] = useState(false)
-  const [showTimeline, setShowTimeline] = useState(false)
   const [notice, setNotice] = useState('')
   const [tools, setTools] = useState<AgentToolInfo[]>([])
   const [externalErr, setExternalErr] = useState('')
@@ -372,6 +369,12 @@ export function SidePanel({
   const toggleAgentSessions = (): void => {
     const next = !agentSessionMenu
     setAgentSessionMenu(next)
+    // 头部下拉互斥：开一个就关掉其它，避免面板堆叠
+    if (next) {
+      setSessionMenu(false)
+      setShowModelAccess(false)
+      setShowPlaybooks(false)
+    }
     if (next) void window.cobrowse.agentSessions().then(setAgentSessions)
   }
 
@@ -631,7 +634,33 @@ export function SidePanel({
   const toggleSessionMenu = (): void => {
     const next = !sessionMenu
     setSessionMenu(next)
+    if (next) {
+      setAgentSessionMenu(false)
+      setShowModelAccess(false)
+      setShowPlaybooks(false)
+    }
     if (next) void window.cobrowse.sessionCommand({ action: 'list' })
+  }
+
+  /** 「模型与授权」与预置任务互斥：同一时刻只允许一个头部下拉打开。 */
+  const toggleModelAccess = (): void => {
+    const next = !showModelAccess
+    setShowModelAccess(next)
+    if (next) {
+      setSessionMenu(false)
+      setAgentSessionMenu(false)
+      setShowPlaybooks(false)
+    }
+  }
+
+  const togglePlaybooks = (): void => {
+    const next = !showPlaybooks
+    setShowPlaybooks(next)
+    if (next) {
+      setSessionMenu(false)
+      setAgentSessionMenu(false)
+      setShowModelAccess(false)
+    }
   }
 
   const pickSession = (id: string | null, title?: string): void => {
@@ -767,23 +796,15 @@ export function SidePanel({
           <button
             className="session-btn"
             data-panel-toggle="model-access"
-            onClick={() => setShowModelAccess((v) => !v)}
+            onClick={toggleModelAccess}
             title={t('panel.modelAccess')}
           >
             ⚙
           </button>
           <button
             className="session-btn"
-            data-panel-toggle="timeline"
-            onClick={() => setShowTimeline((v) => !v)}
-            title={t('timeline.title')}
-          >
-            🕒
-          </button>
-          <button
-            className="session-btn"
             data-panel-toggle="playbooks"
-            onClick={() => setShowPlaybooks((v) => !v)}
+            onClick={togglePlaybooks}
             title={t('panel.playbooks')}
           >
             ⚡
@@ -911,34 +932,48 @@ export function SidePanel({
         </>
       )}
 
-      {showModelAccess && (
-        <ModelAccessPanel onClose={() => setShowModelAccess(false)} onChanged={refreshAgentReady} />
-      )}
-
-      {showTimeline && <TimelinePanel onClose={() => setShowTimeline(false)} />}
-
-      {showPlaybooks && (
-        <div className="pbp" style={{ padding: '8px 12px', borderBottom: '1px solid var(--border, rgba(255,255,255,.1))', maxHeight: 320, overflowY: 'auto' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <strong style={{ fontSize: 12.5 }}>{t('panel.playbooks')}</strong>
-            <button className="session-btn" onClick={() => setShowPlaybooks(false)}>✕</button>
+      {/* 头部下拉：浮在内容之上，点击遮罩关闭；同一时刻只开一个 */}
+      {(showModelAccess || showPlaybooks) && (
+        <>
+          <div
+            className="panel-pop-backdrop"
+            onClick={() => {
+              setShowModelAccess(false)
+              setShowPlaybooks(false)
+            }}
+          />
+          <div className="panel-pop">
+            {showModelAccess && (
+              <ModelAccessPanel
+                onClose={() => setShowModelAccess(false)}
+                onChanged={refreshAgentReady}
+              />
+            )}
+            {showPlaybooks && (
+              <div style={{ padding: '8px 12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <strong style={{ fontSize: 12.5 }}>{t('panel.playbooks')}</strong>
+                  <button className="session-btn" onClick={() => setShowPlaybooks(false)}>✕</button>
+                </div>
+                {playbookGroups.map((group) => (
+                  <div key={group.category} style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: 10.5, opacity: 0.65, marginBottom: 3 }}>{group.category}</div>
+                    {group.items.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => startPlaybook(item.prompt[lang])}
+                        style={{ display: 'flex', justifyContent: 'space-between', gap: 8, width: '100%', textAlign: 'left', padding: '5px 8px', marginBottom: 3, borderRadius: 7, border: '1px solid var(--border, rgba(255,255,255,.12))', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 11.5 }}
+                      >
+                        <span>{item.title[lang]}</span>
+                        <span style={{ opacity: 0.55, flex: '0 0 auto' }}>{t('panel.playbookEta', { n: item.etaMinutes })}</span>
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-          {playbookGroups.map((group) => (
-            <div key={group.category} style={{ marginBottom: 8 }}>
-              <div style={{ fontSize: 10.5, opacity: 0.65, marginBottom: 3 }}>{group.category}</div>
-              {group.items.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => startPlaybook(item.prompt[lang])}
-                  style={{ display: 'flex', justifyContent: 'space-between', gap: 8, width: '100%', textAlign: 'left', padding: '5px 8px', marginBottom: 3, borderRadius: 7, border: '1px solid var(--border, rgba(255,255,255,.12))', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 11.5 }}
-                >
-                  <span>{item.title[lang]}</span>
-                  <span style={{ opacity: 0.55, flex: '0 0 auto' }}>{t('panel.playbookEta', { n: item.etaMinutes })}</span>
-                </button>
-              ))}
-            </div>
-          ))}
-        </div>
+        </>
       )}
 
       {notice && (
