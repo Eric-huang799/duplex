@@ -352,13 +352,20 @@ function attachCosmeticFiltering(): void {
  * 提示词只能"要求"模型先问，绕过它的办法太多（换措辞、换标签、改写 URL）。
  * 所以在主进程执行动作**之前**自己判一次：需要授权就弹确认，用户拒绝就
  * 直接把工具调用按失败返回，并明确禁止绕过。
+ *
+ * 授权按 (actor, origin) 判定：`actor` 是当前工具调用链上的 agent 身份，
+ * A 授权过的站点不会顺带放行 B。
  */
-async function ensureAgentAccess(targetUrl: string): Promise<{ ok: true } | { ok: false; error: string }> {
+async function ensureAgentAccess(
+  targetUrl: string,
+  actor: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!siteConsent) return { ok: true }
   const verdict = decideAccess({
     actor: 'agent',
+    agentId: actor,
     url: targetUrl,
-    authorizedOrigins: siteConsent.list(),
+    grants: siteConsent.list(),
     // 未列出的普通站点目前默认放行；「AI 可访问未授权站点」总闸留作设置项（下一步接线）
     agentMayBrowseUnlisted: true
   })
@@ -366,21 +373,23 @@ async function ensureAgentAccess(targetUrl: string): Promise<{ ok: true } | { ok
   if (verdict.decision === 'deny') return { ok: false, error: `${verdict.reason ?? '拒绝访问'}。${DENIED_GUIDANCE}` }
 
   const origin = accessOrigin(targetUrl) ?? targetUrl
+  const requester = mt('consent.requestedBy', { agent: actor })
   const approved = await confirmScript({
-    command: `访问 ${origin}`,
+    // 确认卡的 command 默认可见、preview 默认折叠，所以请求方必须写在 command 里。
+    command: `${requester}\n访问 ${origin}`,
     cwd: '',
     skill: '站点访问授权',
     tool: 'navigate',
     kind: 'write',
-    preview: `AI 想访问 ${origin}\n类型：${verdict.sensitivity?.reason ?? verdict.reason ?? '未授权站点'}\n授权范围：本次运行`
+    preview: `AI 想访问 ${origin}\n类型：${verdict.sensitivity?.reason ?? verdict.reason ?? '未授权站点'}\n授权范围：本次运行（仅该 agent）`
   })
   if (!approved) {
-    logLine(`[consent] 用户拒绝 AI 访问 ${origin}`)
-    return { ok: false, error: `用户没有授权访问 ${origin}。${DENIED_GUIDANCE}` }
+    logLine(`[consent] 用户拒绝 ${actor} 访问 ${origin}`)
+    return { ok: false, error: `用户没有授权 ${actor} 访问 ${origin}。${DENIED_GUIDANCE}` }
   }
-  siteConsent.authorize(origin, 'session')
-  logLine(`[consent] 用户授权 AI 访问 ${origin}（本次运行）`)
-  timeline?.record({ kind: 'takeover', detail: `授权 AI 访问 ${origin}` })
+  siteConsent.authorize(actor, origin, 'session')
+  logLine(`[consent] 用户授权 ${actor} 访问 ${origin}（本次运行）`)
+  timeline?.record({ kind: 'takeover', detail: `授权 ${actor} 访问 ${origin}` })
   return { ok: true }
 }
 
@@ -1412,7 +1421,8 @@ async function start(): Promise<void> {
   browserSession = new BrowserSessionStore(cobrowseDir())
   timeline = new TimelineStore(cobrowseDir())
   permissions = new PermissionStore(cobrowseDir())
-  siteConsent = new SiteConsentStore(cobrowseDir())
+  // 旧格式（只有 origin、没有 actor）在加载时会被丢弃，日志走应用日志文件。
+  siteConsent = new SiteConsentStore(cobrowseDir(), (line) => logLine(line))
   permissionRuntime = new PermissionRuntime({
     store: permissions,
     tabIdOf: (wc) => (wc ? findTabIdBySender(wc) : null),
@@ -1588,7 +1598,9 @@ async function start(): Promise<void> {
       const accessUrl =
         (name === 'navigate' || name === 'new_tab') && resolvedTarget ? resolvedTarget : tabUrlOf(tabId)
       if (accessUrl) {
-        const gate = await ensureAgentAccess(accessUrl)
+        // caller 在进入工具链时已经捕获（builtin / mcp:<id>）；授权必须按它判定，
+        // 不能退化成全局 origin 列表。
+        const gate = await ensureAgentAccess(accessUrl, caller)
         if (!gate.ok) {
           return { isError: true, content: [{ type: 'text', text: gate.error }] }
         }
@@ -2760,11 +2772,13 @@ function setupIpc(): void {
   ipcMain.handle('app:update-status', () => appUpdater?.status() ?? { state: 'disabled' })
   ipcMain.handle('app:update-check', async () => (appUpdater ? await appUpdater.check() : { state: 'disabled' }))
   ipcMain.handle('app:update-install', () => ({ ok: appUpdater?.install() ?? false }))
-  ipcMain.handle('settings:consents', () => ({ origins: siteConsent?.list() ?? [] }))
-  ipcMain.handle('settings:consent-revoke', (_e, origin: unknown) => {
-    if (typeof origin !== 'string' || !siteConsent) return { ok: false, removed: false }
-    const result = siteConsent.revoke(origin)
-    if (result.removed) logLine(`[consent] 用户撤销了对 ${origin} 的授权`)
+  ipcMain.handle('settings:consents', () => ({ consents: siteConsent?.list() ?? [] }))
+  ipcMain.handle('settings:consent-revoke', (_e, actor: unknown, origin: unknown) => {
+    if (typeof actor !== 'string' || typeof origin !== 'string' || !siteConsent) {
+      return { ok: false, removed: false }
+    }
+    const result = siteConsent.revoke(actor, origin)
+    if (result.removed) logLine(`[consent] 用户撤销了 ${actor} 对 ${origin} 的授权`)
     return result
   })
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })

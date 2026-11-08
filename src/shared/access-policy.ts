@@ -12,20 +12,40 @@
  *  - 对**人**：任何站点都能打开，最多提示风险，绝不拦截浏览。替用户做内容审查是越界。
  *  - 对 **AI**：默认服从用户，但进入未授权/敏感站点前必须先取得授权；
  *    被拒绝后不得更换标签、改写 URL、或换搜索引擎绕过。
+ *  - 对**多个 AI**：授权按 `(actor, origin)` 匹配。一个 agent 的授权不会
+ *    顺带放行另一个 agent——调用方必须给出具体 `agentId`，缺省视为未授权。
  *
- * 这个模块是纯函数：输入 actor、目标 URL、已授权集合，输出决定与理由。
+ * 这个模块是纯函数：输入 actor（角色）、agentId（具体 agent 身份）、目标 URL、
+ * (actor, origin) 授权记录，输出决定与理由。
  */
 import { classifySite, type SensitivityVerdict } from './sensitive-sites'
 
+/** 语义角色：human 永远放行；agent 进入前要过授权表。 */
 export type Actor = 'human' | 'agent'
 
 export type AccessDecision = 'allow' | 'need-consent' | 'deny'
 
+/** 一条站点授权：某个 agent 对某个 origin 的许可。 */
+export interface SiteGrant {
+  /** 请求方 agent 的稳定标识（主进程 `currentCaller()`）。 */
+  actor: string
+  /** 规范化 origin（`accessOrigin()` 的结果）。 */
+  origin: string
+}
+
 export interface AccessInput {
   actor: Actor
+  /**
+   * 具体的 agent 身份（`currentCaller()`），只在 `actor === 'agent'` 时有意义。
+   * 缺失 / 为空 → 一律视为未授权（宁可多问一次，也不猜归属）。
+   */
+  agentId?: string
   url: string
-  /** 已授权（按 origin）的集合——只对 agent 生效，人的浏览不需要授权。 */
-  authorizedOrigins?: ReadonlySet<string> | readonly string[]
+  /**
+   * 全量 (actor, origin) 授权记录。只有 `actor` 与 `agentId` 相同、且 origin
+   * 精确相同的记录才算数；不要传"所有 agent 的 origin 合集"。
+   */
+  grants?: readonly SiteGrant[]
   /** 用户是否已经关闭"AI 可访问未授权站点"的总闸。 */
   agentMayBrowseUnlisted?: boolean
 }
@@ -52,12 +72,20 @@ export function accessOrigin(rawUrl: string | null | undefined): string | null {
   }
 }
 
-function isAuthorized(origin: string | null, list: AccessInput['authorizedOrigins']): boolean {
-  if (!origin || !list) return false
-  if (Array.isArray(list) || list instanceof Set) {
-    for (const entry of list as Iterable<string>) {
-      if (entry === origin) return true
-    }
+/**
+ * 是否已授权：按 (agentId, origin) 精确匹配。
+ * 没有 agentId 或授权记录时一律 false——绝不回退到"全站共享"。
+ */
+function isAuthorized(
+  origin: string | null,
+  agentId: string | undefined,
+  grants: AccessInput['grants']
+): boolean {
+  if (!origin || !agentId || !grants) return false
+  for (const grant of grants) {
+    if (!grant || grant.actor !== agentId) continue
+    // 容忍调用方传入未规范化的 origin（例如带路径/尾斜杠），但只比较 origin。
+    if (accessOrigin(grant.origin) === origin) return true
   }
   return false
 }
@@ -76,9 +104,9 @@ export function decideAccess(input: AccessInput): AccessResult {
       : { decision: 'allow' }
   }
 
-  // Agent：先看敏感，再看是否已授权
+  // Agent：先看敏感，再看该 agent 是否已授权
   const sensitivity = classifySite(input.url)
-  const authorized = isAuthorized(origin, input.authorizedOrigins)
+  const authorized = isAuthorized(origin, input.agentId, input.grants)
 
   if (sensitivity.sensitive) {
     return authorized

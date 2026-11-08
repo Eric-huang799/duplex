@@ -112,8 +112,8 @@ interface CobrowseApi {
     cosmetic: number
   }>
   settingsRestorePreAi(): Promise<{ ok: boolean; error?: string }>
-  settingsConsents(): Promise<{ origins: string[] }>
-  settingsConsentRevoke(origin: string): Promise<{ ok: boolean; removed: boolean }>
+  settingsConsents(): Promise<{ consents: Array<{ actor: string; origin: string }> }>
+  settingsConsentRevoke(actor: string, origin: string): Promise<{ ok: boolean; removed: boolean }>
   appVersion(): Promise<{ version: string; packaged: boolean }>
   updateStatus(): Promise<{ state: string; version?: string; error?: string }>
   updateCheck(): Promise<{ state: string; version?: string; error?: string }>

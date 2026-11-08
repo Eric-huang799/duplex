@@ -114,9 +114,13 @@ const api = {
   }> => ipcRenderer.invoke('settings:adblock-refresh'),
   settingsRestorePreAi: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('settings:restore-pre-ai'),
-  settingsConsents: (): Promise<{ origins: string[] }> => ipcRenderer.invoke('settings:consents'),
-  settingsConsentRevoke: (origin: string): Promise<{ ok: boolean; removed: boolean }> =>
-    ipcRenderer.invoke('settings:consent-revoke', origin),
+  settingsConsents: (): Promise<{ consents: Array<{ actor: string; origin: string }> }> =>
+    ipcRenderer.invoke('settings:consents'),
+  settingsConsentRevoke: (
+    actor: string,
+    origin: string
+  ): Promise<{ ok: boolean; removed: boolean }> =>
+    ipcRenderer.invoke('settings:consent-revoke', actor, origin),
   // ── 关于与更新 ──────────────────────────────────────────────────────────
   appVersion: (): Promise<{ version: string; packaged: boolean }> => ipcRenderer.invoke('app:version'),
   updateStatus: (): Promise<{ state: string; version?: string; error?: string }> =>

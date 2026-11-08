@@ -20,7 +20,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
   const [adblock, setAdblock] = useState<AdblockStatus | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const [consents, setConsents] = useState<string[]>([])
+  const [consents, setConsents] = useState<Array<{ actor: string; origin: string }>>([])
   const [rulesNote, setRulesNote] = useState('')
   const [version, setVersion] = useState('')
   const [update, setUpdate] = useState<{ state: string; version?: string; error?: string }>({
@@ -60,7 +60,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
   const refresh = useCallback(async (): Promise<void> => {
     try {
       setAdblock(await window.cobrowse.settingsAdblockStatus())
-      setConsents((await window.cobrowse.settingsConsents()).origins ?? [])
+      setConsents((await window.cobrowse.settingsConsents()).consents ?? [])
     } catch {
       setAdblock(null)
     }
@@ -173,8 +173,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
             <div className="setp-hint">{t('settings.consentsEmpty')}</div>
           ) : (
             <div className="setp-consents">
-              {consents.map((origin) => (
-                <span className="setp-consent" key={origin}>
+              {consents.map(({ actor, origin }) => (
+                <span className="setp-consent" key={`${actor}\u0000${origin}`}>
+                  <span title={t('settings.consentsRequester', { agent: actor })}>{actor}</span>
+                  {' · '}
                   {origin}
                   <button
                     className="setp-consent-x"
@@ -184,7 +186,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
                       void (async () => {
                         setBusy(true)
                         try {
-                          await window.cobrowse.settingsConsentRevoke(origin)
+                          await window.cobrowse.settingsConsentRevoke(actor, origin)
                           await refresh()
                         } finally {
                           setBusy(false)
