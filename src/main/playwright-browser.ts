@@ -243,6 +243,67 @@ function assertUploadAllowed(files: string[]): void {
   }
 }
 
+/**
+ * 进程内输入会真实穿过浏览器输入管线，因此页面里的 overlay 会把我们自己的
+ * 点击/滚动画报成"人工活动"，AI 随即被暂停——自己把自己踢下线。
+ * 这个时间戳是给主进程用的抑制窗口：窗口期内的 humanActivity 事件不是人产生的。
+ */
+let inputSuppressUntil = 0
+
+export function aiInputSuppressUntil(): number {
+  return inputSuppressUntil
+}
+
+/** 把"这是 AI 自己的输入"这个窗口往后推，覆盖自动滚动等副作用产生的事件。 */
+export function suppressHumanActivity(ms = 1200): void {
+  inputSuppressUntil = Math.max(inputSuppressUntil, Date.now() + ms)
+}
+
+/**
+ * 进程内输入：用 `webContents.sendInputEvent` 模拟鼠标动作，不经过 CDP。
+ *
+ * 为什么值得做：CDP 的 `Input.dispatchMouseEvent` 与这里的输入都产生 trusted 事件，
+ * 但 CDP 需要一条附着会话（Runtime/Page 域），那是站点侧能探测到的最主要痕迹；
+ * 进程内输入不建立任何会话。返回 null 表示这次不适合走这条路径（元素在 iframe 内、
+ * 不可见、不在视口），调用方应回退到 Playwright。
+ */
+async function inputAction(
+  tab: Tab,
+  locator: Locator,
+  mode: 'click' | 'double' | 'hover'
+): Promise<{ x: number; y: number } | null> {
+  const wc = tab.view.webContents
+  const readPoint = (el: Element): { x: number; y: number; ok: boolean } => {
+    const rect = el.getBoundingClientRect()
+    const style = window.getComputedStyle(el)
+    const x = Math.round(rect.left + rect.width / 2)
+    const y = Math.round(rect.top + rect.height / 2)
+    const visible = rect.width > 1 && rect.height > 1 && style.visibility !== 'hidden' && style.display !== 'none'
+    const inViewport = x > 0 && y > 0 && x < window.innerWidth && y < window.innerHeight
+    return { x, y, ok: visible && inViewport && window === window.top }
+  }
+  let point = await locator.evaluate(readPoint).catch(() => null)
+  if (!point || !point.ok) {
+    // 不可见/在 iframe 内/不在视口：先尝试滚进来再判断一次
+    await locator.scrollIntoViewIfNeeded({ timeout: 300 }).catch(() => undefined)
+    point = await locator.evaluate(readPoint).catch(() => null)
+    if (!point || !point.ok) return null
+  }
+  try {
+    wc.focus()
+  } catch {
+    /* 窗口可能正在失焦，仍然发送 */
+  }
+  wc.sendInputEvent({ type: 'mouseMove', x: point.x, y: point.y })
+  if (mode === 'hover') return { x: point.x, y: point.y }
+  // 先开抑制窗口：overlay 的 humanActivity 必须把这次输入认成 AI 的
+  inputSuppressUntil = Date.now() + 1200
+  const clickCount = mode === 'double' ? 2 : 1
+  wc.sendInputEvent({ type: 'mouseDown', x: point.x, y: point.y, button: 'left', clickCount })
+  wc.sendInputEvent({ type: 'mouseUp', x: point.x, y: point.y, button: 'left', clickCount })
+  return { x: point.x, y: point.y }
+}
+
 export async function performPageAction(tab: Tab, name: string, args: Record<string, unknown>): Promise<unknown> {
   checkCancelled()
   const page = await pageForTab(tab)
@@ -260,19 +321,37 @@ export async function performPageAction(tab: Tab, name: string, args: Record<str
       if (/^e\d+$/.test(target)) await locatorForTarget(page, target)
       const box = await locator!.boundingBox({ timeout: 200 })
       const inputTarget = `${Date.now()}-${Math.random()}`
-      await locator!.evaluate((el, id) => el.setAttribute('data-duplex-ai-target', id), inputTarget, { timeout: 200 })
+      await locator!.evaluate((el, id) => el.setAttribute('data-ai-target', id), inputTarget, { timeout: 200 })
       const marker = { kind: 'pointer', target: inputTarget, x: box ? box.x + box.width / 2 : undefined, y: box ? box.y + box.height / 2 : undefined }
+      // 输入路径：默认优先进程内（无 CDP 会话），失败回退 Playwright。
+      // DUPLEX_INPUT_PATH=cdp 可强制旧路径，用于 A/B 实测。
+      const inputPath = (process.env['DUPLEX_INPUT_PATH'] ?? 'auto').toLowerCase()
+      let inProcess: { x: number; y: number } | null = null
+      // Playwright 在点击前会自动把元素滚进视口，那会产生 scroll 事件，
+      // 被页面 overlay 报成"人工正在滚动"，于是 AI 刚点一下就被自己暂停。
+      // 两条路径都先开抑制窗口，把自己的动作和真人的动作分开。
+      suppressHumanActivity()
       await withAiInput(page, marker, async () => {
+        if (inputPath !== 'cdp') {
+          inProcess = await inputAction(tab, locator!, name === 'hover' ? 'hover' : name === 'dblclick' ? 'double' : 'click')
+        }
+        if (inProcess) return
         if (name === 'click') await locator!.click({ timeout: 200, noWaitAfter: true })
         else if (name === 'dblclick') await locator!.dblclick({ timeout: 200, noWaitAfter: true })
         else await locator!.hover({ timeout: 200 })
       })
+      // 清掉临时标记：它是我们自己的指纹，不该留在页面 DOM 里
+      await locator!
+        .evaluate((el, id) => {
+          if (el.getAttribute('data-ai-target') === id) el.removeAttribute('data-ai-target')
+        }, inputTarget)
+        .catch(() => undefined)
       const cancelledAfterDispatch = isCancelled()
       await showTarget(tab, locator!, name)
       const payload = {
         [name === 'click' ? 'clicked' : name === 'dblclick' ? 'doubleClicked' : 'hovered']: true,
         target,
-        mode: 'playwright'
+        mode: inProcess ? 'process-input' : 'playwright'
       }
       return cancelledAfterDispatch ? performedButCancelled('该点击/悬停动作', payload) : payload
     }

@@ -23,6 +23,26 @@
     </p>
     <table id="out"></table>
 
+    <p class="hint" style="margin-top: 22px">
+      输入路径 A/B 的落点：下面这个按钮只做一件事——记录被点了几次，以及事件是否 trusted。
+    </p>
+    <p>
+      <button id="probe-btn" style="font: inherit; padding: 8px 18px; border-radius: 8px; cursor: pointer">
+        计数按钮
+      </button>
+      <span id="probe-count" style="margin-left: 12px">0</span>
+    </p>
+
+    <script>
+      window.__CLICKS__ = { count: 0, trusted: [], lastAt: 0 }
+      document.getElementById('probe-btn').addEventListener('click', (event) => {
+        window.__CLICKS__.count += 1
+        window.__CLICKS__.trusted.push(event.isTrusted)
+        window.__CLICKS__.lastAt = Date.now()
+        document.getElementById('probe-count').textContent = String(window.__CLICKS__.count)
+      })
+    </script>
+
     <script>
       /** 判断某个函数看起来是不是原生实现。 */
       function isNative(fn) {

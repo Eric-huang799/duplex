@@ -190,10 +190,57 @@ UA-CH（`navigator.userAgentData.brands`）实测是：
 
 ---
 
+## 五点五、输入路径 A/B：CDP vs 进程内 `sendInputEvent`
+
+### 实现
+
+`click` / `dblclick` / `hover` 现在默认走**进程内输入**：
+
+1. 用元素 `getBoundingClientRect()` 取视口中心点（要求元素在 main frame、可见、在视口内）
+2. `webContents.sendInputEvent()` 依次发 mouseMove → mouseDown → mouseUp（`isTrusted` 真事件）
+3. 不满足条件（iframe 内 / 不可见 / 滚不进来）时**回退 Playwright**，行为不变
+4. `DUPLEX_INPUT_PATH=cdp` 可强制旧路径，用来做 A/B
+
+### 实测（同一台机器、同一页面、各 10 次点击）
+
+| 路径 | 结果 mode | 页面收到的点击 | isTrusted | 平均耗时 |
+| --- | --- | --- | --- | --- |
+| A) CDP（Playwright） | `playwright` | 10 / 10 | 全部 true | 48 ms |
+| B) 进程内（sendInputEvent） | `process-input` | 10 / 10 | 全部 true | 45 ms |
+
+**页面侧看不出区别**——两条路径都产生 trusted 事件。真正的差异在进程侧：进程内输入不经过
+CDP 的 `Input` 域，是"最终能把 CDP 会话整个拿掉"的必要一步；而且它顺带修掉了一个真 bug（见下）。
+
+### 顺带修掉的自我暂停 bug
+
+第一次 A/B 时两条路径都被自己的协作锁暂停了：
+
+```
+[PAUSED] 人工正在操作页面；请由用户恢复此标签的 AI 操作
+```
+
+原因不同但根因相同——**AI 自己的动作被页面里的 overlay 报成了"人工活动"**：
+
+- 进程内路径：`sendInputEvent` 真的穿过浏览器输入管线，overlay 如实上报
+- CDP 路径：Playwright 点击前会把元素滚进视口，**那次滚动**被报成"人工滚动"
+
+修法是给主进程一个"AI 输入窗口"（`aiInputSuppressUntil`），窗口内的 humanActivity 事件忽略。
+修完后两条路径都是 10/10 且不再暂停——**CDP 路径的这个 bug 在改动之前就在**，只是没人测过。
+
+### 结论（对"要不要换内核"的意义）
+
+进程内输入能拿掉的是 **CDP 的 Input 域**，但 `snapshot` / `query` / `screenshot` 仍然依赖
+CDP 的 DOM 与截图能力。所以"彻底去 CDP"还没有完成，剩下的量级是**把快照与查询也改成
+进程内实现**——这是 CEF 唯一真正的技术收益，但同样可以在 Electron 内完成。
+
+---
+
 ## 六、没做完的（明确列出，不冒充完成）
 
-1. **输入还没从 CDP 迁到 `sendInputEvent`**。这是"去掉 CDP 痕迹"的核心工程，本轮没做，
-   下一轮第一优先，做完可以用同一套探针再测一遍对比。
+1. **`type` / `scroll` / `press` 仍走 CDP**。本轮只迁了点击类动作；输入与滚动要模拟
+   真实按键序列与滚轮事件，工作量更大，而且 `type` 还需要处理 IME 与逐字输入。
+2. **`snapshot` / `query` / `screenshot` 仍依赖 CDP**——所以 CDP 会话暂时还拿不掉，
+   §五点五 的结论仍然成立：去 CDP 的下半场是"快照与查询进程内化"。
 2. **UA-CH brands 仍是 Chromium**（需品牌化构建，见 §5.1）。
 3. **`data-page-token` 仍是一个属性**，只是不再带产品名。彻底方案是改成不落 DOM 的
    Symbol 属性或主进程侧映射，会牵动标注/导航校验，单独一轮做。

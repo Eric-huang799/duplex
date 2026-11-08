@@ -130,7 +130,7 @@ import type { ChatSendResult, ContentBounds } from '../shared/protocol'
 import { isLlmProtocol } from '../shared/llm'
 import { duplexShimEnv, ensureOpenShim, extractHttpUrl } from './open-shim'
 import { CollaborationCoordinator, currentCaller, PAGE_READ_TOOLS, withCaller } from './collaboration'
-import { configurePlaywright, closePlaywright } from './playwright-browser'
+import { configurePlaywright, closePlaywright, aiInputSuppressUntil } from './playwright-browser'
 import { BrowserSessionStore } from './browser-session'
 import { TimelineStore } from './timeline'
 import { PermissionStore } from './permission-store'
@@ -2933,6 +2933,10 @@ function setupIpc(): void {
       }
     ) => {
       if (ev?.kind === 'humanActivity') {
+        // 进程内输入（sendInputEvent）会真的穿过输入管线，页面里的 overlay 会把
+        // 我们自己发出的点击/滚动画报成人工活动，于是 AI 刚动一下就被自己暂停。
+        // 抑制窗口内的事件不是人产生的，直接忽略。
+        if (Date.now() < aiInputSuppressUntil()) return
         const tabId = findTabIdBySender(_e.sender)
         if (tabId == null) return
         const activity = ev.activity ?? 'input'
