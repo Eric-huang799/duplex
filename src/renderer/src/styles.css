@@ -3027,3 +3027,21 @@ button.start-engine:hover {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+
+/* 已处理的权限记录：默认折叠，避免几十条"已允许执行"把对话挤没 */
+.perm-log {
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  padding: 4px 8px;
+  background: var(--bg-soft, rgba(127, 140, 160, 0.06));
+}
+.perm-log > summary {
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  list-style: none;
+}
+.perm-log > summary::-webkit-details-marker { display: none; }
+.perm-log > summary::before { content: '▸ '; }
+.perm-log[open] > summary::before { content: '▾ '; }
+.perm-log-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }

@@ -2595,7 +2595,10 @@
     "更新失败，仍使用现有规则",
     "Update failed; keeping the current rules"
   ],
-  "panel.playbooks": [
+  "panel.permissionLog": [
+    "已处理的授权记录（{n}）",
+    "Resolved approvals ({n})"
+  ],  "panel.playbooks": [
     "预置任务",
     "Playbooks"
   ],

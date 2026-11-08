@@ -261,9 +261,15 @@ export default function App(): React.JSX.Element {
 
   const respondConfirm = useCallback((id: number, ok: boolean): void => {
     void window.cobrowse.agentConfirmRespond(id, ok)
-    setConfirms((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, state: ok ? 'allowed' : 'denied' } : c))
-    )
+    setConfirms((prev) => {
+      const next: PermissionRequest[] = prev.map((c) =>
+        c.id === id ? { ...c, state: ok ? 'allowed' : 'denied' } : c
+      )
+      // 已处理的历史只留最近 30 条：界面上它是折叠列表，不该无限增长
+      const pending = next.filter((c) => c.state === 'pending')
+      const resolved = next.filter((c) => c.state !== 'pending').slice(-30)
+      return [...pending, ...resolved]
+    })
   }, [])
 
   useEffect(() => {

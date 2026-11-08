@@ -705,6 +705,8 @@ export function SidePanel({
   // card with the same tool name shows "waiting for your permission"; when the
   // same tool runs concurrently the older cards keep their own state.
   const pendingConfirmTool = confirms.find((c) => c.state === 'pending')?.tool
+  /** 已处理的确认（允许/拒绝/超时）：收进折叠汇总，不再一条条占着对话区。 */
+  const resolvedConfirms = confirms.filter((c) => c.state !== 'pending')
   let pendingToolId: number | null = null
   if (pendingConfirmTool) {
     for (let i = displayEvents.length - 1; i >= 0; i--) {
@@ -1024,9 +1026,28 @@ export function SidePanel({
             ))}
           </>
         )}
-        {confirms.map((c) => (
-          <PermissionCard key={c.id} req={c} onRespond={onConfirmRespond} />
-        ))}
+        {/*
+          权限历史不能平铺在对话里：跑一小时就有几十条"已允许执行 …"，
+          把正文挤没了。待处理的照常弹卡片；已处理的收进一个默认折叠的汇总，
+          需要时展开仍可逐条查看。
+        */}
+        {confirms
+          .filter((c) => c.state === 'pending')
+          .map((c) => (
+            <PermissionCard key={c.id} req={c} onRespond={onConfirmRespond} />
+          ))}
+        {resolvedConfirms.length > 0 && (
+          <details className="perm-log">
+            <summary>
+              {t('panel.permissionLog', { n: resolvedConfirms.length })}
+            </summary>
+            <div className="perm-log-list">
+              {resolvedConfirms.map((c) => (
+                <PermissionCard key={c.id} req={c} onRespond={onConfirmRespond} />
+              ))}
+            </div>
+          </details>
+        )}
       </div>
 
       {(agentErrText || externalErr) && (
