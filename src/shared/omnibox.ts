@@ -6,6 +6,18 @@
 import type { BookmarkRecord, HistoryRecord } from './protocol'
 import { translate, type Lang } from './i18n'
 
+/**
+ * 月份显示名。
+ *
+ * 中文模板是 `{m}月`，英文模板是 `{monthName} {y}` —— 两个语言的占位符名不同，
+ * 所以调用方必须**同时**传 `{ m }` 与 `{ monthName }`，否则英文界面会把
+ * `{monthName}` 原样显示出来（历史按月分组、年份筛选 chip 都受影响）。
+ */
+function monthNameFor(lang: Lang, month: number): string {
+  const date = new Date(2000, Math.min(Math.max(month, 1), 12) - 1, 1)
+  return date.toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-US', { month: 'short' })
+}
+
 export interface OmniboxSuggestion {
   kind: 'search' | 'history' | 'bookmark'
   /** Primary text: search terms or page title. */
@@ -188,10 +200,17 @@ export function groupHistoryByDay(history: HistoryRecord[], now = new Date(), la
       label = weekdays[new Date(day).getDay()]
     } else if (d.getFullYear() === now.getFullYear()) {
       key = `m-${d.getFullYear()}-${d.getMonth() + 1}`
-      label = translate(lang, 'omnibox.monthLabel', { m: d.getMonth() + 1 })
+      label = translate(lang, 'omnibox.monthLabel', {
+        m: d.getMonth() + 1,
+        monthName: monthNameFor(lang, d.getMonth() + 1)
+      })
     } else {
       key = `my-${d.getFullYear()}-${d.getMonth() + 1}`
-      label = translate(lang, 'omnibox.yearMonthLabel', { y: d.getFullYear(), m: d.getMonth() + 1 })
+      label = translate(lang, 'omnibox.yearMonthLabel', {
+        y: d.getFullYear(),
+        m: d.getMonth() + 1,
+        monthName: monthNameFor(lang, d.getMonth() + 1)
+      })
     }
     const g = groups.get(key) ?? { key, label, records: [] }
     g.records.push(r)
@@ -222,7 +241,14 @@ export function listHistoryMonths(history: HistoryRecord[], lang: Lang = 'zh'): 
     .sort((a, b) => (a < b ? 1 : -1))
     .map((key) => {
       const [y, m] = key.split('-')
-      return { key, label: translate(lang, 'omnibox.yearMonthChip', { y, m: Number(m) }) }
+      return {
+      key,
+      label: translate(lang, 'omnibox.yearMonthChip', {
+        y,
+        m: Number(m),
+        monthName: monthNameFor(lang, Number(m))
+      })
+    }
     })
 }
 
