@@ -66,7 +66,26 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           tag="${GITHUB_REF_NAME}"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "Duplex $tag" --generate-notes
+          # 预发布（如 v0.3.0-beta.1）必须保留 prerelease 标记：
+          # GitHub 不允许把 prerelease 同时标成 latest，硬写 --latest 会让这个 job 以 422 失败。
+          # 之前 0.3.0-beta.1 的 CI 就是这样红的，而产物其实已经传上去了。
+          if [[ "$tag" == *-* ]]; then
+            is_pre=1
+          else
+            is_pre=0
+          fi
+          if [[ "$is_pre" == "1" ]]; then
+            gh release view "$tag" >/dev/null 2>&1 || \
+              gh release create "$tag" --title "Duplex $tag" --generate-notes --prerelease
+          else
+            gh release view "$tag" >/dev/null 2>&1 || \
+              gh release create "$tag" --title "Duplex $tag" --generate-notes
+          fi
           gh release upload "$tag" artifacts/* --clobber
-          # Re-pushing a tag can leave its release as a draft: always ship it.
-          gh release edit "$tag" --draft=false --latest
+          # 重新推 tag 可能让 release 变回 draft：确保发布出去；
+          # 只有正式版才抢 latest，预发布保持 prerelease。
+          if [[ "$is_pre" == "1" ]]; then
+            gh release edit "$tag" --draft=false
+          else
+            gh release edit "$tag" --draft=false --latest
+          fi
