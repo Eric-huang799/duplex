@@ -1489,7 +1489,16 @@ async function start(): Promise<void> {
         // 用**实时判定**而不是启动时打的标记：用户手动通过验证后（页面跳走），
         // 下一次调用就应该正常放行；粘住的标记会永久锁死这个标签。
         const contents = tabs?.getTab(tabId)?.view.webContents
-        if (!PAGE_READ_TOOLS.has(name) && contents) {
+        // 导航类工具必须放行：否则 AI 连"离开挑战页"都做不到，会被永远困住。
+        const CHALLENGE_SAFE_TOOLS = new Set([
+          'navigate',
+          'new_tab',
+          'switch_tab',
+          'close_tab',
+          'list_tabs',
+          'resume_tab'
+        ])
+        if (!CHALLENGE_SAFE_TOOLS.has(name) && !PAGE_READ_TOOLS.has(name) && contents) {
           const live = detectChallenge({ url: contents.getURL(), title: contents.getTitle() })
           if (shouldPauseAgent(live)) {
             challengeContents.add(contents.id)
