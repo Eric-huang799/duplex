@@ -77,6 +77,7 @@ import {
 import { SessionBus } from './session-bus'
 import { AgentRuntime } from './agent/runtime'
 import { BackgroundSessionRunner, sessionCallerId } from './agent/session-runner'
+import { createDesignWiring } from './design-wiring'
 import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { createSitePermissionHandlers } from './agent/permission-tools'
@@ -1379,6 +1380,8 @@ let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
 /** 并行内置会话的运行器（窗口创建时装配，演示脚本在 ready-to-show 里用）。 */
 let parallelRunnerRef: BackgroundSessionRunner | null = null
+/** 设计画布的接线（窗口创建时装配；窗口关闭时释放）。 */
+let designWiring: ReturnType<typeof createDesignWiring> | null = null
 
 /** Absolute path of the MCP bridge entry point external CLIs (node) will execute. */
 function tUnknown(): string {
@@ -1550,6 +1553,15 @@ async function start(): Promise<void> {
       }
     }
     const caller = currentCaller()
+    // 设计画布工具：不需要标签，直接走 DesignService
+    if (name.startsWith('design_') && designWiring) {
+      const designAc = beginOperation({ owner: caller, mutates: true })
+      try {
+        return await runInOperation(designAc, () => designWiring!.runTool(name, args))
+      } finally {
+        endOperation(designAc)
+      }
+    }
     if (name === 'resume_tab') {
       try {
         const targetId = collaboration.resolveTab(
@@ -1775,6 +1787,21 @@ async function start(): Promise<void> {
   )
   parallelRunnerRef = parallelRunner
   ipcMain.handle('agent:parallel-running', () => parallelRunner.runningIds())
+
+  // 设计画布：接线集中到 design-wiring（服务/IPC/画布消息/agent 工具）
+  designWiring = createDesignWiring({
+    win: () => win,
+    log: logLine,
+    caller: () => currentCaller(),
+    openCanvas: () => {
+      if (!tabs) return null
+      tabs.setCanvasSource(
+        path.join(app.getAppPath(), 'out', 'preload', 'canvas.cjs'),
+        path.join(app.getAppPath(), 'out', 'canvas', 'index.html')
+      )
+      return tabs.createCanvasTab()?.view.webContents ?? null
+    }
+  })
 
   httpServer = await startHttpServer({
     token: TOKEN,
@@ -2082,6 +2109,8 @@ function createWindow(): void {
   win.on('closed', () => {
     // macOS keeps the app resident after the window closes; drop the window and
     // its tab manager so a later `activate` can rebuild both cleanly.
+    designWiring?.dispose()
+    designWiring = null
     const oldTabs = tabs
     win = null
     tabs = null

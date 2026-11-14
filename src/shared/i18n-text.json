@@ -95,7 +95,10 @@
     "打开 AI 面板",
     "Open AI panel"
   ],
-  "toolbar.annotate": [
+    "toolbar.design": [
+    "设计",
+    "Design"
+  ],"toolbar.annotate": [
     "标注",
     "Annotate"
   ],

@@ -291,6 +291,8 @@ const api = {
   agentReset: () => ipcRenderer.invoke('agent:reset') as Promise<unknown>,
   agentNewSession: () => ipcRenderer.invoke('agent:new-session') as Promise<unknown>,
   agentSessions: () => ipcRenderer.invoke('agent:sessions') as Promise<unknown>,
+  /** 打开设计画布标签（本地页面，不随网页导航）。 */
+  designOpenCanvas: () => ipcRenderer.invoke('design:open-canvas') as Promise<{ ok: boolean; tabId?: number; error?: string }>,
   agentSwitchSession: (id: string) =>
     ipcRenderer.invoke('agent:switch-session', id) as Promise<{ ok: boolean; error?: string }>,
   agentDeleteSession: (id: string) =>

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Duplex · 设计画布</title>
+    <!--
+      设计画布（纯前端壳，由主进程用 file:// 载入 WebContentsView）。
+      不加载任何外部资源：无外链字体 / 图片 / 脚本，也不访问网络。
+    -->
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="canvas-app" id="app">
+      <header class="toolbar" id="toolbar"></header>
+
+      <div class="workspace">
+        <div class="canvas-area" id="canvas-area">
+          <div class="variants" id="variants" hidden></div>
+
+          <div class="stage-wrap" id="stage-wrap">
+            <div class="stage" id="stage">
+              <div class="page-box" id="page-box">
+                <div class="canvas-page" id="page"></div>
+              </div>
+              <div class="overlay" id="overlay" aria-hidden="true"></div>
+            </div>
+            <div class="canvas-waiting" id="canvas-waiting">等待宿主推送设计文档…</div>
+            <div class="toast" id="toast" hidden></div>
+          </div>
+        </div>
+
+        <aside class="inspector" id="inspector"></aside>
+      </div>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

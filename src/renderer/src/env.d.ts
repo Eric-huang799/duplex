@@ -148,6 +148,7 @@ interface CobrowseApi {
   agentReset(): Promise<unknown>
   agentNewSession(): Promise<{ ok: boolean; error?: string }>
   agentSessions(): Promise<Array<{ id: string; title: string; updatedAt: number; current: boolean }>>
+  designOpenCanvas(): Promise<{ ok: boolean; tabId?: number; error?: string }>
   /** 并行内置会话：启动一个后台会话（不打断当前对话）。 */
   agentParallelStart(
     text: string,
