@@ -7,12 +7,12 @@
     "source": "github",
     "subfolder": "npm/duplex-bridge"
   },
-  "version": "0.3.0-beta.1",
+  "version": "0.3.0-beta.2",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "duplex-bridge",
-      "version": "0.3.0-beta.1",
+      "version": "0.3.0-beta.2",
       "transport": {
         "type": "stdio"
       }

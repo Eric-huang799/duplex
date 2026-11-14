@@ -1,5 +1,8 @@
 # Duplex
 
+> [!WARNING]
+> **不稳定调试版（0.3.0-beta.2）。** 这次合入的多 agent 能力——共用标签仲裁、按 agent 隔离的站点授权、按 agent 命名的元素 ref、以及并行的内置会话——**仍在调试中**。请预期粗糙的边角、随时变化的行为和尚未完成的界面，不要把它当作日常浏览器使用。日常可用版本仍是 **v0.2.10**。欢迎反馈 issue 与可复现的失败。
+
 [![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
 [![Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex/badges/score.svg)](https://glama.ai/mcp/servers/Eric-huang799/duplex)
 [![awesome-mcp-servers](https://img.shields.io/badge/awesome--mcp--servers-listed-blue)](https://github.com/punkpeye/awesome-mcp-servers)

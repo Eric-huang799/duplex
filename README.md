@@ -1,5 +1,8 @@
 # Duplex
 
+> [!WARNING]
+> **Unstable debugging build (0.3.0-beta.2).** The multi-agent work merged here — shared-tab arbitration, per-agent consent, per-agent element refs and parallel built-in sessions — is still under active debugging. Expect rough edges, changing behaviour and unfinished UI; do not use this build as your daily browser. The last release for everyday use is **v0.2.10**. Issues and reproducible failures are welcome.
+
 [![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
 [![Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex/badges/score.svg)](https://glama.ai/mcp/servers/Eric-huang799/duplex)
 [![awesome-mcp-servers](https://img.shields.io/badge/awesome--mcp--servers-listed-blue)](https://github.com/punkpeye/awesome-mcp-servers)

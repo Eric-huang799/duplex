@@ -25,7 +25,7 @@ import type { EndpointInfo } from '../shared/protocol'
 
 declare const __dirname: string
 
-const VERSION = '0.3.0-beta.1'
+const VERSION = '0.3.0-beta.2'
 const CALLER_ID = bridgeCallerId({ dataDir: cobrowseDir() })
 
 /**
