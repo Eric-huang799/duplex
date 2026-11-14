@@ -44,6 +44,8 @@ export interface Tab {
   audioPlaying?: boolean
   /** In-memory session (no persistence, no history recording). */
   incognito?: boolean
+  /** 设计画布标签：由我们自己的本地页面提供，不允许导航离开。 */
+  canvas?: boolean
 }
 
 /** A tab URL remembered for the "recently closed" list. */
@@ -60,6 +62,9 @@ export class TabManager {
   private chromeOverlays = new Set<string>()
   private bounds: ContentBounds = { x: 0, y: 88, width: 1200, height: 760 }
   private watchdog: ReturnType<typeof setInterval> | null = null
+  /** 设计画布：preload 与页面路径由主进程注入（避免构造函数加参数）。 */
+  private canvasPreload: string | null = null
+  private canvasHtml: string | null = null
   private shortcutsMap: Record<ShortcutAction, string> = { ...DEFAULT_SHORTCUTS }
 
   constructor(
@@ -178,6 +183,50 @@ export class TabManager {
     void view.webContents.loadURL(target)
     this.emit()
     return tab
+  }
+
+  /** 注入设计画布的 preload 与页面（构建产物路径由主进程决定）。 */
+  setCanvasSource(preload: string | null, html: string | null): void {
+    this.canvasPreload = preload
+    this.canvasHtml = html
+  }
+
+  /**
+   * 打开设计画布标签。
+   *
+   * 与普通标签的区别：用**专用 preload**（只暴露画布桥）、直接 loadFile 自己的页面、
+   * 并且**禁止任何后续导航**——agent 或页面都不能把这个标签变成别的网页。
+   */
+  createCanvasTab(): Tab | null {
+    if (!this.canvasPreload || !this.canvasHtml) return null
+    const view = new WebContentsView({
+      webPreferences: {
+        partition: 'persist:cobrowse',
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+        spellcheck: false,
+        preload: this.canvasPreload
+      }
+    })
+    const tab: Tab = { id: this.nextId++, view, logs: [], audioPlaying: false, canvas: true }
+    this.tabs.set(tab.id, tab)
+    this.win.contentView.addChildView(view)
+    view.setBounds(this.bounds)
+    view.setVisible(false)
+    this.wireEvents(tab)
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    view.webContents.on('will-navigate', (event) => event.preventDefault())
+    void view.webContents.loadFile(this.canvasHtml)
+    this.setActive(tab.id)
+    this.emit()
+    return tab
+  }
+
+  /** 是否是设计画布标签。 */
+  isCanvasTab(tabId: number | null | undefined): boolean {
+    return tabId != null && this.tabs.get(tabId)?.canvas === true
   }
 
   /** Resolve a keyboard event to a configured shortcut action, if any. */

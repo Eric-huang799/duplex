@@ -303,6 +303,62 @@ export const toolDefs: ToolDef[] = [
     internal: true
   },
   {
+    name: 'design_open',
+    description:
+      'Open (or create) a design project in the in-app design canvas and return its outline summary. The canvas is a page you own: every node has a stable id which is also written to data-did, so you can address elements precisely across turns.',
+    input: {
+      projectId: z.string().optional().describe('Project id (default: the currently open project)'),
+      name: z.string().optional().describe('Display name for a new project')
+    },
+  },
+  {
+    name: 'design_read',
+    description:
+      'Read the design document outline: node ids, types, text, locked flags and the design frame. Use ids from here for design_patch; never invent ids.',
+    input: {
+      projectId: z.string().optional(),
+      rootId: z.string().optional().describe('Only this subtree'),
+      maxDepth: z.number().optional().describe('Limit depth (default 6)')
+    },
+  },
+  {
+    name: 'design_patch',
+    description:
+      'Apply design patches (insert / replace / remove / update / move / token). This is the only way to modify the canvas. Nodes locked by the user reject your operations; if a patch is rejected, explain the conflict instead of retrying blindly.',
+    input: {
+      projectId: z.string().optional(),
+      ops: z
+        .array(z.record(z.string(), z.unknown()))
+        .describe(
+          'Patch ops, e.g. {"op":"insert","parentId":"root","node":{"id":"hero","type":"box","children":[]}}, {"op":"update","targetId":"t1","patch":{"text":"新标题"}}, {"op":"token","name":"color","key":"brand.primary","value":"#2f6fed"}'
+        )
+    },
+  },
+  {
+    name: 'design_variants',
+    description:
+      'Offer 2–3 alternative options for one block and let the designer pick side by side in the canvas. Each option is a full replacement node for that block; the chosen one is applied, the others stay available in the document.',
+    input: {
+      blockId: z.string().describe('Node id of the block being re-designed'),
+      options: z.array(z.record(z.string(), z.unknown())).describe('2–3 replacement DesignNode objects')
+    }
+  },
+  {
+    name: 'design_commit',
+    description:
+      'Commit the current design round to its git history (one commit per round) and return the commit hash. Summarize what changed in one line so the designer can find it later.',
+    input: {
+      projectId: z.string().optional(),
+      summary: z.string().describe('One-line summary of this round')
+    },
+  },
+  {
+    name: 'design_export',
+    description:
+      'Export the current design as a zip (git archive of the latest committed round) and return the absolute path.',
+    input: { projectId: z.string().optional() },
+  },
+  {
     name: 'list_site_permissions',
     description:
       'List the per-site permission allowlist: global category overrides plus every origin rule with its source (user or agent) and last update time. Read this before changing anything, so you know what the user already decided.',

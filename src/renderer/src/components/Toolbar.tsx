@@ -595,6 +595,15 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           }}
         ><Icon name="more" /></button>
       </div>
+      <button
+        className="tb-btn"
+        title={t('toolbar.design')}
+        onClick={() => {
+          void window.cobrowse.designOpenCanvas()
+        }}
+      >
+        ✦ {t('toolbar.design')}
+      </button>
       {showAnnotationToggle && (
         <button
           className={`tb-btn annotation-toggle ${annotationActive ? 'selected' : ''}`}
