@@ -54,6 +54,8 @@ function boot(): void {
   let host: CanvasHost | null = null
   let demoHost: DemoHost | null = null
   let viewportWidth = doc.frame.width
+  /** 上一次真正上报给宿主的宽度（滑杆 input 阶段不发消息，change 时对比这里） */
+  let committedViewportWidth = doc.frame.width
   let zoom = 1
   let scale = 1
   let toastTimer = 0
@@ -123,14 +125,15 @@ function boot(): void {
     toolbar.setViewport(viewportWidth, zoom, nextScale)
     interact.refresh()
     inspector.refresh()
-    if (commit) send({ type: 'viewport', width: viewportWidth })
+    if (commit && viewportWidth !== committedViewportWidth) {
+      committedViewportWidth = viewportWidth
+      send({ type: 'viewport', width: viewportWidth })
+    }
   }
 
   function setViewportWidth(width: number, commit: boolean): void {
-    const next = clampViewportWidth(width)
-    const changed = next !== viewportWidth
-    viewportWidth = next
-    applyViewport(commit && changed)
+    viewportWidth = clampViewportWidth(width)
+    applyViewport(commit)
   }
 
   function cycleZoomAction(): void {

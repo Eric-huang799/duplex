@@ -3,7 +3,18 @@
  * data-did、类型、文本、锁定开关、创建来源与相关约束。
  *
  * 所有修改都只发 `user-update` / `lock` 意图，**不改文档**——宿主负责转成约束/ patch。
+ *
+ * 坐标口径（与 interact.ts 一致）：屏幕量到的是**预览空间**，文档存的是**设计帧坐标**；
+ * 显示与微调都要经 toFrame() 换算，否则在 390 预览里微调 1px 会存成 3.69 帧 px。
  */
+
+/** 检视器字段名 → 文档 placement 键（渲染器只认 x/y/w/h）。 */
+const PLACEMENT_KEY: Record<'x' | 'y' | 'width' | 'height', 'x' | 'y' | 'w' | 'h'> = {
+  x: 'x',
+  y: 'y',
+  width: 'w',
+  height: 'h'
+}
 
 import {
   findNode,
@@ -253,13 +264,23 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
     deps.toast('已发送文本修改（由宿主转换）')
   }
 
+  /**
+   * 预览布局 px → 设计帧 px（与 interact.ts 的 frameScaleFactor 同一口径）。
+   * 检视器显示的 x/y/宽/高必须是帧坐标，否则在 390 预览里微调会存成错误的值。
+   */
+  function toFrame(value: number): number {
+    const doc = deps.getDoc()
+    const viewport = Math.max(1, deps.getViewportWidth())
+    const frameWidth = doc?.frame.width ?? viewport
+    return value * (frameWidth / viewport)
+  }
   function nudgeField(field: FieldKey, direction: 1 | -1, shift: boolean): void {
     const doc = deps.getDoc()
     const id = deps.getSelectedId()
     if (!doc || !id) return
     const rect = deps.measureLayoutRect(id)
     if (!rect) return
-    const current = Math.round(rect[field])
+    const current = Math.round(toFrame(rect[field]))
     const min = field === 'width' || field === 'height' ? 1 : Number.NEGATIVE_INFINITY
     const next = Math.round(nudgeNumber(current, direction, shift ? 10 : 1, min))
     if (next === current) return
@@ -267,7 +288,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
     deps.send({
       type: 'user-update',
       id,
-      patch: { [field]: next, frameWidth: deps.getViewportWidth() }
+      patch: { [PLACEMENT_KEY[field]]: String(next), frameWidth: deps.getDoc()?.frame.width ?? deps.getViewportWidth() }
     })
     deps.toast(`${FIELD_LABELS[field]} ${next}px（已发送给宿主）`)
     refresh()
@@ -358,7 +379,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
         continue
       }
       button.disabled = false
-      const raw = pendingNudge?.id === id && pendingNudge.field === key ? pendingNudge.value : rect[key]
+      const raw = pendingNudge?.id === id && pendingNudge.field === key ? pendingNudge.value : toFrame(rect[key])
       const rounded = Math.round(raw)
       setText(valueEl, formatPx(rounded))
       button.setAttribute('aria-valuenow', String(rounded))

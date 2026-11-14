@@ -14,6 +14,8 @@ export type CanvasToHost =
       id: string
       anchor: string
       target: { x: number; y: number }
+      /** 拖动前节点的包围盒（设计帧坐标）；主进程用 moveDelta 算落点 */
+      rect?: { x: number; y: number; width: number; height: number }
       frameWidth: number
     }
   | {

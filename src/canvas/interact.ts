@@ -51,7 +51,7 @@ const DRAG_THRESHOLD = 4
 const SNAP_DOT_RANGE = 140
 const SNAP_DOT_LIMIT = 24
 const LOUPE_SIZE = 200
-const LOUPE_ZOOM = 2.4
+const LOUPE_ZOOM = 1.8
 const REMOTE_CURSOR_TTL = 4000
 const CANVAS_UI = '[data-canvas-ui]'
 
@@ -239,6 +239,18 @@ export function createInteract(deps: InteractDeps): InteractHandle {
     return screenToLayout(point, pageOrigin(), scale())
   }
 
+  /**
+   * 预览布局坐标 → 设计帧坐标。
+   *
+   * 画布把文档按 `--frame-scale = 预览宽 / 帧宽` 缩放渲染，所以屏幕量到的布局 px
+   * 属于**预览空间**；而 `style.x/y`、约束里的坐标一律存**设计帧坐标**。
+   * 所有发往宿主/检视器的坐标都在这里统一换算，避免在 390/834 预览下二次缩放。
+   */
+  function frameScaleFactor(): number {
+    const doc = deps.getDoc()
+    const viewport = Math.max(1, deps.getViewportWidth())
+    return (doc?.frame.width ?? viewport) / viewport
+  }
   function rectOf(id: string): Rect | null {
     const element = deps.getRender()?.get(id)
     if (!element) return null
@@ -487,13 +499,21 @@ export function createInteract(deps: InteractDeps): InteractHandle {
         width: Math.round(currentRect.width * 100) / 100,
         height: Math.round(currentRect.height * 100) / 100
       }
+      const k = frameScaleFactor()
+      const frameTarget = { x: Math.round(target.x * k), y: Math.round(target.y * k) }
+      const frameRect = {
+        x: Math.round(rect.x * k * 100) / 100,
+        y: Math.round(rect.y * k * 100) / 100,
+        width: Math.round(rect.width * k * 100) / 100,
+        height: Math.round(rect.height * k * 100) / 100
+      }
       deps.send({
         type: 'user-move',
         id: drag.id,
         anchor: 'center',
-        target,
-        frameWidth: deps.getViewportWidth(),
-        rect
+        target: frameTarget,
+        frameWidth: deps.getDoc()?.frame.width ?? deps.getViewportWidth(),
+        rect: frameRect
       })
       deps.toast(
         `已发送移动意图：${drag.id} → (${target.x}, ${target.y})，由宿主转成约束/patch`
@@ -598,12 +618,13 @@ export function createInteract(deps: InteractDeps): InteractHandle {
   function confirmLocate(): void {
     if (!locate) return
     const pending = locate
+    const k = frameScaleFactor()
     deps.send({
       type: 'user-locate',
       targetId: pending.targetId,
       anchor: pending.anchor,
-      point: { x: Math.round(pending.point.x), y: Math.round(pending.point.y) },
-      frameWidth: deps.getViewportWidth()
+      point: { x: Math.round(pending.point.x * k), y: Math.round(pending.point.y * k) },
+      frameWidth: deps.getDoc()?.frame.width ?? deps.getViewportWidth()
     })
     deps.toast(
       `已发送定位意图：${pending.targetId} · ${pending.anchor} · (${Math.round(pending.point.x)}, ${Math.round(pending.point.y)})`
@@ -745,6 +766,13 @@ export function createInteract(deps: InteractDeps): InteractHandle {
     })
     clone.setAttribute('aria-hidden', 'true')
     clone.style.pointerEvents = 'none'
+    // 克隆体不是画布节点：去掉会与真实节点重名的 data-* 标记，
+    // 避免外部脚本（或测试）按 data-did 查询时命中两份。
+    const markers = ['data-did', 'data-node', 'data-type', 'data-locked', 'data-edited']
+    for (const marker of markers) clone.removeAttribute(marker)
+    clone.querySelectorAll<HTMLElement>(markers.join(', ')).forEach((element) => {
+      for (const marker of markers) element.removeAttribute(marker)
+    })
     // 克隆体脱离原来的包含块：把自身定位钉回 holder 原点，否则帧内绝对定位的
     // 节点会带着自己的 left/top 跑出镜框（放大镜里只剩一片背景色）。
     clone.style.position = 'absolute'
@@ -965,6 +993,8 @@ export function createInteract(deps: InteractDeps): InteractHandle {
   function refresh(): void {
     snapBaseCache = null
     loupeCache = null
+    // 克隆是按旧文档/旧缩放做的：先藏起来，等下一次鼠标移动重建
+    if (loupeOn) setHidden(loupe, true)
     const render = deps.getRender()
     if (!render) return
     if (selectedId) {

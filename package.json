@@ -10,7 +10,7 @@
     "dev:canvas": "vite --config vite.canvas.config.ts",
     "build": "electron-vite build && vite build --config vite.canvas.config.ts",
     "start": "electron-vite preview",
-    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p src/canvas/tsconfig.json --noEmit",
     "build:bridge": "esbuild src/mcp-bridge/index.ts --bundle --platform=node --format=cjs --outfile=dist-bridge/index.cjs --external:electron --banner:js=\"#!/usr/bin/env node\"",
     "bridge": "node dist-bridge/index.cjs",
     "test": "vitest run",
