@@ -112,3 +112,18 @@ agent 与用户都走 `applyPatch`。撤销 = 反向 patch，不依赖 git；git
 2. 变体缩略图改为真实渲染（复用 `renderDocument` 到小尺寸容器）。
 3. 画布输出"可交付"导出：生成 `index.html` + `styles.css`（token → CSS 变量），不再只导出 design.json + zip。
 4. 多 agent 光标接到画布：agent patch 时按目标节点位置驱动光标（现在光标层只在普通页面可用）。
+
+## 画布快捷键
+
+| 键 | 行为 |
+| --- | --- |
+| `Ctrl/Cmd + C` / `X` / `V` | 复制 / 剪切 / 粘贴（粘贴的节点 id 全部重编号；帧内绝对定位节点偏移 16px） |
+| `Ctrl/Cmd + D` | 再制一份并选中副本 |
+| `Ctrl/Cmd + Z` | 撤销（反向 patch，不依赖 git） |
+| `Ctrl/Cmd + Shift + Z` / `Ctrl + Y` | 重做 |
+| `Delete` / `Backspace` | 删除选中节点 |
+| 方向键 | 微调 1px（`Shift` 10px），写入 `style.x/y`（帧坐标） |
+| `Esc` | 取消选择 / 退出定位、测量、变体 |
+| `M` / `R` / `Z` | 放大镜 / 测量 / 整体缩放 |
+
+实现要点：快捷键只发**意图**（`user-ops` / `undo` / `redo` / `select`），文档仍由主进程改；在输入框里打字不拦截；粘贴的节点不继承锁定标记。撤销/重做**只有一条处理路径**——早期画布内置的 Ctrl+Z 与新增处理器重复触发过，导致一次按键撤销两步、重做栈被清空，已合并。

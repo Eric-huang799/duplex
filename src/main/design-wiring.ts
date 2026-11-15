@@ -58,6 +58,8 @@ export interface DesignWiring {
   canvasContents: () => WebContents | null
   /** agent 工具入口（design_open / design_read / design_patch / design_commit / design_export）。 */
   runTool: (name: string, args: Record<string, unknown>) => Promise<ToolResult>
+  /** 画布上的撤销/重做（菜单快捷键由主进程拦截后调用这里）。 */
+  shortcut: (action: 'undo' | 'redo') => void
   dispose: () => void
 }
 
@@ -291,6 +293,12 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
           deps.log(`[design] 用户${locked ? '锁定' : '解锁'}了 ${id}`)
           return
         }
+        case 'user-ops': {
+          const ops = Array.isArray(message['ops']) ? (message['ops'] as PatchOp[]) : []
+          if (ops.length === 0) return
+          apply('user', ops, { allowLocked: true })
+          return
+        }
         case 'variant-choose': {
           const blockId = String(message['blockId'] ?? '')
           const index = Number(message['index'] ?? -1)
@@ -301,14 +309,19 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
         }
         case 'undo': {
           if (service.undo()) {
-            sendDocument(service.current())
+            const doc = service.current()
+            // 撤销不能把画布撤成空白：空文档没有任何可操作对象，看起来就像"坏了"
+            if ((doc.root.children ?? []).length === 0) ensureStarter()
+            else sendDocument(doc)
             sendState()
           }
           return
         }
         case 'redo': {
           if (service.redo()) {
-            sendDocument(service.current())
+            const doc = service.current()
+            if ((doc.root.children ?? []).length === 0) ensureStarter()
+            else sendDocument(doc)
             sendState()
           }
           return
@@ -486,10 +499,23 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     return { ok: true }
   })
 
+  const shortcut = (action: 'undo' | 'redo'): void => {
+    const changed = action === 'undo' ? service.undo() : service.redo()
+    deps.log(
+      `[design] shortcut ${action} changed=${changed} canUndo=${service.canUndo()} canRedo=${service.canRedo()}`
+    )
+    if (!changed) return
+    const doc = service.current()
+    if ((doc.root.children ?? []).length === 0) ensureStarter()
+    else sendDocument(doc)
+    sendState()
+  }
+
   return {
     service,
     canvasContents: () => canvas,
     runTool,
+    shortcut,
     dispose: () => {
       disposeIpc()
       ipcMain.removeAllListeners('design:canvas-ready')

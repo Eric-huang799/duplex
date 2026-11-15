@@ -65,6 +65,8 @@ export class TabManager {
   /** 设计画布：preload 与页面路径由主进程注入（避免构造函数加参数）。 */
   private canvasPreload: string | null = null
   private canvasHtml: string | null = null
+  /** 画布快捷键（撤销/重做）由主进程处理：菜单角色会截走 Ctrl+Z，页面收不到。 */
+  private canvasShortcut: ((action: 'undo' | 'redo') => void) | null = null
   private shortcutsMap: Record<ShortcutAction, string> = { ...DEFAULT_SHORTCUTS }
 
   constructor(
@@ -218,6 +220,18 @@ export class TabManager {
     this.wireEvents(tab)
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     view.webContents.on('will-navigate', (event) => event.preventDefault())
+    // Ctrl/Cmd+Z / Shift+Z / Y 在画布上必须走设计服务的撤销，而不是 Chromium 的 DOM undo：
+    // 后者只回滚页面节点、不回滚文档，会出现"撤销后节点还在、选中没了"的不一致。
+    view.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.isAutoRepeat) return
+      if (!(input.control || input.meta)) return
+      const key = input.key.toLowerCase()
+      if (key !== 'z' && key !== 'y') return
+      event.preventDefault()
+      // Electron 的 before-input-event 里 Shift+Z 可能只表现在大写 key 上，两个信号都认
+      const wantsRedo = key === 'y' || input.shift === true || input.key === 'Z' || input.key === 'Y'
+      this.canvasShortcut?.(wantsRedo ? 'redo' : 'undo')
+    })
     void view.webContents.loadFile(this.canvasHtml)
     this.setActive(tab.id)
     this.emit()
@@ -225,6 +239,11 @@ export class TabManager {
   }
 
   /** 是否是设计画布标签。 */
+  /** 注入画布的撤销/重做处理（由设计服务实现）。 */
+  setCanvasShortcutHandler(handler: ((action: 'undo' | 'redo') => void) | null): void {
+    this.canvasShortcut = handler
+  }
+
   isCanvasTab(tabId: number | null | undefined): boolean {
     return tabId != null && this.tabs.get(tabId)?.canvas === true
   }

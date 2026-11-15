@@ -26,6 +26,7 @@ export type CanvasToHost =
       frameWidth: number
     }
   | { type: 'user-update'; id: string; patch: Record<string, unknown> }
+  | { type: 'user-ops'; ops: Array<Record<string, unknown>> }
   | { type: 'lock'; id: string; locked: boolean }
   | { type: 'variant-choose'; blockId: string; index: number }
   | { type: 'viewport'; width: number }
@@ -39,6 +40,7 @@ const ALLOWED = new Set<CanvasToHost['type']>([
   'user-move',
   'user-locate',
   'user-update',
+  'user-ops',
   'lock',
   'variant-choose',
   'viewport',

@@ -28,6 +28,8 @@ export type OutboundMessage =
       frameWidth: number
     }
   | { type: 'user-update'; id: string; patch: Record<string, unknown> }
+  /** 用户批量操作（粘贴/复制/删除/方向键微调）：payload 走 allowLocked，agent 不可用 */
+  | { type: 'user-ops'; ops: PatchOp[] }
   | { type: 'lock'; id: string; locked: boolean }
   | { type: 'variant-choose'; blockId: string; index: number }
   | { type: 'viewport'; width: number }

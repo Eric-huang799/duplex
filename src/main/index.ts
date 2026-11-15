@@ -1795,6 +1795,9 @@ async function start(): Promise<void> {
     caller: () => currentCaller(),
     openCanvas: () => {
       if (!tabs) return null
+      // 画布标签的 Ctrl+Z / Shift+Z / Y 由主进程拦截并交给设计服务。
+      // 必须在这里注入：createDesignWiring 执行时 tabs 还没创建（httpServer 早于 TabManager）。
+      tabs.setCanvasShortcutHandler((action) => designWiring?.shortcut(action))
       tabs.setCanvasSource(
         path.join(app.getAppPath(), 'out', 'preload', 'canvas.cjs'),
         path.join(app.getAppPath(), 'out', 'canvas', 'index.html')

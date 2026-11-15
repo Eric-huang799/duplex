@@ -5,7 +5,7 @@
  * 所有跨进程通信都走 `window.canvasHost`（见 host.ts 的契约）。
  */
 
-import { emptyDocument, type DesignDocument, type Rect } from '../shared/design/model'
+import { emptyDocument, findNode, type DesignDocument, type Rect } from '../shared/design/model'
 import { on, setText, toRect } from './dom'
 import {
   clampViewportWidth,
@@ -21,6 +21,7 @@ import {
   type CanvasRender
 } from './render'
 import { createInteract, type CanvasMode } from './interact'
+import { installShortcuts } from './shortcuts'
 import { createInspector } from './inspector'
 import { createToolbar } from './toolbar'
 import { createVariants } from './variants'
@@ -147,6 +148,13 @@ function boot(): void {
       console.warn('[canvas] document 消息不完整，已忽略', next)
       return
     }
+    // 整页重渲会丢掉选择：记住它，重渲后若节点还在就恢复（撤销/重做后最明显）
+    let previousSelection: string | null = null
+    try {
+      previousSelection = interact.getSelectedId()
+    } catch {
+      /* 首次挂载时 interact 还没创建 */
+    }
     doc = next
     waitingEl.hidden = true
     try {
@@ -158,11 +166,13 @@ function boot(): void {
     }
     applyViewport(false)
     interact.refresh()
+    if (previousSelection && findNode(doc.root, previousSelection)) {
+      interact.select(previousSelection)
+    }
     inspector.refresh()
   }
 
-  function applyPatchMessage(message: Extract<InboundMessage, { type: 'patch' }>): void {
-    if (!Array.isArray(message.ops) || !message.doc) {
+  function applyPatchMessage(message: Extract<InboundMessage, { type: 'patch' }>): void {    if (!Array.isArray(message.ops) || !message.doc) {
       console.warn('[canvas] patch 消息缺少 ops/doc，已忽略（契约要求两者都带）', message)
       return
     }
@@ -237,6 +247,16 @@ function boot(): void {
     toast
   })
 
+  // 快捷键：复制/剪切/粘贴/再制、删除、撤销重做、方向键微调、Esc 取消选择
+  const shortcuts = installShortcuts({
+    getDoc: () => doc,
+    getSelectedId: () => interact.getSelectedId(),
+    select: (id) => interact.select(id),
+    send,
+    toast
+  })
+  window.addEventListener('beforeunload', () => shortcuts.dispose(), { once: true })
+
   const toolbar = createToolbar({
     root: toolbarEl,
     send,
@@ -309,11 +329,7 @@ function boot(): void {
     const key = event.key
     const lower = key.toLowerCase()
 
-    if ((event.ctrlKey || event.metaKey) && lower === 'z') {
-      event.preventDefault()
-      send({ type: event.shiftKey ? 'redo' : 'undo' })
-      return
-    }
+    // Ctrl/Cmd+Z / Shift+Z / Y 由 shortcuts.ts 统一处理（避免同一按键触发两次撤销）
     if (event.ctrlKey || event.metaKey || event.altKey) return
 
     if (isEditableTarget(event.target)) {

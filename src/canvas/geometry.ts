@@ -581,3 +581,46 @@ export function parseFrameLength(value: string): number | null {
   const parsed = Number(match[1])
   return Number.isFinite(parsed) ? parsed : null
 }
+
+/** 生成不与现有 id 冲突的新 id：`hero` → `hero-copy`、`hero-copy2`… */
+export function uniqueNodeId(base: string, existing: ReadonlySet<string>): string {
+  if (!existing.has(base)) return base
+  const stem = base.replace(/-copy\d*$/, '') || base
+  let index = 1
+  let candidate = `${stem}-copy`
+  while (existing.has(candidate)) {
+    index += 1
+    candidate = `${stem}-copy${index}`
+  }
+  return candidate
+}
+
+/**
+ * 为粘贴/复制的节点生成新 id（整棵子树），并给帧内绝对定位的节点加一点偏移，
+ * 避免复制后完全重叠、用户以为"没反应"。
+ */
+export function cloneNodeForPaste(
+  node: DesignNode,
+  existing: ReadonlySet<string>,
+  offset = 16
+): { node: DesignNode; existing: Set<string> } {
+  const used = new Set(existing)
+  const walk = (source: DesignNode): DesignNode => {
+    const id = uniqueNodeId(source.id, used)
+    used.add(id)
+    const style = source.style ? { ...source.style } : undefined
+    if (style && (style['x'] !== undefined || style['y'] !== undefined)) {
+      const shift = (value: unknown): string => String(Math.round(Number(value) || 0) + offset)
+      if (style['x'] !== undefined) style['x'] = shift(style['x'])
+      if (style['y'] !== undefined) style['y'] = shift(style['y'])
+    }
+    return {
+      ...source,
+      id,
+      ...(style ? { style } : {}),
+      ...(source.children ? { children: source.children.map(walk) } : {}),
+      meta: { ...(source.meta ?? {}), editedByUser: true }
+    }
+  }
+  return { node: walk(node), existing: used }
+}
