@@ -11,6 +11,7 @@
  *  - 文本做 HTML 转义，不输出任何脚本。
  */
 import type { DesignDocument, DesignNode, StyleTokenRef } from './model'
+import { resolveTokenExpression, tokenVarName } from './style'
 
 const TAG_OF: Record<DesignNode['type'], string> = {
   page: 'main',
@@ -34,47 +35,11 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function cssVarName(group: string, key: string): string {
-  return `--${group}-${key}`.replace(/[^A-Za-z0-9-]/g, '-').toLowerCase()
-}
-
-/** 文档里的令牌名 → CSS 变量（`brand.primary` → `var(--color-brand-primary)`）。 */
-function tokenVarMap(doc: DesignDocument): Map<string, string> {
-  const map = new Map<string, string>()
-  for (const group of TOKEN_GROUPS) {
-    for (const key of Object.keys(doc.tokens[group])) {
-      const cssVar = `var(${cssVarName(group, key)})`
-      map.set(`${group}.${key}`, cssVar)
-      // 画布里的写法省略分组名（`brand.primary` 而不是 `color.brand.primary`），
-      // 所以短名也要能解析；只有不冲突时才登记。
-      if (!map.has(key)) map.set(key, cssVar)
-    }
-  }
-  return map
-}
-
-/**
- * 样式值 → CSS 值。
- *
- * 画布里 `style` 的写法是"直接写令牌名"（例如 `background: 'brand.primary'`、
- * `border: '1px solid line.soft'`），所以导出时要把**整串**或**串里出现的令牌名**
- * 换成 CSS 变量，否则导出页面会带着 `brand.primary` 这种非法值。
- */
+/** 样式值 → CSS 值：与画布共用一份令牌解析（shared/design/style.ts），导出用 var 模式。 */
 function resolveValue(doc: DesignDocument, value: StyleTokenRef | string | undefined): string | undefined {
   if (value === undefined) return undefined
-  if (typeof value !== 'string') {
-    if (!value.token) return value.value
-    const [group, ...rest] = value.token.split('.')
-    const vars = tokenVarMap(doc)
-    const resolved = vars.get(value.token)
-    if (resolved) return resolved
-    return rest.length > 0 ? value.value : `var(${cssVarName(group, rest.join('-'))})`
-  }
-  const vars = tokenVarMap(doc)
-  const trimmed = value.trim()
-  const direct = vars.get(trimmed)
-  if (direct) return direct
-  return value.replace(/\b([a-z]+(?:\.[a-z0-9-]+)+)\b/gi, (match) => vars.get(match) ?? match)
+  const resolved = resolveTokenExpression(doc.tokens, value, 'var')
+  return resolved === '' ? undefined : resolved
 }
 
 function nodeClass(node: DesignNode): string {
@@ -105,7 +70,7 @@ function renderTokens(doc: DesignDocument): string {
   const lines: string[] = []
   for (const group of TOKEN_GROUPS) {
     for (const [key, value] of Object.entries(doc.tokens[group])) {
-      lines.push(`  ${cssVarName(group, key)}: ${value};`)
+      lines.push(`  ${tokenVarName(group, key)}: ${value};`)
     }
   }
   return lines.join('\n')

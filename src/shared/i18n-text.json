@@ -2752,6 +2752,14 @@
     "AI 已获准访问的站点",
     "Sites the AI is allowed to visit"
   ],
+  "settings.trustMode": ["本会话：站点访问仍会逐次确认", "This session: site visits ask each time"],
+  "settings.trustModeOn": ["本会话：站点访问已全部放行", "This session: site visits are all allowed"],
+  "settings.trustModeEnable": ["本会话全部放行…", "Allow all this session…"],
+  "settings.trustModeOff": ["关闭全部放行", "Stop allowing all"],
+  "settings.trustModeHint": [
+    "需要你明确确认；只跳过询问，不绕过访问策略禁止的站点；重启后自动失效",
+    "Requires explicit confirmation; only skips asking, never overrides denied sites; resets on restart"
+  ],
   "settings.consentsHint": [
     "AI 第一次进入敏感站点前会问你；授权按「agent + 站点」分别记录，可随时撤销。",
     "The AI asks before entering a sensitive site; approvals are kept per agent and site, and can be revoked at any time."

@@ -28,6 +28,7 @@ import {
   type SnapResult,
   type StyleTokenRef
 } from '../shared/design/model'
+import { resolveTokenValue, tokenVarMap } from '../shared/design/style'
 
 // ---------------------------------------------------------------- 常量
 
@@ -360,37 +361,17 @@ function isTokenGroup(name: string): name is TokenGroup {
 export function resolveToken(tokens: DesignTokens, token: string): string | null {
   const name = token.trim()
   if (!name) return null
-  const dot = name.indexOf('.')
-  if (dot > 0) {
-    const group = name.slice(0, dot)
-    const key = name.slice(dot + 1)
-    if (isTokenGroup(group)) {
-      const value = tokens[group][key]
-      if (typeof value === 'string') return value
-    }
-  }
-  for (const group of TOKEN_GROUPS) {
-    const value = tokens[group][name]
-    if (typeof value === 'string') return value
-  }
-  return null
+  const value = resolveTokenValue(tokens, name)
+  // 共享解析器对未知令牌会原样返回；这里保持"查不到就是 null"的语义。
+  return value === name ? null : value
 }
 
 /** 解析 `DesignNode.style` 的一项：token 优先，`value` 作为回退。 */
 export function resolveStyleValue(tokens: DesignTokens, value: StyleTokenRef | string): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    return trimmed ? trimmed : null
-  }
-  if (typeof value.token === 'string') {
-    const resolved = resolveToken(tokens, value.token)
-    if (resolved !== null) return resolved
-  }
-  if (typeof value.value === 'string') {
-    const trimmed = value.value.trim()
-    return trimmed ? trimmed : null
-  }
-  return null
+  // 共享实现：既解析 token 引用，也会替换组合值里的令牌（如 `1px solid line.soft`）。
+  const resolved = resolveTokenValue(tokens, value)
+  const trimmed = resolved.trim()
+  return trimmed ? trimmed : null
 }
 
 /**

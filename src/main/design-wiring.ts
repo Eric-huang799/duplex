@@ -431,6 +431,8 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
       return text(lines.join('\n'))
     }
     if (name === 'design_patch') {
+      // agent 直接改文档时也要"看得见"：画布不在就顺手打开，避免用户对着空白等结果。
+      if (!canvas || canvas.isDestroyed()) canvas = deps.openCanvas()
       const raw = args['ops']
       if (!Array.isArray(raw)) return errorText('ops 必须是数组')
       const actor = deps.caller()

@@ -188,3 +188,27 @@ describe('SiteConsentStore', () => {
     ])
   })
 })
+
+describe('会话信任（一键放行）', () => {
+  it('默认关闭；开启后仅内存生效，重新打开实例即恢复关闭', async () => {
+    const { SiteConsentStore } = await import('../src/main/site-consent')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'consent-trust-'))
+    try {
+      const store = new SiteConsentStore(dir)
+      expect(store.isTrustedSession()).toBe(false)
+      expect(store.setTrustedSession(true)).toBe(true)
+      expect(store.isTrustedSession()).toBe(true)
+      // 新实例（相当于重启）不再信任
+      expect(new SiteConsentStore(dir).isTrustedSession()).toBe(false)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('关闭信任随时生效', () => {
+    const store = new SiteConsentStore(fs.mkdtempSync(path.join(os.tmpdir(), 'consent-trust-')))
+    store.setTrustedSession(true)
+    expect(store.setTrustedSession(false)).toBe(false)
+    expect(store.isTrustedSession()).toBe(false)
+  })
+})

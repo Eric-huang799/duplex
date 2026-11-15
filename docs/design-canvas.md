@@ -152,3 +152,29 @@ agent 与用户都走 `applyPatch`。撤销 = 反向 patch，不依赖 git；git
 ![导出的静态站点](screenshots/exported-site.png)
 
 实测：导出 `design-1-design-mwhcchwz.zip`，解包含 `.gitignore / design.json / site/index.html / site/styles.css`；用 Chrome 打开导出的 index.html，16 个 `data-did` 节点、hero 渐变、卡片顺序与画布一致。
+
+## 令牌解析：一份实现（画布 + 导出）
+
+`src/shared/design/style.ts` 是唯一的令牌解析器：
+
+- `resolveTokenValue()`：画布用，返回真实 CSS 值，**支持组合值里的令牌**（`1px solid line.soft` → `1px solid #e5e7eb`，这就是画布边框之前消失的原因）；
+- `resolveTokenExpression(mode:'var')`：导出用，返回 `var(--color-brand-primary)`，站点仍可通过 `:root` 覆盖；
+- 短名（`brand.primary`）只在不与其它分组冲突时才解析，避免 `space.4` / `radius.4` 撞车。
+
+画布 `geometry.ts`、`render.ts` 与 `export.ts` 都改为调用这一份；新增 4 条单测覆盖组合值、未知令牌、var 模式与短名。
+
+## agent 实时显示（补的是提示词，不是渲染）
+
+之前"让 agent 画网页它不显示"的根因不是渲染慢：内置 agent 的提示词里只有网页操作，没有设计画布工作流，所以它把"画网页"当成改 DOM / 写代码，根本没调 `design_open`。现在：
+
+- 系统提示词明确：做网页 → `design_open → design_read → design_patch`（画布实时显示）→ `design_commit` → `design_export`；不要用 `execute_script` 改画布 DOM，也不要拿空白网页标签冒充设计稿。
+- `design_patch` 在画布不存在时会**自动打开**画布标签；实测不点工具栏、只调 MCP `design_patch`，画布自动出现且新节点 1.2s 内可见。
+
+## 一键放行（会话信任模式）
+
+设置页「站点授权」区新增按钮（默认关闭）。打开时弹**原生确认框**（默认按钮是取消），确认后本会话内 AI 访问需要询问的站点不再逐次确认：
+
+- 只跳过"询问"，**不覆盖**访问策略判定为 deny 的站点；
+- 只存在于内存，重启即失效，可随时关闭；
+- 每次放行都写日志并进时间线，便于事后核对；
+- 不写入 `site-consent.json`，不会变成长期授权。

@@ -373,6 +373,12 @@ async function ensureAgentAccess(
     agentMayBrowseUnlisted: true
   })
   if (verdict.decision === 'allow') return { ok: true }
+  if (verdict.decision === 'need-consent' && siteConsent.isTrustedSession()) {
+    const trustedOrigin = accessOrigin(targetUrl) ?? targetUrl
+    logLine(`[consent] 信任模式放行 ${actor} 访问 ${trustedOrigin}（用户已在本会话选择全部放行）`)
+    timeline?.record({ kind: 'takeover', detail: `信任模式放行 ${actor} 访问 ${trustedOrigin}` })
+    return { ok: true }
+  }
   if (verdict.decision === 'deny') return { ok: false, error: `${verdict.reason ?? '拒绝访问'}。${DENIED_GUIDANCE}` }
 
   const origin = accessOrigin(targetUrl) ?? targetUrl
@@ -2952,6 +2958,33 @@ function setupIpc(): void {
     const result = siteConsent.revoke(actor, origin)
     if (result.removed) logLine(`[consent] 用户撤销了 ${actor} 对 ${origin} 的授权`)
     return result
+  })
+  ipcMain.handle('settings:consent-trust', () => ({ trusted: siteConsent?.isTrustedSession() ?? false }))
+  ipcMain.handle('settings:consent-trust-set', async (_event, enabled: unknown) => {
+    if (!siteConsent) return { ok: false, trusted: false }
+    if (enabled !== true) {
+      const trusted = siteConsent.setTrustedSession(false)
+      return { ok: true, trusted }
+    }
+    // 打开必须由用户在原生对话框里明确确认：默认按钮是"取消"，关闭对话框也算取消。
+    const choice = await dialog.showMessageBox(win!, {
+      type: 'warning',
+      title: '本会话全部放行',
+      message: '要让 AI 在本次运行里跳过站点访问确认吗？',
+      detail:
+        '这只会跳过"询问你"这一步，不会绕过访问策略里明令禁止的站点。\n\n' +
+        '风险：AI 可能在你没看到的情况下访问敏感站点（邮箱、支付、政务、医疗等）。\n' +
+        '关闭窗口或重启应用后自动失效，也可以随时在设置里关掉。',
+      buttons: ['取消', '我确认，本会话全部放行'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    })
+    if (choice.response !== 1) return { ok: false, trusted: false, canceled: true }
+    const trusted = siteConsent.setTrustedSession(true)
+    logLine('[consent] 用户开启了本会话全部放行')
+    timeline?.record({ kind: 'takeover', detail: '用户开启本会话全部放行（站点访问不再逐次确认）' })
+    return { ok: true, trusted }
   })
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })
   ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id))

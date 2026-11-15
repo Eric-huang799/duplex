@@ -59,6 +59,11 @@ export class SiteConsentStore {
   private logLine: (message: string) => void
   private always = new Map<string, ConsentEntry>()
   private session = new Map<string, ConsentEntry>()
+  /**
+   * 会话级"一键放行"：只影响本次运行，**不写入磁盘**。
+   * 它只能跳过"询问用户"，绝不能覆盖访问策略里的 deny（见 ensureAgentAccess）。
+   */
+  private trustedSession = false
 
   constructor(directory: string, log?: (message: string) => void) {
     this.file = path.join(directory, 'site-consent.json')
@@ -180,6 +185,20 @@ export class SiteConsentStore {
     const removedSession = this.session.delete(key)
     if (removedAlways) this.save()
     return { ok: true, removed: removedAlways || removedSession }
+  }
+
+  /** 本会话是否处于"全部放行"（内存态，重启即失效）。 */
+  isTrustedSession(): boolean {
+    return this.trustedSession
+  }
+
+  /** 打开/关闭会话信任。关闭随时生效，打开必须由调用方先取得用户明确确认。 */
+  setTrustedSession(on: boolean): boolean {
+    this.trustedSession = on === true
+    this.logLine(
+      `[consent] 会话信任模式：${this.trustedSession ? '开启（询问将被跳过）' : '关闭'}`
+    )
+    return this.trustedSession
   }
 
   clear(): void {

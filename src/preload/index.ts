@@ -121,6 +121,12 @@ const api = {
     origin: string
   ): Promise<{ ok: boolean; removed: boolean }> =>
     ipcRenderer.invoke('settings:consent-revoke', actor, origin),
+  settingsConsentTrust: (): Promise<{ trusted: boolean }> =>
+    ipcRenderer.invoke('settings:consent-trust'),
+  settingsSetConsentTrust: (
+    enabled: boolean
+  ): Promise<{ ok: boolean; trusted: boolean; canceled?: boolean }> =>
+    ipcRenderer.invoke('settings:consent-trust-set', enabled),
   // ── 关于与更新 ──────────────────────────────────────────────────────────
   appVersion: (): Promise<{ version: string; packaged: boolean }> => ipcRenderer.invoke('app:version'),
   updateStatus: (): Promise<{ state: string; version?: string; error?: string }> =>
