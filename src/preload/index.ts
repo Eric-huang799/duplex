@@ -444,6 +444,8 @@ const api = {
   emergencyTakeover: (): void => {
     ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'hotkey' })
   },
+  emergencyState: (): Promise<{ paused: boolean; pausedAt: number }> =>
+    ipcRenderer.invoke('emergency:state-get'),
   resumeAi: (): void => {
     ipcRenderer.send('emergency:resume')
   },

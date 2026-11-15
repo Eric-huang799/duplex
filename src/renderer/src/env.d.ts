@@ -290,6 +290,7 @@ interface CobrowseApi {
   emergencyKeysGet(): Promise<{ keys: string[] }>
   emergencyKeysSet(keys: string[]): Promise<{ ok: boolean; keys?: string[]; error?: string }>
   emergencyTakeover(): void
+  emergencyState(): Promise<{ paused: boolean; pausedAt: number }>
   resumeAi(): void
   onEmergencyState(cb: (s: { paused: boolean }) => void): () => void
   onEmergencyStop(

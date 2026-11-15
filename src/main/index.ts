@@ -30,7 +30,8 @@ import {
   isAiPaused,
   overlaySend,
   pauseAi,
-  resumeAi
+  resumeAi,
+  aiPausedAt
 } from './overlay'
 import { abortOperation, beginOperation, endOperation, runInOperation } from './interrupt'
 import {
@@ -3664,6 +3665,12 @@ function setupIpc(): void {
       return { ok: false, error: (e as Error)?.message ?? String(e) }
     }
   })
+
+  /**
+   * 急停状态会跨重启保留（settings.aiPaused）。渲染层必须在挂载时主动拉一次，
+   * 否则重启后没有任何横幅/恢复入口，用户只会看到"所有操作都执行不了"。
+   */
+  ipcMain.handle('emergency:state-get', () => ({ paused: isAiPaused(), pausedAt: aiPausedAt() }))
 
   ipcMain.on('emergency:resume', () => {
     if (resumeAi()) {

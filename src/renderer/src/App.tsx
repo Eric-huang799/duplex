@@ -613,6 +613,18 @@ export default function App(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [stopKeys])
 
+  // 急停状态会跨重启保留（settings.aiPaused），必须主动拉取一次：
+  // 只监听事件的话，重启后是"隐形急停"——工具全被拒绝，界面却没有恢复入口。
+  useEffect(() => {
+    void window.cobrowse
+      .emergencyState()
+      .then((s) => {
+        setAiPaused(!!s.paused)
+        pausedRef.current = !!s.paused
+      })
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     const offState = window.cobrowse.onEmergencyState((s) => {
       const paused = !!s.paused
