@@ -134,7 +134,13 @@ export type PatchOp =
   | { op: 'insert'; parentId: string; index?: number; node: DesignNode }
   | { op: 'replace'; targetId: string; node: DesignNode }
   | { op: 'remove'; targetId: string }
-  | { op: 'update'; targetId: string; patch: Partial<Pick<DesignNode, 'text' | 'style' | 'tag' | 'meta'>> }
+  | {
+      op: 'update'
+      targetId: string
+      patch: Partial<Pick<DesignNode, 'text' | 'style' | 'tag' | 'meta'>>
+      /** 要删除的 style 键（"回到流式布局"：去掉 x/y 等 placement 键） */
+      unset?: string[]
+    }
   | { op: 'move'; targetId: string; parentId: string; index?: number }
   | { op: 'token'; name: keyof DesignTokens; key: string; value: string }
 
@@ -318,6 +324,11 @@ export function applyPatch(
       if (op.patch.text !== undefined) node.text = op.patch.text
       if (op.patch.tag !== undefined) node.tag = op.patch.tag
       if (op.patch.style !== undefined) node.style = { ...(node.style ?? {}), ...op.patch.style }
+      if (op.unset && op.unset.length > 0 && node.style) {
+        const style = { ...node.style }
+        for (const key of op.unset) delete style[key]
+        node.style = Object.keys(style).length > 0 ? style : undefined
+      }
       if (op.patch.meta !== undefined) node.meta = { ...(node.meta ?? {}), ...op.patch.meta }
       node.meta = { ...(node.meta ?? {}), createdBy: node.meta?.createdBy ?? actor }
       applied++

@@ -15,6 +15,7 @@ import {
   collectIds,
   findNode,
   isLocked,
+  findParent,
   type AnchorName,
   type DesignDocument,
   type DesignNode,
@@ -488,6 +489,35 @@ export function createInteract(deps: InteractDeps): InteractHandle {
 
   function finishDrag(): void {
     if (drag?.active && drag.lastPoint) {
+      const activeDoc = deps.getDoc()
+      const draggedId = drag.id
+      const activeNode = activeDoc ? findNode(activeDoc.root, draggedId) : null
+      const isFreePlacement =
+        activeNode?.style?.['x'] !== undefined || activeNode?.style?.['y'] !== undefined
+      // 流式节点：拖拽 = 槽位交换（按兄弟节点的垂直中点决定插入位置），
+      // 自由摆放是绝对定位节点的行为，两种模式因此不会互相污染。
+      if (activeDoc && activeNode && !isFreePlacement) {
+        const parent = findParent(activeDoc.root, draggedId)
+        const siblings = (parent?.parent.children ?? []).filter((child) => child.id !== draggedId)
+        if (parent && siblings.length > 0) {
+          let index = siblings.length
+          for (let i = 0; i < siblings.length; i++) {
+            const rect = rectOf(siblings[i].id)
+            if (!rect) continue
+            if (drag.lastPoint.y < rect.y + rect.height / 2) {
+              index = i
+              break
+            }
+          }
+          deps.send({
+            type: 'user-ops',
+            ops: [{ op: 'move', targetId: draggedId, parentId: parent.parent.id, index }]
+          })
+          deps.toast(`流式布局：${drag.id} 移到第 ${index + 1} 位`)
+          endDrag()
+          return
+        }
+      }
       const target = { x: Math.round(drag.lastPoint.x), y: Math.round(drag.lastPoint.y) }
       // 当前包围盒（设计帧坐标；缩放/滚动都已换算掉），宿主用它 + moveDelta 算落点
       const currentRect =

@@ -27,6 +27,9 @@ import {
   type PatchOptions,
   type StyleTokenRef
 } from '../../shared/design/model'
+import fs from 'node:fs'
+import path from 'node:path'
+import { renderStaticSite } from '../../shared/design/export'
 import {
   appendRoundLog,
   designsRoot,
@@ -523,7 +526,21 @@ export class DesignService {
    */
   exportZip(targetPath: string): ExportOutcome {
     if (!this.projectId) return { ok: false, error: '尚未打开设计项目' }
-    return exportZipInGit(projectDir(this.root, this.projectId), targetPath)
+    const dir = projectDir(this.root, this.projectId)
+    // 导出必须包含"当前看到的这一版"：先生成真实 HTML/CSS，再提交一次构建，
+    // 最后用 git archive 打包——否则 zip 里只有 design.json，用户拿到手里无法直接打开。
+    try {
+      const doc = this.requireDocument()
+      const site = renderStaticSite(doc)
+      const siteDir = path.join(dir, 'site')
+      fs.mkdirSync(siteDir, { recursive: true })
+      fs.writeFileSync(path.join(siteDir, 'index.html'), site.html, 'utf8')
+      fs.writeFileSync(path.join(siteDir, 'styles.css'), site.css, 'utf8')
+      this.commitRound(`构建静态站点（导出 v${doc.version}）`)
+    } catch (error) {
+      return { ok: false, error: `生成静态站点失败：${(error as Error).message}` }
+    }
+    return exportZipInGit(dir, targetPath)
   }
 
   isDirty(): boolean {

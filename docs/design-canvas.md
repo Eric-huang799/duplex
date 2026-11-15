@@ -127,3 +127,28 @@ agent 与用户都走 `applyPatch`。撤销 = 反向 patch，不依赖 git；git
 | `M` / `R` / `Z` | 放大镜 / 测量 / 整体缩放 |
 
 实现要点：快捷键只发**意图**（`user-ops` / `undo` / `redo` / `select`），文档仍由主进程改；在输入框里打字不拦截；粘贴的节点不继承锁定标记。撤销/重做**只有一条处理路径**——早期画布内置的 Ctrl+Z 与新增处理器重复触发过，导致一次按键撤销两步、重做栈被清空，已合并。
+
+## 移动模式：流式槽位交换 vs 自由摆放
+
+不再是"拖一下就变成 absolute"：
+
+- **流式节点拖拽 = 槽位交换**：按兄弟节点的垂直中点决定插入位置，发 `move` op，布局仍然是 flex/grid，响应式不会被破坏。
+- **自由摆放 = 绝对定位节点**：元素有 `style.x/y` 时拖拽才写帧坐标（定位器走的也是这条）。
+- **回到流式**：`Ctrl/Cmd + Shift + L` 删除 `x/y/w/h/position`，节点回到父级流里（model 的 `update.unset` 支持，2 条单测）。
+- 这说明一个原则：**两种意图用两种数据结构表达**，不是同一个 x/y 硬套所有场景。
+
+实测：拖 `card-a` 到第三位 → toast「流式布局：card-a 移到第 3 位」，`style` 里没有 position/left，DOM 顺序变成 card-b/card-c/card-a。
+
+## 可交付导出（不再只是 design.json）
+
+导出时会：
+
+1. 用 `src/shared/design/export.ts` 从文档生成真实 **`site/index.html` + `site/styles.css`**；
+2. 样式令牌 → CSS 变量（`background: 'brand.primary'` → `var(--color-brand-primary)`，包括 `1px solid line.soft` 这类组合值内部的令牌）；
+3. 帧内绝对定位 → **百分比**（720/1440 = 50%），导出的页面在不同宽度下保持相对位置；
+4. 文本 HTML 转义、不输出脚本；
+5. 把这版站点提交一轮（`构建静态站点（导出 vN）`）后 `git archive` 打包，zip 里同时有 `design.json` 和 `site/`。
+
+![导出的静态站点](screenshots/exported-site.png)
+
+实测：导出 `design-1-design-mwhcchwz.zip`，解包含 `.gitignore / design.json / site/index.html / site/styles.css`；用 Chrome 打开导出的 index.html，16 个 `data-did` 节点、hero 渐变、卡片顺序与画布一致。

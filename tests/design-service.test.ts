@@ -336,15 +336,11 @@ describeGit('DesignService：提交与导出（需要 git）', () => {
     expect(service.history()).toHaveLength(1)
   }, 30_000)
 
-  it('exportZip：未提交报错；提交后导出 HEAD 的 zip', () => {
+  it('exportZip：自动生成 site/ 并提交后再打包（含未提交改动）', () => {
     service.open('site-1')
     service.applyOps('user', [insertNode({ id: 'before-commit', type: 'box' })])
-    const early = service.exportZip(path.join(root, 'exports', 'early.zip'))
-    expect(early.ok).toBe(false)
-    expect(early.error).toMatch(/尚未提交过任何轮次/)
-
     expect(service.commitRound('第一轮').ok).toBe(true)
-    // 提交后再改但不提交：内存变了，磁盘与 HEAD 都没变（applyOps 不落盘）
+    // 提交后再改但不提交：导出的是"当前看到的这一版"，因此会先构建站点再提交一次
     service.applyOps('user', [insertNode({ id: 'uncommitted', type: 'box' })])
 
     const target = path.join(root, 'exports', 'site.zip')
@@ -354,9 +350,15 @@ describeGit('DesignService：提交与导出（需要 git）', () => {
     const bytes = fs.readFileSync(target)
     expect(bytes.length).toBeGreaterThan(0)
     expect(bytes.subarray(0, 2).toString('ascii')).toBe('PK')
-    // zip 的文件名表里能看到 design.json（导出的是已提交的一轮）
+    // zip 文件名表：设计文档 + 可交付的静态站点
     expect(bytes.toString('latin1')).toContain('design.json')
-    expect(service.history()).toHaveLength(1)
+    expect(bytes.toString('latin1')).toContain('site/index.html')
+    expect(bytes.toString('latin1')).toContain('site/styles.css')
+    // 磁盘上也真的写了站点
+    const siteDir = path.join(root, 'site-1', 'site')
+    expect(fs.existsSync(path.join(siteDir, 'index.html'))).toBe(true)
+    expect(fs.existsSync(path.join(siteDir, 'styles.css'))).toBe(true)
+    expect(service.history().some((entry) => entry.subject.includes('构建静态站点'))).toBe(true)
   }, 30_000)
 
   it('未打开项目时提交/导出/历史都给出明确错误或空结果', () => {

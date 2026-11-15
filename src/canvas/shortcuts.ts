@@ -155,6 +155,18 @@ export function installShortcuts(deps: ShortcutDeps): ShortcutHandle {
       deps.toast(`已复制一份 ${cloned.node.id}`)
       return
     }
+    if (key === 'l' && event.shiftKey) {
+      // 取消帧内绝对定位，回到流式布局（与拖拽交换相反的意图）
+      if (!selectedId) return
+      const node = findNode(doc.root, selectedId)
+      if (!node) return
+      event.preventDefault()
+      destroy(
+        [{ op: 'update', targetId: selectedId, patch: { style: {} }, unset: ['x', 'y', 'w', 'h', 'position'] }],
+        '已回到流式布局'
+      )
+      return
+    }
     if (key === 'z') {
       event.preventDefault()
       deps.send({ type: event.shiftKey ? 'redo' : 'undo' })
