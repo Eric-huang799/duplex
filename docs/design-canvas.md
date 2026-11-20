@@ -1,6 +1,6 @@
 # 设计画布：艺术家式网站生成
 
-> 交接文档（分支状态、验收命令、已知坑、下一步）：[HANDOFF-design-canvas.md](HANDOFF-design-canvas.md)
+> 交接文档（分支状态、验收命令、已知坑、下一步）：[HANDOFF-design-canvas.md](handoff/2026-11-20-design-canvas.md)
 
 这一轮把 Duplex 从"AI 能操作浏览器"推进到"AI 和设计师一起造页面"。设计原则只有一句：
 
