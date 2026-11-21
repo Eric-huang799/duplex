@@ -28,6 +28,21 @@ describe('validate：IPC 入参白名单（拒绝原型污染 / 任意对象）'
     expect(result.value.ops[0].op).toBe('insert')
   })
 
+  it('保留 update.unset 与 token.unset 的合法语义，拒绝非字符串样式键', () => {
+    const result = validatePatchOps([
+      { op: 'update', targetId: 'hero', patch: { style: {} }, unset: ['x', 'y'] },
+      { op: 'token', name: 'color', key: 'temporary', value: '', unset: true }
+    ])
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.value[0]).toMatchObject({ unset: ['x', 'y'] })
+      expect(result.value[1]).toMatchObject({ unset: true })
+    }
+    expect(
+      validatePatchOps([{ op: 'update', targetId: 'hero', patch: {}, unset: ['x', 1] }]).ok
+    ).toBe(false)
+  })
+
   it('多余字段、未知 op、非法节点 type 都被拒绝', () => {
     expect(
       validateApplyPayload({ actor: 'user', ops: [], extra: true }).ok

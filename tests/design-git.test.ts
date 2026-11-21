@@ -12,6 +12,7 @@ import {
   isGitAvailable,
   revertTo
 } from '../src/main/design/git'
+import { removeTestDir } from './fs-cleanup'
 
 // 环境里没有 git 时整组跳过（与任务要求一致）。
 const hasGit = spawnSync('git', ['--version'], { stdio: 'pipe' }).status === 0
@@ -26,7 +27,7 @@ function makeDir(): string {
 }
 
 afterAll(() => {
-  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true })
+  for (const dir of dirs) removeTestDir(dir)
 })
 
 describeGit('git：设计工作区版本', () => {

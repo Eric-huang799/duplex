@@ -11,6 +11,7 @@ import {
 import { DesignService, type DesignServiceEvent } from '../src/main/design/service'
 import { isGitAvailable } from '../src/main/design/git'
 import { loadDocument, roundsLogPath } from '../src/main/design/store'
+import { removeTestDir } from './fs-cleanup'
 
 let root: string
 let clock: number
@@ -23,7 +24,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  fs.rmSync(root, { recursive: true, force: true })
+  removeTestDir(root)
 })
 
 function insertNode(node: DesignNode, parentId = 'root') {
@@ -61,6 +62,18 @@ describe('DesignService：打开与内存文档', () => {
     expect(service.current()).toBe(doc)
     expect(service.isDirty()).toBe(false)
     expect(service.state()).toMatchObject({ projectId: 'site-1', dirty: false, version: 0 })
+  })
+
+  it('非法项目切换在 flush 前失败，保留当前文档和未保存状态', () => {
+    service.open('site-1')
+    service.applyOps('user', [insertNode({ id: 'pending', type: 'box' })])
+    const before = service.current()
+
+    expect(() => service.open('../escape')).toThrow(/项目 id 不合法/)
+    expect(service.current()).toBe(before)
+    expect(service.state().projectId).toBe('site-1')
+    expect(service.isDirty()).toBe(true)
+    expect(findNode(loadDocument('site-1', root).root, 'pending')).toBeNull()
   })
 
   it('applyOps 只改内存不写盘；dirty / canUndo 正确', () => {
@@ -195,6 +208,36 @@ describe('DesignService：撤销/重做（反向 patch）', () => {
     expect(service.current().tokens.color['brand.primary']).toBe('#000000')
     expect(service.undo()).toBe(true)
     expect(service.current().tokens.color['brand.primary']).toBe(before)
+  })
+
+  it('update.unset 的撤销/重做精确恢复被删除的样式键', () => {
+    service.open('p')
+    service.applyOps('user', [
+      insertNode({ id: 'n', type: 'box', style: { x: '10', y: '20', color: '#f00' } })
+    ])
+    const before = documentFingerprint(service.current())
+    service.applyOps('user', [
+      { op: 'update', targetId: 'n', patch: { style: {} }, unset: ['x', 'y'] }
+    ])
+    expect(findNode(service.current().root, 'n')?.style).toEqual({ color: '#f00' })
+
+    expect(service.undo()).toBe(true)
+    expect(documentFingerprint(service.current())).toBe(before)
+    expect(service.redo()).toBe(true)
+    expect(findNode(service.current().root, 'n')?.style).toEqual({ color: '#f00' })
+  })
+
+  it('新建 token 的撤销会删除它，而不是留下空字符串', () => {
+    service.open('p')
+    // 首次 patch 还会补全 root 的来源元数据；这里只比较本测试关注的 tokens。
+    const before = JSON.stringify(service.current().tokens)
+    service.applyOps('user', [{ op: 'token', name: 'color', key: 'new-color', value: '#123456' }])
+    expect(service.current().tokens.color['new-color']).toBe('#123456')
+    expect(service.undo()).toBe(true)
+    expect(service.current().tokens.color).not.toHaveProperty('new-color')
+    expect(JSON.stringify(service.current().tokens)).toBe(before)
+    expect(service.redo()).toBe(true)
+    expect(service.current().tokens.color['new-color']).toBe('#123456')
   })
 
   it('没有可撤销时 undo 返回 false，不抛错', () => {

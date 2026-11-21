@@ -68,6 +68,7 @@ function resolveInside(dir: string, relPath: string): string | null {
 interface ScriptRuntime {
   bin: string
   args: (scriptPath: string, scriptArgs: string[]) => string[]
+  env?: NodeJS.ProcessEnv
 }
 
 function runtimeFor(scriptPath: string): ScriptRuntime | null {
@@ -82,7 +83,13 @@ function runtimeFor(scriptPath: string): ScriptRuntime | null {
     case '.js':
     case '.mjs':
     case '.cjs':
-      return { bin: 'node', args: (p, a) => [p, ...a] }
+      // 不把 JS 技能的可用性建立在用户另外安装了全局 node 上。
+      // Electron 在 ELECTRON_RUN_AS_NODE=1 下就是 Node；普通 Node 测试进程会忽略该变量。
+      return {
+        bin: process.execPath,
+        args: (p, a) => [p, ...a],
+        env: { ELECTRON_RUN_AS_NODE: '1' }
+      }
     case '.cmd':
     case '.bat':
       return { bin: 'cmd', args: (p, a) => ['/c', p, ...a] }
@@ -114,7 +121,7 @@ function killTree(child: ChildProcess): void {
   }
 }
 
-function executeScript(bin: string, execArgs: string[], cwd: string): Promise<ToolResult> {
+function executeScript(runtime: ScriptRuntime, execArgs: string[], cwd: string): Promise<ToolResult> {
   return new Promise((resolve) => {
     try {
       const opSignal = operationSignal()
@@ -133,7 +140,7 @@ function executeScript(bin: string, execArgs: string[], cwd: string): Promise<To
         finish(errorText('已被用户急停中断（脚本已终止）'))
       }
       const child = execFile(
-        bin,
+        runtime.bin,
         execArgs,
         {
           cwd,
@@ -141,7 +148,7 @@ function executeScript(bin: string, execArgs: string[], cwd: string): Promise<To
           maxBuffer: MAX_BUFFER,
           encoding: 'utf8',
           // FB-001: scripts that open a browser should land in Duplex
-          env: duplexShimEnv(ensureOpenShim())
+          env: { ...duplexShimEnv(ensureOpenShim()), ...runtime.env }
         },
         (error, stdout, stderr) => {
           const output = truncateOutput(`${stdout ?? ''}${stderr ?? ''}`)
@@ -150,8 +157,9 @@ function executeScript(bin: string, execArgs: string[], cwd: string): Promise<To
             return
           }
           if (error) {
-            const code = typeof error.code === 'number' ? error.code : -1
-            finish(errorText(`exit code: ${code}\n${output}`))
+            const code = typeof error.code === 'number' ? `exit code: ${error.code}` : `启动失败: ${error.code ?? 'UNKNOWN'}`
+            const detail = error.message && !output.includes(error.message) ? `${error.message}\n` : ''
+            finish(errorText(`${code}\n${detail}${output}`))
             return
           }
           finish(text(`exit code: 0\n${output}`))
@@ -262,7 +270,7 @@ export function createSkillToolHandlers(
           : text('用户拒绝执行该脚本')
       }
 
-      return await executeScript(runtime.bin, execArgs, skill.dir)
+      return await executeScript(runtime, execArgs, skill.dir)
     }
   }
 }

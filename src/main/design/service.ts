@@ -37,6 +37,7 @@ import {
   projectDir,
   saveDocument
 } from './store'
+import { validateProjectId } from './validate'
 import {
   commitRound as commitRoundInGit,
   ensureRepo,
@@ -59,7 +60,7 @@ export interface DesignStateSnapshot {
 
 export type DesignServiceEvent =
   | { type: 'document'; projectId: string; document: DesignDocument }
-  | { type: 'state'; state: DesignStateSnapshot }
+  | { type: 'state'; state: DesignStateSnapshot; actor: string }
   | { type: 'rejected'; actor: string; rejected: Array<{ index: number; reason: string }> }
 
 export type DesignEventSink = (event: DesignServiceEvent) => void
@@ -205,7 +206,9 @@ function inverseOfOp(doc: DesignDocument, op: PatchOp): PatchOp | null {
         if (expressible) patch.meta = previous
       }
 
-      if (!expressible) {
+      // unset 删除的是“键存在”这一事实，普通 update 无法表达恢复；
+      // 用整节点快照，避免“回到流式布局”后撤销却拿不回原坐标。
+      if (!expressible || (op.unset?.length ?? 0) > 0) {
         return { op: 'replace', targetId: op.targetId, node: structuredClone(node) }
       }
       return { op: 'update', targetId: op.targetId, patch }
@@ -213,7 +216,9 @@ function inverseOfOp(doc: DesignDocument, op: PatchOp): PatchOp | null {
 
     case 'token': {
       const old = doc.tokens[op.name]?.[op.key]
-      return { op: 'token', name: op.name, key: op.key, value: old ?? '' }
+      return old === undefined
+        ? { op: 'token', name: op.name, key: op.key, value: '', unset: true }
+        : { op: 'token', name: op.name, key: op.key, value: old }
     }
   }
 }
@@ -277,10 +282,15 @@ export class DesignService {
    * 避免"切走了最后几帧改动"丢失。重复打开同一项目是无操作。
    */
   open(projectId: string): DesignDocument {
-    if (this.projectId === projectId && this.doc) return this.doc
+    // 先校验再 flush / 改状态：非法 id 不能把当前项目留在“旧文档 + 新 id”的破损状态。
+    const checked = validateProjectId(projectId)
+    if (!checked.ok) throw new Error(`项目 id 不合法：${checked.error}`)
+    const id = checked.value
+    if (this.projectId === id && this.doc) return this.doc
     this.flush()
-    this.projectId = projectId
-    this.doc = loadDocument(projectId, this.root)
+    const next = loadDocument(id, this.root)
+    this.projectId = id
+    this.doc = next
     this.dirty = false
     this.undoStack = []
     this.redoStack = []
@@ -342,7 +352,7 @@ export class DesignService {
     }
     if (result.applied > 0) {
       this.publishDocument()
-      this.publishState()
+      this.publishState(actorId)
     }
     return { applied: result.applied, rejected: result.rejected, doc: this.requireDocument() }
   }
@@ -536,7 +546,9 @@ export class DesignService {
       fs.mkdirSync(siteDir, { recursive: true })
       fs.writeFileSync(path.join(siteDir, 'index.html'), site.html, 'utf8')
       fs.writeFileSync(path.join(siteDir, 'styles.css'), site.css, 'utf8')
-      this.commitRound(`构建静态站点（导出 v${doc.version}）`)
+      const committed = this.commitRound(`构建静态站点（导出 v${doc.version}）`)
+      // 仓库可能已有旧 HEAD；提交失败时继续 archive 会把旧版本包装成“导出成功”。
+      if (!committed.ok) return { ok: false, error: committed.error ?? '提交静态站点失败' }
     } catch (error) {
       return { ok: false, error: `生成静态站点失败：${(error as Error).message}` }
     }
@@ -587,7 +599,7 @@ export class DesignService {
     this.safeEmit({ type: 'document', projectId: this.projectId, document: this.doc })
   }
 
-  private publishState(): void {
-    this.safeEmit({ type: 'state', state: this.state() })
+  private publishState(actor = 'user'): void {
+    this.safeEmit({ type: 'state', state: this.state(), actor })
   }
 }

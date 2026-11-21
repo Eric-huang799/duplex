@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DesignService } from '../src/main/design/service'
 import { renderStaticSite } from '../src/shared/design/export'
 import { emptyDocument } from '../src/shared/design/model'
+import { removeTestDir } from './fs-cleanup'
 
 const actor = 'designer'
 
@@ -47,6 +48,75 @@ describe('静态站点导出（可交付）', () => {
     expect(css).toContain('display: flex')
   })
 
+  it('自定义语义标签与画布一致，危险标签回退到安全默认值', () => {
+    const doc = seededDoc()
+    doc.root.children!.push(
+      { id: 'semantic', type: 'box', tag: 'section', text: '语义区块' },
+      { id: 'unsafe-tag', type: 'box', tag: 'script', text: '不能变成脚本' }
+    )
+
+    const { html } = renderStaticSite(doc)
+    expect(html).toMatch(/<section class="d-node [^"]+" data-did="semantic">/)
+    expect(html).toMatch(/<div class="d-node [^"]+" data-did="unsafe-tag">/)
+    expect(html).not.toContain('<script')
+  })
+
+  it('button/input 的导出行为由最终标签决定，而不是原始节点类型', () => {
+    const doc = seededDoc()
+    doc.root.children!.push(
+      { id: 'button-as-div', type: 'button', tag: 'div', text: '普通区块' },
+      { id: 'box-as-button', type: 'box', tag: 'button', text: '语义按钮' },
+      { id: 'input-as-div', type: 'input', tag: 'div', text: '普通文本' },
+      { id: 'box-as-input', type: 'box', tag: 'input', text: '只读值' }
+    )
+
+    const { html } = renderStaticSite(doc)
+    expect(html).toMatch(/<div [^>]*data-did="button-as-div">普通区块<\/div>/)
+    expect(html).not.toMatch(/<div [^>]*data-did="button-as-div"[^>]*type="button"/)
+    expect(html).toMatch(/<button [^>]*data-did="box-as-button"[^>]*type="button"/)
+    expect(html).toMatch(/<div [^>]*data-did="input-as-div">普通文本<\/div>/)
+    expect(html).toMatch(/<input [^>]*data-did="box-as-input"[^>]*value="只读值"[^>]*readonly \/>/)
+  })
+
+  it('导出过滤可截断声明的属性、值和 token，不生成额外 CSS 规则', () => {
+    const doc = seededDoc()
+    doc.root.children!.push({
+      id: 'unsafe-css',
+      type: 'box',
+      style: {
+        color: 'red; }\nbody { display: none; } /*',
+        'font-size; }': '12px',
+        background: 'url(https://evil.example/tracker)',
+        borderImage: 'image-set("https://evil.example/image-set" 1x)',
+        listStyle: '-webkit-image-set("https://evil.example/webkit-image-set" 1x)'
+      }
+    })
+    doc.tokens.color['bad'] = 'red; }\n@import url(https://evil.example/import); /*'
+
+    const { css } = renderStaticSite(doc)
+    expect(css).not.toContain('display: none')
+    expect(css).not.toContain('font-size;')
+    expect(css).not.toContain('@import')
+    expect(css).not.toContain('evil.example')
+  })
+
+  it('不同节点 id 即使包含不同标点，也不会导出成同一个 CSS 类名', () => {
+    const doc = seededDoc()
+    doc.root.children!.push(
+      { id: 'a.b', type: 'box', style: { color: '#111111' } },
+      { id: 'a:b', type: 'box', style: { color: '#222222' } }
+    )
+
+    const { html, css } = renderStaticSite(doc)
+    const first = /class="d-node ([^"]+)" data-did="a\.b"/.exec(html)?.[1]
+    const second = /class="d-node ([^"]+)" data-did="a:b"/.exec(html)?.[1]
+    expect(first).toBeTruthy()
+    expect(second).toBeTruthy()
+    expect(first).not.toBe(second)
+    expect(css).toContain(`.${first} {`)
+    expect(css).toContain(`.${second} {`)
+  })
+
   it('exportZip 会先写 site/ 并提交，再打包（zip 存在且非空）', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-design-export-'))
     try {
@@ -75,7 +145,26 @@ describe('静态站点导出（可交付）', () => {
       const history = service.history(5)
       expect(history.some((entry) => entry.subject.includes('构建静态站点'))).toBe(true)
     } finally {
-      fs.rmSync(root, { recursive: true, force: true })
+      removeTestDir(root)
+    }
+  })
+
+  it('已有历史时，导出前提交失败必须报错且不能打包旧 HEAD', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-design-export-'))
+    try {
+      const service = new DesignService({ root })
+      service.open('demo')
+      expect(service.commitRound('初始版本').ok).toBe(true)
+      const commit = vi.spyOn(service, 'commitRound').mockReturnValue({ ok: false, error: 'commit failed' })
+      const target = path.join(root, 'must-not-exist.zip')
+
+      const outcome = service.exportZip(target)
+      expect(outcome).toEqual({ ok: false, error: 'commit failed' })
+      expect(commit).toHaveBeenCalledOnce()
+      expect(fs.existsSync(target)).toBe(false)
+    } finally {
+      vi.restoreAllMocks()
+      removeTestDir(root)
     }
   })
 })

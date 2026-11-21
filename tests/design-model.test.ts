@@ -7,6 +7,7 @@ import {
   documentFingerprint,
   emptyDocument,
   findNode,
+  findParent,
   gridCandidates,
   isLocked,
   moveDelta,
@@ -65,6 +66,77 @@ describe('patch：唯一的修改入口', () => {
     )
     expect(result.applied).toBe(0)
     expect(result.rejected[0].reason).toMatch(/id 重复/)
+  })
+
+  it('insert 拒绝子树内部重复 id 及与现有后代冲突的 id', () => {
+    const { doc } = seeded()
+    const duplicateInside = applyPatch(
+      doc,
+      [{
+        op: 'insert',
+        parentId: 'root',
+        node: { id: 'new', type: 'box', children: [{ id: 'same', type: 'text' }, { id: 'same', type: 'text' }] }
+      }],
+      actor
+    )
+    expect(duplicateInside.applied).toBe(0)
+    expect(duplicateInside.rejected[0].reason).toMatch(/id 重复/)
+
+    const duplicateDescendant = applyPatch(
+      doc,
+      [{
+        op: 'insert',
+        parentId: 'root',
+        node: { id: 'new', type: 'box', children: [{ id: 'title-1', type: 'text' }] }
+      }],
+      actor
+    )
+    expect(duplicateDescendant.applied).toBe(0)
+    expect(duplicateDescendant.rejected[0].reason).toMatch(/id 重复/)
+  })
+
+  it('move 拒绝把节点移进自身/后代，也拒绝锁定目标容器', () => {
+    const { doc } = seeded()
+    const cyclic = applyPatch(
+      doc,
+      [{ op: 'move', targetId: 'card-1', parentId: 'card-1' }],
+      actor
+    )
+    expect(cyclic.applied).toBe(0)
+    expect(cyclic.rejected[0].reason).toMatch(/自身|后代/)
+    expect(() => JSON.stringify(cyclic.document)).not.toThrow()
+
+    doc.root.children!.push({ id: 'locked-target', type: 'box', meta: { locked: true } })
+    const locked = applyPatch(
+      doc,
+      [{ op: 'move', targetId: 'title-1', parentId: 'locked-target' }],
+      actor
+    )
+    expect(locked.applied).toBe(0)
+    expect(locked.rejected[0].reason).toMatch(/锁定/)
+    expect(findParent(locked.document.root, 'title-1')?.parent.id).toBe('card-1')
+  })
+
+  it('replace 不能绕过根节点锁，也不能悄悄改变稳定 id', () => {
+    const { doc } = seeded()
+    doc.root.meta = { locked: true }
+    const locked = applyPatch(
+      doc,
+      [{ op: 'replace', targetId: 'root', node: { id: 'root', type: 'page', text: ' overwritten ' } }],
+      actor
+    )
+    expect(locked.applied).toBe(0)
+    expect(locked.document.root.text).toBeUndefined()
+
+    doc.root.meta = undefined
+    const renamed = applyPatch(
+      doc,
+      [{ op: 'replace', targetId: 'card-1', node: { id: 'other', type: 'box' } }],
+      actor
+    )
+    expect(renamed.applied).toBe(0)
+    expect(renamed.rejected[0].reason).toMatch(/id/)
+    expect(findNode(renamed.document.root, 'card-1')).not.toBeNull()
   })
 
   it('锁定区拒绝 agent 的修改，但用户直接编辑可以（allowLocked）', () => {

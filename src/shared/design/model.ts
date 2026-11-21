@@ -142,7 +142,7 @@ export type PatchOp =
       unset?: string[]
     }
   | { op: 'move'; targetId: string; parentId: string; index?: number }
-  | { op: 'token'; name: keyof DesignTokens; key: string; value: string }
+  | { op: 'token'; name: keyof DesignTokens; key: string; value: string; unset?: boolean }
 
 export interface PatchActor {
   actor: string
@@ -222,12 +222,40 @@ export function collectIds(root: DesignNode, out: Set<string> = new Set()): Set<
   return out
 }
 
+function validateNodeIds(
+  doc: DesignDocument,
+  node: DesignNode,
+  excludedSubtreeId?: string
+): string | null {
+  const incoming = new Set<string>()
+  const walk = (current: DesignNode): string | null => {
+    if (incoming.has(current.id)) return current.id
+    incoming.add(current.id)
+    for (const child of current.children ?? []) {
+      const duplicate = walk(child)
+      if (duplicate) return duplicate
+    }
+    return null
+  }
+  const duplicate = walk(node)
+  if (duplicate) return `节点 id 重复：${duplicate}`
+
+  const existing = collectIds(doc.root)
+  if (excludedSubtreeId) {
+    const excluded = findNode(doc.root, excludedSubtreeId)
+    if (excluded) for (const id of collectIds(excluded)) existing.delete(id)
+  }
+  for (const id of incoming) {
+    if (existing.has(id)) return `节点 id 重复：${id}`
+  }
+  return null
+}
+
 function validateInsert(doc: DesignDocument, parentId: string, node: DesignNode): string | null {
   const parent = findNode(doc.root, parentId)
   if (!parent) return `父节点不存在：${parentId}`
   if (!isContainer(parent)) return `父节点不是容器：${parentId}（${parent.type}）`
-  if (collectIds(doc.root).has(node.id)) return `节点 id 重复：${node.id}`
-  return null
+  return validateNodeIds(doc, node)
 }
 
 /**
@@ -247,8 +275,9 @@ export function applyPatch(
   ops.forEach((op, index) => {
     try {
       if (op.op === 'token') {
-        if (!(op.name in next.tokens)) throw new Error(`未知令牌组：${op.name}`)
-        next.tokens[op.name][op.key] = op.value
+        if (!Object.hasOwn(next.tokens, op.name)) throw new Error(`未知令牌组：${op.name}`)
+        if (op.unset === true) delete next.tokens[op.name][op.key]
+        else next.tokens[op.name][op.key] = op.value
         applied++
         return
       }
@@ -269,19 +298,21 @@ export function applyPatch(
       }
 
       if (op.op === 'replace') {
-        const found = findParent(next.root, op.targetId)
-        if (!found) {
-          if (next.root.id === op.targetId) {
-            next.root = op.node
-            applied++
-            return
-          }
-          throw new Error(`目标不存在：${op.targetId}`)
+        const current = findNode(next.root, op.targetId)
+        if (!current) throw new Error(`目标不存在：${op.targetId}`)
+        if (op.node.id !== op.targetId) {
+          throw new Error(`replace 必须保留稳定 id：${op.targetId} ≠ ${op.node.id}`)
         }
         if (!options.allowLocked && isLocked(next.root, op.targetId)) {
           throw new Error(`目标节点已锁定：${op.targetId}`)
         }
-        found.parent.children![found.index] = op.node
+        const problem = validateNodeIds(next, op.node, op.targetId)
+        if (problem) throw new Error(problem)
+        if (next.root.id === op.targetId) next.root = op.node
+        else {
+          const found = findParent(next.root, op.targetId)!
+          found.parent.children![found.index] = op.node
+        }
         applied++
         return
       }
@@ -300,12 +331,19 @@ export function applyPatch(
       if (op.op === 'move') {
         const found = findParent(next.root, op.targetId)
         if (!found) throw new Error(`目标不存在：${op.targetId}`)
+        const moving = found.parent.children![found.index]
+        if (op.parentId === op.targetId || findNode(moving, op.parentId)) {
+          throw new Error(`不能把节点移动到自身或自己的后代：${op.targetId} → ${op.parentId}`)
+        }
         if (!options.allowLocked && isLocked(next.root, op.targetId)) {
           throw new Error(`目标节点已锁定：${op.targetId}`)
         }
         const destination = findNode(next.root, op.parentId)
         if (!destination) throw new Error(`目标父节点不存在：${op.parentId}`)
         if (!isContainer(destination)) throw new Error(`目标父节点不是容器：${op.parentId}`)
+        if (!options.allowLocked && isLocked(next.root, op.parentId)) {
+          throw new Error(`目标父节点已锁定：${op.parentId}`)
+        }
         const [node] = found.parent.children!.splice(found.index, 1)
         const children = destination.children ?? []
         const at = Math.max(0, Math.min(op.index ?? children.length, children.length))

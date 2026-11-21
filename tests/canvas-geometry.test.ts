@@ -288,9 +288,11 @@ describe('令牌解析与样式安全', () => {
     expect(resolveStyleValue(tokens, { value: '  ' })).toBeNull()
   })
 
-  it('样式安全网拦下 url()/javascript:/expression()/@import，放行普通值', () => {
+  it('样式安全网拦下外部资源函数和危险表达式，放行普通值', () => {
     expect(isSafeStyleValue('background: url(https://evil)')).toBe(false)
     expect(isSafeStyleValue('url(#x)')).toBe(false)
+    expect(isSafeStyleValue('image-set("https://evil/image.png" 1x)')).toBe(false)
+    expect(isSafeStyleValue('-webkit-image-set("https://evil/image.png" 1x)')).toBe(false)
     expect(isSafeStyleValue('javascript:alert(1)')).toBe(false)
     expect(isSafeStyleValue('expression(alert(1))')).toBe(false)
     expect(isSafeStyleValue('@import url(x)')).toBe(false)

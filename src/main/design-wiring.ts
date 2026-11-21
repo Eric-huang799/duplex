@@ -24,6 +24,12 @@ import {
   type Rect
 } from '../shared/design/model'
 import type { ToolResult } from './tool-handlers'
+import {
+  validateApplyPayload,
+  validatePatchOps,
+  validateProjectId,
+  validateSetVariantsPayload
+} from './design/validate'
 
 interface CanvasMessage {
   type?: string
@@ -67,7 +73,6 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
   const service = new DesignService()
   let canvas: WebContents | null = null
   let projectId = DEFAULT_PROJECT
-  let lastRejected: Array<{ index: number; reason: string }> = []
 
   const send = (payload: unknown): void => {
     const wc = canvas
@@ -85,15 +90,13 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     send({ type: 'state', round: state.version, dirty: state.dirty, actor })
   }
 
-  // 服务事件 → 画布消息（形状不同，必须适配；patch 事件带 ops 以便页面做增量动画）
+  // document 与 state 分别只转发一次；不要在调用方再补发，否则会重复整页渲染。
   service.setEmit((event) => {
     if (event.type === 'document') {
       sendDocument(event.document)
-      sendState()
     } else if (event.type === 'state') {
-      sendState()
+      sendState(event.actor)
     } else if (event.type === 'rejected') {
-      lastRejected = event.rejected
       deps.log(`[design] ${event.actor} 的 patch 被拒绝：${event.rejected.map((r) => r.reason).join('；')}`)
     }
   })
@@ -197,8 +200,6 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     const result = service.applyOps('system', ops, { allowLocked: false })
     if (result.applied > 0) {
       deps.log(`[design] 已创建初始画布：${result.applied} 个节点`)
-      sendDocument(result.doc)
-      sendState('system')
     }
   }
   ensureStarter()
@@ -208,14 +209,7 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     options: { allowLocked: boolean }
   ): { ok: boolean; error?: string } => {
     const result = service.applyOps(actor, ops, options)
-    if (result.rejected.length > 0) {
-      lastRejected = result.rejected
-    }
-    // 即使部分被拒也刷新页面：已生效的操作要立刻可见
-    if (result.applied > 0) {
-      send({ type: 'patch', ops, doc: result.doc })
-      sendState(actor)
-    }
+    // service 已发布最终 document/state；这里不能再把含被拒绝项的原始 ops 发给画布。
     return { ok: result.applied > 0, error: result.rejected.map((r) => r.reason).join('；') || undefined }
   }
 
@@ -282,7 +276,16 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
           const id = String(message['id'] ?? '')
           const patch = message['patch']
           if (!id || !patch || typeof patch !== 'object') return
-          apply('user', [{ op: 'update', targetId: id, patch: patch as never }], { allowLocked: true })
+          const input = validateApplyPayload({
+            actor: 'user',
+            ops: [{ op: 'update', targetId: id, patch }],
+            allowLocked: true
+          })
+          if (!input.ok) {
+            deps.log(`[design] 拒绝非法 user-update：${input.error}`)
+            return
+          }
+          apply('user', input.value.ops, { allowLocked: true })
           return
         }
         case 'lock': {
@@ -294,17 +297,20 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
           return
         }
         case 'user-ops': {
-          const ops = Array.isArray(message['ops']) ? (message['ops'] as PatchOp[]) : []
-          if (ops.length === 0) return
-          apply('user', ops, { allowLocked: true })
+          const input = validatePatchOps(message['ops'])
+          if (!input.ok) {
+            deps.log(`[design] 拒绝非法 user-ops：${input.error}`)
+            return
+          }
+          if (input.value.length === 0) return
+          apply('user', input.value, { allowLocked: true })
           return
         }
         case 'variant-choose': {
           const blockId = String(message['blockId'] ?? '')
           const index = Number(message['index'] ?? -1)
           if (!blockId || index < 0) return
-          const doc = service.chooseVariant(blockId, index)
-          sendDocument(doc)
+          service.chooseVariant(blockId, index)
           return
         }
         case 'undo': {
@@ -312,8 +318,6 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
             const doc = service.current()
             // 撤销不能把画布撤成空白：空文档没有任何可操作对象，看起来就像"坏了"
             if ((doc.root.children ?? []).length === 0) ensureStarter()
-            else sendDocument(doc)
-            sendState()
           }
           return
         }
@@ -321,8 +325,6 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
           if (service.redo()) {
             const doc = service.current()
             if ((doc.root.children ?? []).length === 0) ensureStarter()
-            else sendDocument(doc)
-            sendState()
           }
           return
         }
@@ -334,7 +336,6 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
           } else {
             deps.log(`[design] 已提交 ${outcome.sha?.slice(0, 7) ?? '(无改动)'}：${summary}`)
           }
-          sendState()
           return
         }
         case 'export': {
@@ -386,8 +387,10 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
   const runTool = async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
     const requested = typeof args['projectId'] === 'string' ? String(args['projectId']).trim() : ''
     if (requested && requested !== projectId) {
-      projectId = requested
-      sendDocument(service.open(projectId))
+      const checked = validateProjectId(requested)
+      if (!checked.ok) return errorText(`projectId 无效：${checked.error}`)
+      service.open(checked.value)
+      projectId = checked.value
     }
     if (name === 'design_open') {
       const wc = canvas ?? deps.openCanvas()
@@ -433,12 +436,10 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     if (name === 'design_patch') {
       // agent 直接改文档时也要"看得见"：画布不在就顺手打开，避免用户对着空白等结果。
       if (!canvas || canvas.isDestroyed()) canvas = deps.openCanvas()
-      const raw = args['ops']
-      if (!Array.isArray(raw)) return errorText('ops 必须是数组')
+      const input = validatePatchOps(args['ops'])
+      if (!input.ok) return errorText(`design_patch 参数无效：${input.error}`)
       const actor = deps.caller()
-      const result = service.applyOps(actor, raw as PatchOp[], { allowLocked: false })
-      sendDocument(result.doc)
-      sendState(actor)
+      const result = service.applyOps(actor, input.value, { allowLocked: false })
       if (result.applied === 0) {
         return errorText(
           `没有任何 patch 生效${result.rejected.length ? `：${result.rejected.map((r) => `#${r.index} ${r.reason}`).join('；')}` : ''}`
@@ -449,9 +450,9 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
       )
     }
     if (name === 'design_variants') {
-      const blockId = typeof args['blockId'] === 'string' ? String(args['blockId']) : ''
-      const options = Array.isArray(args['options']) ? (args['options'] as DesignNode[]) : []
-      if (!blockId) return errorText('缺少 blockId')
+      const input = validateSetVariantsPayload({ blockId: args['blockId'], options: args['options'] })
+      if (!input.ok) return errorText(`design_variants 参数无效：${input.error}`)
+      const { blockId, options } = input.value
       if (options.length < 2) return errorText('至少提供 2 个变体')
       service.setVariants(blockId, options)
       send({ type: 'variants', blockId, options })
@@ -460,7 +461,6 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     if (name === 'design_commit') {
       const summary = typeof args['summary'] === 'string' ? String(args['summary']) : '设计轮次'
       const outcome = service.commitRound(summary)
-      sendState()
       if (!outcome.ok) return errorText(`提交失败：${outcome.error ?? '未知错误'}`)
       if (outcome.skipped) return text('本轮没有改动，未产生提交。')
       return text(`已提交 ${outcome.sha?.slice(0, 7)}：${summary}`)
@@ -509,8 +509,6 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     if (!changed) return
     const doc = service.current()
     if ((doc.root.children ?? []).length === 0) ensureStarter()
-    else sendDocument(doc)
-    sendState()
   }
 
   return {

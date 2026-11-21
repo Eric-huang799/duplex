@@ -330,7 +330,7 @@ export const toolDefs: ToolDef[] = [
       ops: z
         .array(z.record(z.string(), z.unknown()))
         .describe(
-          'Patch ops, e.g. {"op":"insert","parentId":"root","node":{"id":"hero","type":"box","children":[]}}, {"op":"update","targetId":"t1","patch":{"text":"新标题"}}, {"op":"token","name":"color","key":"brand.primary","value":"#2f6fed"}'
+          'Patch ops, e.g. {"op":"insert","parentId":"root","node":{"id":"hero","type":"box","children":[]}}, {"op":"update","targetId":"t1","patch":{"text":"新标题"}}, {"op":"update","targetId":"t1","patch":{"style":{}},"unset":["x","y"]} (return to flow layout), {"op":"token","name":"color","key":"brand.primary","value":"#2f6fed"}, {"op":"token","name":"color","key":"obsolete","value":"","unset":true} (delete token)'
         )
     },
   },

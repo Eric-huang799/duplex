@@ -378,99 +378,13 @@ export function resolveStyleValue(tokens: DesignTokens, value: StyleTokenRef | s
  * 样式属性安全网：拒绝会触发加载 / 脚本 / 外部引用的写法。
  * 节点样式来自 agent 生成，不能让它顺手把画布变成网络的出口。
  */
-const UNSAFE_PROPERTIES: ReadonlySet<string> = new Set([
-  'behavior',
-  '-moz-binding',
-  'content',
-  'background-image'
-])
+export {
+  isSafeStyleProperty,
+  isSafeStyleValue,
+  toCssPropertyName
+} from '../shared/design/css'
 
-const UNSAFE_VALUE = /url\s*\(|expression\s*\(|javascript\s*:|@import|-moz-binding|behavior\s*:/i
-
-export function isSafeStyleProperty(property: string): boolean {
-  const name = property.trim().toLowerCase()
-  if (!name) return false
-  if (name.startsWith('on')) return false
-  return !UNSAFE_PROPERTIES.has(name)
-}
-
-export function isSafeStyleValue(value: string): boolean {
-  if (!value) return false
-  return !UNSAFE_VALUE.test(value)
-}
-
-/** `flexDirection` / `flex-direction` / `--custom-prop` 统一成 CSS 属性名。 */
-export function toCssPropertyName(key: string): string {
-  const name = key.trim()
-  if (!name) return ''
-  if (name.startsWith('--')) return name
-  if (name.includes('-')) return name.toLowerCase()
-  return name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-}
-
-// ---------------------------------------------------------------- 元素标签安全网
-
-/**
- * 允许出现在画布里的标签。**白名单**（不是黑名单）：
- * script / style / iframe / object / embed / link / meta / form / a / img 一律不在其中，
- * 避免生成节点自行加载资源或导航。
- */
-export const ALLOWED_TAGS: ReadonlySet<string> = new Set([
-  'div',
-  'span',
-  'section',
-  'article',
-  'header',
-  'footer',
-  'nav',
-  'main',
-  'aside',
-  'p',
-  'h1',
-  'h2',
-  'h3',
-  'h4',
-  'h5',
-  'h6',
-  'ul',
-  'ol',
-  'li',
-  'figure',
-  'figcaption',
-  'blockquote',
-  'strong',
-  'em',
-  'small',
-  'hr',
-  'dl',
-  'dt',
-  'dd',
-  'pre',
-  'code',
-  'button',
-  'input',
-  'label'
-])
-
-const DEFAULT_TAG: Record<DesignNode['type'], string> = {
-  page: 'div',
-  box: 'div',
-  stack: 'div',
-  grid: 'div',
-  text: 'p',
-  heading: 'h2',
-  button: 'button',
-  input: 'input',
-  image: 'div',
-  spacer: 'div'
-}
-
-/** 节点 → 实际 DOM 标签。自定义 tag 必须过白名单。 */
-export function elementTagFor(node: DesignNode): string {
-  const custom = typeof node.tag === 'string' ? node.tag.trim().toLowerCase() : ''
-  if (custom && ALLOWED_TAGS.has(custom)) return custom
-  return DEFAULT_TAG[node.type] ?? 'div'
-}
+export { ALLOWED_TAGS, elementTagFor } from '../shared/design/css'
 
 // ---------------------------------------------------------------- patch 摘要
 

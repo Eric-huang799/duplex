@@ -363,11 +363,22 @@ function sanitizeOp(value: unknown, path: string): PatchOp {
       return { op: 'remove', targetId: str(value['targetId'], `${path}.targetId`, { max: LIMITS.maxId }) }
     }
     case 'update': {
-      assertKeys(value, new Set(['op', 'targetId', 'patch']), path)
+      assertKeys(value, new Set(['op', 'targetId', 'patch', 'unset']), path)
+      let unset: string[] | undefined
+      if (value['unset'] !== undefined) {
+        const rawUnset = value['unset']
+        if (!Array.isArray(rawUnset) || rawUnset.length > LIMITS.maxStyleKeys) {
+          fail(`${path}.unset`, `必须是最多 ${LIMITS.maxStyleKeys} 项的数组`)
+        }
+        unset = [...new Set(rawUnset.map((key, index) =>
+          str(key, `${path}.unset[${index}]`, { max: 128 })
+        ))]
+      }
       return {
         op: 'update',
         targetId: str(value['targetId'], `${path}.targetId`, { max: LIMITS.maxId }),
-        patch: sanitizeNodePatch(value['patch'], `${path}.patch`)
+        patch: sanitizeNodePatch(value['patch'], `${path}.patch`),
+        ...(unset !== undefined ? { unset } : {})
       }
     }
     case 'move': {
@@ -384,16 +395,18 @@ function sanitizeOp(value: unknown, path: string): PatchOp {
       }
     }
     case 'token': {
-      assertKeys(value, new Set(['op', 'name', 'key', 'value']), path)
+      assertKeys(value, new Set(['op', 'name', 'key', 'value', 'unset']), path)
       const name = value['name']
       if (typeof name !== 'string' || !TOKEN_GROUPS.has(name)) {
         fail(`${path}.name`, '必须是 color / space / text / radius')
       }
+      const unset = value['unset'] === undefined ? undefined : bool(value['unset'], `${path}.unset`)
       return {
         op: 'token',
         name: name as keyof DesignTokens,
         key: str(value['key'], `${path}.key`, { max: LIMITS.maxId }),
-        value: str(value['value'], `${path}.value`, { allowEmpty: true, max: LIMITS.maxString })
+        value: str(value['value'], `${path}.value`, { allowEmpty: true, max: LIMITS.maxString }),
+        ...(unset !== undefined ? { unset } : {})
       }
     }
     default:
