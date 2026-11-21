@@ -14,6 +14,7 @@
 import { ipcRenderer } from 'electron'
 import { matchesBinding, parseBinding } from '../shared/hotkeys'
 import { translate, type Lang } from '../shared/i18n'
+import { applyCursorCommand, installDesignOverlay } from './design-api'
 
 let uiLang: Lang = 'zh'
 function tr(key: Parameters<typeof translate>[1], vars?: Record<string, string | number>): string {
@@ -51,6 +52,15 @@ type OverlayCommand =
       elementCount?: number
     }
   | { kind: 'hideAll' }
+  // 主进程复用同一个 overlay:cmd 通道驱动多 agent 光标层（design-api 转发）。
+  | {
+      kind: 'cursor'
+      actor?: string
+      state?: string
+      x?: number
+      y?: number
+      durationMs?: number
+    }
 
 interface Nodes {
   host: HTMLElement
@@ -642,6 +652,12 @@ function setup(): void {
       /* visualization must never break the page */
     }
   })
+
+  try {
+    installDesignOverlay()
+  } catch {
+    /* the design/collaboration layer must never break the existing overlay */
+  }
 }
 
 // ============================ AI visualization ============================
@@ -756,6 +772,10 @@ function apply(cmd: OverlayCommand): void {
       cursorShown = false
       highlight.classList.remove('visible')
       status.classList.remove('visible')
+      break
+    }
+    case 'cursor': {
+      applyCursorCommand(cmd)
       break
     }
   }

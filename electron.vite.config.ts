@@ -11,7 +11,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: 'src/preload/index.ts',
-          overlay: 'src/overlay-preload/index.ts'
+          overlay: 'src/overlay-preload/index.ts',
+          canvas: 'src/canvas/preload.ts'
         },
         output: {
           format: 'cjs',

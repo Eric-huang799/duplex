@@ -44,6 +44,8 @@ export interface Tab {
   audioPlaying?: boolean
   /** In-memory session (no persistence, no history recording). */
   incognito?: boolean
+  /** 设计画布标签：由我们自己的本地页面提供，不允许导航离开。 */
+  canvas?: boolean
 }
 
 /** A tab URL remembered for the "recently closed" list. */
@@ -60,6 +62,11 @@ export class TabManager {
   private chromeOverlays = new Set<string>()
   private bounds: ContentBounds = { x: 0, y: 88, width: 1200, height: 760 }
   private watchdog: ReturnType<typeof setInterval> | null = null
+  /** 设计画布：preload 与页面路径由主进程注入（避免构造函数加参数）。 */
+  private canvasPreload: string | null = null
+  private canvasHtml: string | null = null
+  /** 画布快捷键（撤销/重做）由主进程处理：菜单角色会截走 Ctrl+Z，页面收不到。 */
+  private canvasShortcut: ((action: 'undo' | 'redo') => void) | null = null
   private shortcutsMap: Record<ShortcutAction, string> = { ...DEFAULT_SHORTCUTS }
 
   constructor(
@@ -178,6 +185,67 @@ export class TabManager {
     void view.webContents.loadURL(target)
     this.emit()
     return tab
+  }
+
+  /** 注入设计画布的 preload 与页面（构建产物路径由主进程决定）。 */
+  setCanvasSource(preload: string | null, html: string | null): void {
+    this.canvasPreload = preload
+    this.canvasHtml = html
+  }
+
+  /**
+   * 打开设计画布标签。
+   *
+   * 与普通标签的区别：用**专用 preload**（只暴露画布桥）、直接 loadFile 自己的页面、
+   * 并且**禁止任何后续导航**——agent 或页面都不能把这个标签变成别的网页。
+   */
+  createCanvasTab(): Tab | null {
+    if (!this.canvasPreload || !this.canvasHtml) return null
+    const view = new WebContentsView({
+      webPreferences: {
+        partition: 'persist:cobrowse',
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+        spellcheck: false,
+        preload: this.canvasPreload
+      }
+    })
+    const tab: Tab = { id: this.nextId++, view, logs: [], audioPlaying: false, canvas: true }
+    this.tabs.set(tab.id, tab)
+    this.win.contentView.addChildView(view)
+    view.setBounds(this.bounds)
+    view.setVisible(false)
+    this.wireEvents(tab)
+    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    view.webContents.on('will-navigate', (event) => event.preventDefault())
+    // Ctrl/Cmd+Z / Shift+Z / Y 在画布上必须走设计服务的撤销，而不是 Chromium 的 DOM undo：
+    // 后者只回滚页面节点、不回滚文档，会出现"撤销后节点还在、选中没了"的不一致。
+    view.webContents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.isAutoRepeat) return
+      if (!(input.control || input.meta)) return
+      const key = input.key.toLowerCase()
+      if (key !== 'z' && key !== 'y') return
+      event.preventDefault()
+      // Electron 的 before-input-event 里 Shift+Z 可能只表现在大写 key 上，两个信号都认
+      const wantsRedo = key === 'y' || input.shift === true || input.key === 'Z' || input.key === 'Y'
+      this.canvasShortcut?.(wantsRedo ? 'redo' : 'undo')
+    })
+    void view.webContents.loadFile(this.canvasHtml)
+    this.setActive(tab.id)
+    this.emit()
+    return tab
+  }
+
+  /** 是否是设计画布标签。 */
+  /** 注入画布的撤销/重做处理（由设计服务实现）。 */
+  setCanvasShortcutHandler(handler: ((action: 'undo' | 'redo') => void) | null): void {
+    this.canvasShortcut = handler
+  }
+
+  isCanvasTab(tabId: number | null | undefined): boolean {
+    return tabId != null && this.tabs.get(tabId)?.canvas === true
   }
 
   /** Resolve a keyboard event to a configured shortcut action, if any. */

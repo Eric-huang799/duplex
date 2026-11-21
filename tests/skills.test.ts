@@ -39,9 +39,12 @@ function recordingConfirm(approved: boolean): {
 let tmpRoot: string
 let duplexRoot: string
 let claudeRoot: string
+let originalDataDir: string | undefined
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'duplex-skills-'))
+  originalDataDir = process.env['DUPLEX_DATA_DIR']
+  process.env['DUPLEX_DATA_DIR'] = tmpRoot
   duplexRoot = path.join(tmpRoot, 'duplex-skills')
   claudeRoot = path.join(tmpRoot, 'claude-skills')
   fs.mkdirSync(duplexRoot, { recursive: true })
@@ -72,6 +75,8 @@ beforeEach(() => {
 
 afterEach(() => {
   __setRootsForTest()
+  if (originalDataDir === undefined) delete process.env['DUPLEX_DATA_DIR']
+  else process.env['DUPLEX_DATA_DIR'] = originalDataDir
   fs.rmSync(tmpRoot, { recursive: true, force: true })
 })
 
@@ -292,7 +297,7 @@ describe('createSkillToolHandlers', () => {
     expect(calls).toHaveLength(1)
     expect(calls[0].cwd).toBe(path.join(claudeRoot, 'beta'))
     expect(calls[0].skill).toBe('claude/beta')
-    expect(calls[0].command).toContain('node')
+    expect(calls[0].command).toContain(process.execPath)
     expect(calls[0].command).toContain('scripts')
   })
 
@@ -305,7 +310,7 @@ describe('createSkillToolHandlers', () => {
       args: ['a', 'b']
     })
     const out = toolText(result)
-    expect(result.isError).toBeFalsy()
+    expect(result.isError, out).toBeFalsy()
     expect(out).toContain('exit code: 0')
     expect(out).toContain('echo:a,b')
     expect(out).toContain('stderr-line')

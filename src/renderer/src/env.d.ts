@@ -113,6 +113,10 @@ interface CobrowseApi {
   }>
   settingsRestorePreAi(): Promise<{ ok: boolean; error?: string }>
   settingsConsents(): Promise<{ consents: Array<{ actor: string; origin: string }> }>
+  settingsConsentTrust(): Promise<{ trusted: boolean }>
+  settingsSetConsentTrust(
+    enabled: boolean
+  ): Promise<{ ok: boolean; trusted: boolean; canceled?: boolean }>
   settingsConsentRevoke(actor: string, origin: string): Promise<{ ok: boolean; removed: boolean }>
   appVersion(): Promise<{ version: string; packaged: boolean }>
   updateStatus(): Promise<{ state: string; version?: string; error?: string }>
@@ -148,6 +152,7 @@ interface CobrowseApi {
   agentReset(): Promise<unknown>
   agentNewSession(): Promise<{ ok: boolean; error?: string }>
   agentSessions(): Promise<Array<{ id: string; title: string; updatedAt: number; current: boolean }>>
+  designOpenCanvas(): Promise<{ ok: boolean; tabId?: number; error?: string }>
   /** 并行内置会话：启动一个后台会话（不打断当前对话）。 */
   agentParallelStart(
     text: string,
@@ -285,6 +290,7 @@ interface CobrowseApi {
   emergencyKeysGet(): Promise<{ keys: string[] }>
   emergencyKeysSet(keys: string[]): Promise<{ ok: boolean; keys?: string[]; error?: string }>
   emergencyTakeover(): void
+  emergencyState(): Promise<{ paused: boolean; pausedAt: number }>
   resumeAi(): void
   onEmergencyState(cb: (s: { paused: boolean }) => void): () => void
   onEmergencyStop(

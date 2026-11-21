@@ -21,6 +21,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
   const [consents, setConsents] = useState<Array<{ actor: string; origin: string }>>([])
+  const [trusted, setTrusted] = useState(false)
   const [rulesNote, setRulesNote] = useState('')
   const [version, setVersion] = useState('')
   const [update, setUpdate] = useState<{ state: string; version?: string; error?: string }>({
@@ -61,6 +62,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
     try {
       setAdblock(await window.cobrowse.settingsAdblockStatus())
       setConsents((await window.cobrowse.settingsConsents()).consents ?? [])
+      setTrusted((await window.cobrowse.settingsConsentTrust()).trusted ?? false)
     } catch {
       setAdblock(null)
     }
@@ -169,6 +171,29 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
         <div className="setp-main">
           <div className="setp-label">{t('settings.consents')}</div>
           <div className="setp-hint">{t('settings.consentsHint')}</div>
+          <div className="setp-hint">
+            {trusted ? t('settings.trustModeOn') : t('settings.trustMode')}
+            {' '}
+            <button
+              className="setp-btn"
+              disabled={busy}
+              title={t('settings.trustModeHint')}
+              onClick={() => {
+                void (async () => {
+                  setBusy(true)
+                  try {
+                    const result = await window.cobrowse.settingsSetConsentTrust(!trusted)
+                    if (result.ok) setTrusted(result.trusted)
+                    else if (!result.canceled) setNote(t('settings.saveFailed'))
+                  } finally {
+                    setBusy(false)
+                  }
+                })()
+              }}
+            >
+              {trusted ? t('settings.trustModeOff') : t('settings.trustModeEnable')}
+            </button>
+          </div>
           {consents.length === 0 ? (
             <div className="setp-hint">{t('settings.consentsEmpty')}</div>
           ) : (

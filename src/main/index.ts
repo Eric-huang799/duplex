@@ -30,7 +30,8 @@ import {
   isAiPaused,
   overlaySend,
   pauseAi,
-  resumeAi
+  resumeAi,
+  aiPausedAt
 } from './overlay'
 import { abortOperation, beginOperation, endOperation, runInOperation } from './interrupt'
 import {
@@ -77,6 +78,7 @@ import {
 import { SessionBus } from './session-bus'
 import { AgentRuntime } from './agent/runtime'
 import { BackgroundSessionRunner, sessionCallerId } from './agent/session-runner'
+import { createDesignWiring } from './design-wiring'
 import { createSkillToolHandlers } from './agent/skill-tools'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { createSitePermissionHandlers } from './agent/permission-tools'
@@ -372,6 +374,12 @@ async function ensureAgentAccess(
     agentMayBrowseUnlisted: true
   })
   if (verdict.decision === 'allow') return { ok: true }
+  if (verdict.decision === 'need-consent' && siteConsent.isTrustedSession()) {
+    const trustedOrigin = accessOrigin(targetUrl) ?? targetUrl
+    logLine(`[consent] 信任模式放行 ${actor} 访问 ${trustedOrigin}（用户已在本会话选择全部放行）`)
+    timeline?.record({ kind: 'takeover', detail: `信任模式放行 ${actor} 访问 ${trustedOrigin}` })
+    return { ok: true }
+  }
   if (verdict.decision === 'deny') return { ok: false, error: `${verdict.reason ?? '拒绝访问'}。${DENIED_GUIDANCE}` }
 
   const origin = accessOrigin(targetUrl) ?? targetUrl
@@ -1379,6 +1387,8 @@ let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
 /** 并行内置会话的运行器（窗口创建时装配，演示脚本在 ready-to-show 里用）。 */
 let parallelRunnerRef: BackgroundSessionRunner | null = null
+/** 设计画布的接线（窗口创建时装配；窗口关闭时释放）。 */
+let designWiring: ReturnType<typeof createDesignWiring> | null = null
 
 /** Absolute path of the MCP bridge entry point external CLIs (node) will execute. */
 function tUnknown(): string {
@@ -1550,6 +1560,15 @@ async function start(): Promise<void> {
       }
     }
     const caller = currentCaller()
+    // 设计画布工具：不需要标签，直接走 DesignService
+    if (name.startsWith('design_') && designWiring) {
+      const designAc = beginOperation({ owner: caller, mutates: true })
+      try {
+        return await runInOperation(designAc, () => designWiring!.runTool(name, args))
+      } finally {
+        endOperation(designAc)
+      }
+    }
     if (name === 'resume_tab') {
       try {
         const targetId = collaboration.resolveTab(
@@ -1775,6 +1794,24 @@ async function start(): Promise<void> {
   )
   parallelRunnerRef = parallelRunner
   ipcMain.handle('agent:parallel-running', () => parallelRunner.runningIds())
+
+  // 设计画布：接线集中到 design-wiring（服务/IPC/画布消息/agent 工具）
+  designWiring = createDesignWiring({
+    win: () => win,
+    log: logLine,
+    caller: () => currentCaller(),
+    openCanvas: () => {
+      if (!tabs) return null
+      // 画布标签的 Ctrl+Z / Shift+Z / Y 由主进程拦截并交给设计服务。
+      // 必须在这里注入：createDesignWiring 执行时 tabs 还没创建（httpServer 早于 TabManager）。
+      tabs.setCanvasShortcutHandler((action) => designWiring?.shortcut(action))
+      tabs.setCanvasSource(
+        path.join(app.getAppPath(), 'out', 'preload', 'canvas.cjs'),
+        path.join(app.getAppPath(), 'out', 'canvas', 'index.html')
+      )
+      return tabs.createCanvasTab()?.view.webContents ?? null
+    }
+  })
 
   httpServer = await startHttpServer({
     token: TOKEN,
@@ -2082,6 +2119,8 @@ function createWindow(): void {
   win.on('closed', () => {
     // macOS keeps the app resident after the window closes; drop the window and
     // its tab manager so a later `activate` can rebuild both cleanly.
+    designWiring?.dispose()
+    designWiring = null
     const oldTabs = tabs
     win = null
     tabs = null
@@ -2921,6 +2960,33 @@ function setupIpc(): void {
     if (result.removed) logLine(`[consent] 用户撤销了 ${actor} 对 ${origin} 的授权`)
     return result
   })
+  ipcMain.handle('settings:consent-trust', () => ({ trusted: siteConsent?.isTrustedSession() ?? false }))
+  ipcMain.handle('settings:consent-trust-set', async (_event, enabled: unknown) => {
+    if (!siteConsent) return { ok: false, trusted: false }
+    if (enabled !== true) {
+      const trusted = siteConsent.setTrustedSession(false)
+      return { ok: true, trusted }
+    }
+    // 打开必须由用户在原生对话框里明确确认：默认按钮是"取消"，关闭对话框也算取消。
+    const choice = await dialog.showMessageBox(win!, {
+      type: 'warning',
+      title: '本会话全部放行',
+      message: '要让 AI 在本次运行里跳过站点访问确认吗？',
+      detail:
+        '这只会跳过"询问你"这一步，不会绕过访问策略里明令禁止的站点。\n\n' +
+        '风险：AI 可能在你没看到的情况下访问敏感站点（邮箱、支付、政务、医疗等）。\n' +
+        '关闭窗口或重启应用后自动失效，也可以随时在设置里关掉。',
+      buttons: ['取消', '我确认，本会话全部放行'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    })
+    if (choice.response !== 1) return { ok: false, trusted: false, canceled: true }
+    const trusted = siteConsent.setTrustedSession(true)
+    logLine('[consent] 用户开启了本会话全部放行')
+    timeline?.record({ kind: 'takeover', detail: '用户开启本会话全部放行（站点访问不再逐次确认）' })
+    return { ok: true, trusted }
+  })
   ipcMain.handle('downloads:clear', () => { downloads.clear(); return { ok: true } })
   ipcMain.handle('downloads:open', (_e, id: string) => downloads.open(id))
   ipcMain.handle('downloads:reveal', (_e, id: string) => downloads.reveal(id))
@@ -3599,6 +3665,12 @@ function setupIpc(): void {
       return { ok: false, error: (e as Error)?.message ?? String(e) }
     }
   })
+
+  /**
+   * 急停状态会跨重启保留（settings.aiPaused）。渲染层必须在挂载时主动拉一次，
+   * 否则重启后没有任何横幅/恢复入口，用户只会看到"所有操作都执行不了"。
+   */
+  ipcMain.handle('emergency:state-get', () => ({ paused: isAiPaused(), pausedAt: aiPausedAt() }))
 
   ipcMain.on('emergency:resume', () => {
     if (resumeAi()) {

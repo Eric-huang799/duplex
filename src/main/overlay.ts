@@ -29,6 +29,18 @@ export type OverlayCommand =
   | { kind: 'clearStatus' }
   | { kind: 'annotationMode'; active?: boolean; lang?: 'zh' | 'en' }
   | {
+      /**
+       * 多 agent 光标遥测：状态与坐标由执行方给，overlay 只负责如实呈现。
+       * `blocked`/`paused` 时光标必须停住——不许出现"完成"的视觉。
+       */
+      kind: 'cursor'
+      actor: string
+      state: 'thinking' | 'moving' | 'clicking' | 'typing' | 'blocked' | 'paused' | 'failed'
+      x?: number
+      y?: number
+      durationMs?: number
+    }
+  | {
       kind: 'annotationResult'
       annotationId: string
       ok: boolean

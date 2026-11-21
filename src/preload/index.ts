@@ -121,6 +121,12 @@ const api = {
     origin: string
   ): Promise<{ ok: boolean; removed: boolean }> =>
     ipcRenderer.invoke('settings:consent-revoke', actor, origin),
+  settingsConsentTrust: (): Promise<{ trusted: boolean }> =>
+    ipcRenderer.invoke('settings:consent-trust'),
+  settingsSetConsentTrust: (
+    enabled: boolean
+  ): Promise<{ ok: boolean; trusted: boolean; canceled?: boolean }> =>
+    ipcRenderer.invoke('settings:consent-trust-set', enabled),
   // ── 关于与更新 ──────────────────────────────────────────────────────────
   appVersion: (): Promise<{ version: string; packaged: boolean }> => ipcRenderer.invoke('app:version'),
   updateStatus: (): Promise<{ state: string; version?: string; error?: string }> =>
@@ -291,6 +297,8 @@ const api = {
   agentReset: () => ipcRenderer.invoke('agent:reset') as Promise<unknown>,
   agentNewSession: () => ipcRenderer.invoke('agent:new-session') as Promise<unknown>,
   agentSessions: () => ipcRenderer.invoke('agent:sessions') as Promise<unknown>,
+  /** 打开设计画布标签（本地页面，不随网页导航）。 */
+  designOpenCanvas: () => ipcRenderer.invoke('design:open-canvas') as Promise<{ ok: boolean; tabId?: number; error?: string }>,
   agentSwitchSession: (id: string) =>
     ipcRenderer.invoke('agent:switch-session', id) as Promise<{ ok: boolean; error?: string }>,
   agentDeleteSession: (id: string) =>
@@ -436,6 +444,8 @@ const api = {
   emergencyTakeover: (): void => {
     ipcRenderer.send('overlay:event', { kind: 'takeover', via: 'hotkey' })
   },
+  emergencyState: (): Promise<{ paused: boolean; pausedAt: number }> =>
+    ipcRenderer.invoke('emergency:state-get'),
   resumeAi: (): void => {
     ipcRenderer.send('emergency:resume')
   },
