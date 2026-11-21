@@ -8,6 +8,20 @@
 
 「设计师 + agent 共同编辑页面」的**最小闭环已经能跑**：画布渲染、patch 事务、拖拽/槽位交换、定位器/放大镜/测量、剪贴板快捷键、每轮 git、静态站点导出、多 agent 光标层；agent 侧 6 个 `design_*` 工具可经 MCP 调用并自动打开画布。门禁绿，**未合并进 master**，PR 仍是 Draft。
 
+## 最近一轮：评审修复（6587019）
+
+外部评审在打包源码上做了一轮加固，已合入并全量验证：
+
+- **模型/校验**：插入/替换拒绝 id 冲突、replace 必须保留 id、move 禁止移入自身后代与锁定目标、token 可删除（unset）、IPC 校验补上 update.unset（此前"回到流式"过不了 IPC）。
+- **服务**：open() 先校验 projectId 再改状态；unset 的撤销回退为整节点快照；导出时构建提交失败直接报错，不再打包旧 HEAD；state 事件带真实 actor。
+- **接线**：画布消息与 agent 工具参数统一走 validator（user-update 以前是原样信任）。
+- **导出/CSS**：新增 src/shared/design/css.ts（画布与静态站点共用属性/值安全网与标签白名单）；类名改为 id 的 hex 编码避免碰撞；input 导出 value+readonly；绝对定位只在坐标确实为数字时生效。
+- **技能**：.js 技能用 process.execPath + ELECTRON_RUN_AS_NODE=1，不再假设全局 node；启动失败给出真实错误。
+
+**已知取舍**：画布不再接收增量 patch 消息（避免把含被拒条目的原始 ops 重放给页面），改为服务发布最终 document 触发整页更新。实时显示保留，但"diff 高亮动画"暂时缺失；恢复一条只含成功 op 的 patch 事件是明确的后续项。
+
+测试：**803 passed / 5 skipped（74 文件）**。
+
 ## 门禁与证据
 
 ```
@@ -77,7 +91,8 @@ node tools/design-lock-variants-check.mjs $port # 锁定拒绝 + 变体弹层
 4. **导出不含图片/字体/脚本**：`image` 节点导出成空 div；没有资源流水线。
 5. **撤销栈只在内存**：重启后只能靠 git 轮次回退；约束/变体不进撤销栈。
 6. **信任模式 UI 未手动验收**：需要真人点原生确认框（默认按钮是取消）；代码只允许"跳过询问"，不覆盖策略 deny，仅内存态。
-7. **急停的设置页没有常驻状态指示**：目前靠顶部横幅；建议在设置页加显式开关/状态。
+7. **增量 patch 动画缺失**（评审修复后画布收全量 document，见上）；恢复只含成功 op 的 patch 事件。
+8. **急停的设置页没有常驻状态指示**：目前靠顶部横幅；建议在设置页加显式开关/状态。
 8. **`src/canvas/tsconfig.json` 已并入 typecheck**；以后新增构建入口记得同步，否则新目录会悄悄逃过类型检查。
 9. **provider key 在 profile 的 settings.json 里是明文**（历史行为），发布前应迁 `safeStorage`；测试密钥建议轮换。
 
