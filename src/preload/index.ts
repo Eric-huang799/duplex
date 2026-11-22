@@ -299,6 +299,24 @@ const api = {
   agentSessions: () => ipcRenderer.invoke('agent:sessions') as Promise<unknown>,
   /** 打开设计画布标签（本地页面，不随网页导航）。 */
   designOpenCanvas: () => ipcRenderer.invoke('design:open-canvas') as Promise<{ ok: boolean; tabId?: number; error?: string }>,
+  designState: (): Promise<{ ok: boolean; state?: { projectId: string; version: number; dirty: boolean; canUndo: boolean; canRedo: boolean }; name?: string }> =>
+    ipcRenderer.invoke('design:state-get'),
+  designInsertImage: (assetId: string): Promise<{ ok: boolean; id?: string; error?: string }> =>
+    ipcRenderer.invoke('design:insert-image', { assetId }),
+  designUndo: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('design:undo'),
+  designCommit: (summary: string): Promise<{ ok: boolean; error?: string; skipped?: boolean }> =>
+    ipcRenderer.invoke('design:commit', { summary }),
+  assetsList: (): Promise<{ assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }> }> =>
+    ipcRenderer.invoke('assets:list'),
+  assetsImport: (paths: string[]): Promise<{ ok: boolean; imported: string[]; errors?: string[]; assets: Array<{ id: string; name: string }> }> =>
+    ipcRenderer.invoke('assets:import', paths),
+  assetsImportDialog: (): Promise<{
+    ok: boolean
+    canceled?: boolean
+    imported: string[]
+    errors?: string[]
+    assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
+  }> => ipcRenderer.invoke('assets:import-dialog'),
   agentSwitchSession: (id: string) =>
     ipcRenderer.invoke('agent:switch-session', id) as Promise<{ ok: boolean; error?: string }>,
   agentDeleteSession: (id: string) =>

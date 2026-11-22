@@ -43,6 +43,8 @@ export interface DesignWiringDeps {
   caller: () => string
   /** 打开画布标签并返回它的 webContents。 */
   openCanvas: () => WebContents | null
+  /** 本地资产库：导出时把图片复制进 site/assets（可选）。 */
+  assets?: { copy(id: string, targetDir: string): string | null }
 }
 
 const DEFAULT_PROJECT = 'design-1'
@@ -467,7 +469,7 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     }
     if (name === 'design_export') {
       const target = path.join(appDownloads(), `${projectId}-design-${Date.now().toString(36)}.zip`)
-      const outcome = service.exportZip(target)
+      const outcome = service.exportZip(target, deps.assets)
       if (!outcome.ok) return errorText(`导出失败：${outcome.error ?? '未知错误'}`)
       return text(`已导出：${outcome.path ?? target}`)
     }

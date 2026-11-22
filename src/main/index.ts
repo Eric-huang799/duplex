@@ -41,6 +41,7 @@ import {
   type AnnotationSubmitPayload
 } from './annotations'
 import { cobrowseDir, removeEndpoint, writeEndpoint } from '../shared/endpoint'
+import { AssetStore } from './assets'
 import { normalizeBinding, validateBinding } from '../shared/hotkeys'
 import {
   DEFAULT_SHORTCUTS,
@@ -87,7 +88,8 @@ import { parseFilterList } from './adblock/filter-list'
 import { AdblockEngine } from './adblock/matcher'
 import { cosmeticCssFor } from './adblock/cosmetic'
 import { RuleSource, type RuleFetchResult } from './adblock/rule-source'
-import { net } from 'electron'
+import { net, protocol } from 'electron'
+import { pathToFileURL } from 'node:url'
 import { saveAdblockEnabled } from './settings'
 import { ensureRestorePoint, restoreFromPoint } from './settings-restore'
 import { isOllamaEndpoint, probeOllamaModel } from './agent/llm/ollama-native'
@@ -1389,6 +1391,13 @@ let agentRuntime: AgentRuntime | null = null
 let parallelRunnerRef: BackgroundSessionRunner | null = null
 /** 设计画布的接线（窗口创建时装配；窗口关闭时释放）。 */
 let designWiring: ReturnType<typeof createDesignWiring> | null = null
+/** 本地资产库（start 时创建）。 */
+let assetStore: AssetStore | null = null
+
+// 画布图片只通过本地协议加载：duplex-asset://asset/<id>
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'duplex-asset', privileges: { standard: true, secure: true, supportFetchAPI: true } }
+])
 
 /** Absolute path of the MCP bridge entry point external CLIs (node) will execute. */
 function tUnknown(): string {
@@ -1795,11 +1804,35 @@ async function start(): Promise<void> {
   parallelRunnerRef = parallelRunner
   ipcMain.handle('agent:parallel-running', () => parallelRunner.runningIds())
 
+  assetStore = new AssetStore(path.join(cobrowseDir(), 'assets'))
+  // 画布标签跑在 persist:cobrowse 分区里，协议必须注册到同一个 session，
+  // 默认 session 上的 handler 对画布不可见（fetch 会直接 Failed to fetch）。
+  session.fromPartition('persist:cobrowse').protocol.handle('duplex-asset', async (request) => {
+    try {
+      const url = new URL(request.url)
+      const id = decodeURIComponent(url.pathname.replace(/^\/+/, ''))
+      const entry = assetStore?.get(id)
+      const file = assetStore?.filePath(id)
+      if (!entry || !file) return new Response('asset not found', { status: 404 })
+      // 直接读文件返回 Response：net.fetch(file://) 在自定义 scheme 下不可靠
+      const data = fs.readFileSync(file)
+      return new Response(data, {
+        headers: {
+          'content-type': entry.mime,
+          'cache-control': 'private, max-age=3600'
+        }
+      })
+    } catch {
+      return new Response('bad asset request', { status: 400 })
+    }
+  })
+
   // 设计画布：接线集中到 design-wiring（服务/IPC/画布消息/agent 工具）
   designWiring = createDesignWiring({
     win: () => win,
     log: logLine,
     caller: () => currentCaller(),
+    assets: assetStore ?? undefined,
     openCanvas: () => {
       if (!tabs) return null
       // 画布标签的 Ctrl+Z / Shift+Z / Y 由主进程拦截并交给设计服务。
@@ -2951,6 +2984,77 @@ function setupIpc(): void {
   ipcMain.handle('app:update-status', () => appUpdater?.status() ?? { state: 'disabled' })
   ipcMain.handle('app:update-check', async () => (appUpdater ? await appUpdater.check() : { state: 'disabled' }))
   ipcMain.handle('app:update-install', () => ({ ok: appUpdater?.install() ?? false }))
+  ipcMain.handle('assets:list', () => ({ assets: assetStore?.list() ?? [] }))
+  ipcMain.handle('assets:import', (_event, paths: unknown) => {
+    if (!assetStore) return { ok: false, error: '资产库未就绪', imported: [], assets: [] }
+    const list = Array.isArray(paths) ? paths.filter((item): item is string => typeof item === 'string') : []
+    const imported: string[] = []
+    const errors: string[] = []
+    for (const candidate of list.slice(0, 50)) {
+      try {
+        if (!fs.statSync(candidate).isFile()) continue
+        imported.push(assetStore.importFile(candidate).id)
+      } catch (error) {
+        errors.push(`${path.basename(candidate)}：${(error as Error).message}`)
+      }
+    }
+    return { ok: imported.length > 0, imported, errors, assets: assetStore.list() }
+  })
+  ipcMain.handle('assets:import-dialog', async () => {
+    if (!assetStore) return { ok: false, error: '资产库未就绪', imported: [], assets: [] }
+    const picked = await dialog.showOpenDialog(win!, {
+      title: '导入资产',
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: '图片与文件', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'pdf', 'txt', 'md', 'json'] },
+        { name: '全部文件', extensions: ['*'] }
+      ]
+    })
+    if (picked.canceled || picked.filePaths.length === 0) {
+      return { ok: false, canceled: true, imported: [], assets: assetStore.list() }
+    }
+    const imported: string[] = []
+    const errors: string[] = []
+    for (const candidate of picked.filePaths.slice(0, 50)) {
+      try {
+        imported.push(assetStore.importFile(candidate).id)
+      } catch (error) {
+        errors.push(`${path.basename(candidate)}：${(error as Error).message}`)
+      }
+    }
+    return { ok: imported.length > 0, imported, errors, assets: assetStore.list() }
+  })
+  ipcMain.handle('design:state-get', () => {
+    if (!designWiring) return { ok: false }
+    return { ok: true, state: designWiring.service.state(), name: designWiring.service.current().name }
+  })
+  ipcMain.handle('design:insert-image', (_event, payload: { assetId?: unknown }) => {
+    const assetId = typeof payload?.assetId === 'string' ? payload.assetId.trim() : ''
+    if (!designWiring || !assetId) return { ok: false, error: '缺少资产或画布' }
+    const entry = assetStore?.get(assetId)
+    if (!entry) return { ok: false, error: '资产不存在' }
+    const id = `image-${Date.now().toString(36)}`
+    const result = designWiring.service.applyOps(
+      'user',
+      [
+        {
+          op: 'insert',
+          parentId: designWiring.service.current().root.id,
+          node: {
+            id,
+            type: 'image',
+            text: entry.name,
+            style: { assetId, minHeight: '220px', width: '100%' }
+          }
+        }
+      ],
+      { allowLocked: true }
+    )
+    if (result.applied === 0) {
+      return { ok: false, error: result.rejected.map((item) => item.reason).join('；') || '插入失败' }
+    }
+    return { ok: true, id }
+  })
   ipcMain.handle('settings:consents', () => ({ consents: siteConsent?.list() ?? [] }))
   ipcMain.handle('settings:consent-revoke', (_e, actor: unknown, origin: unknown) => {
     if (typeof actor !== 'string' || typeof origin !== 'string' || !siteConsent) {

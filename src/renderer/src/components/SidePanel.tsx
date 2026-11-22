@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/protocol'
 import type { LocalMessage } from '../App'
 import { ToolCard } from './ToolCard'
+import { WorkspaceTray } from './WorkspaceTray'
 import { PermissionCard, type PermissionRequest } from './PermissionCard'
 import { MarkdownProse } from './Markdown'
 import { ModelAccessPanel } from './ModelAccessPanel'
@@ -1009,6 +1010,8 @@ export function SidePanel({
           {notice}
         </div>
       )}
+
+      {isAgent && <WorkspaceTray />}
 
       <div className="panel-list" ref={listRef} onScroll={onScroll}>
         {isAgent ? (

@@ -75,7 +75,9 @@ export const ALLOWED_TAGS: ReadonlySet<string> = new Set([
   'code',
   'button',
   'input',
-  'label'
+  'label',
+  // 图片：src 只由渲染/导出按资产 id 显式写入，不来自 style 字符串
+  'img'
 ])
 
 const DEFAULT_TAG: Record<DesignNode['type'], string> = {
@@ -87,7 +89,7 @@ const DEFAULT_TAG: Record<DesignNode['type'], string> = {
   heading: 'h2',
   button: 'button',
   input: 'input',
-  image: 'div',
+  image: 'img',
   spacer: 'div'
 }
 

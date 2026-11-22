@@ -181,3 +181,16 @@ agent 与用户都走 `applyPatch`。撤销 = 反向 patch，不依赖 git；git
 - 每次放行都写日志并进时间线，便于事后核对；
 - 不写入 `site-consent.json`，不会变成长期授权。
 
+
+## 对话内工作区（artifact）与本地资产
+
+设计能力现在以**卡片形式进入对话**，而不是在气泡里重造一个编辑器：
+
+- `SidePanel` 顶部新增 `WorkspaceTray`：设计画布状态（第 N 轮 / 是否有未提交改动）+ 打开/撤销/提交，以及本地资产列表；
+- 画布仍是独立标签，卡片只显示状态和动作；agent 的 patch 通过设计服务更新状态，不复制文档；
+- 资产入口：「+ 导入」打开原生文件选择（也可走 `assetsImport(paths)`）；内容按 sha256 寻址，同内容自动去重，单文件上限 64 MB；
+- 点资产 chip → 插入为 `image` 节点（`style.assetId`），画布用本地协议 `duplex-asset://asset/<id>` 加载；
+- 导出时把图片复制进 `site/assets/`，HTML 改写为相对路径（`src="assets/…"`），zip 可直接打开；
+- 隐私：资产**只存本地** `<cobrowseDir>/assets`，不做任何上传；文件名清洗、路径分隔符与控制字符被替换。
+
+局限（下一轮）：没有删除/重命名/标签；没有 EXIF/来源展示；agent 还没有 `asset_*` 工具；SVG 依赖 `<img>` 的脚本禁用行为，未做额外清洗。

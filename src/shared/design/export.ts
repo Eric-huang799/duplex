@@ -37,7 +37,14 @@ function nodeClass(node: DesignNode): string {
   return `d-${hex || 'empty'}`
 }
 
-function renderNode(doc: DesignDocument, node: DesignNode, depth: number): string {
+type AssetHref = (assetId: string) => string | null
+
+function renderNode(
+  doc: DesignDocument,
+  node: DesignNode,
+  depth: number,
+  assetHref?: AssetHref
+): string {
   const pad = '  '.repeat(depth)
   const tag = elementTagFor(node)
   const classes = ['d-node', nodeClass(node)].join(' ')
@@ -47,11 +54,20 @@ function renderNode(doc: DesignDocument, node: DesignNode, depth: number): strin
     attrs.push('value="' + escapeHtml(node.text ?? '') + '"', 'readonly')
     return `${pad}<input ${attrs.join(' ')} />`
   }
+  if (tag === 'img') {
+    const assetId = typeof node.style?.['assetId'] === 'string' ? node.style['assetId'].trim() : ''
+    const href = assetId && assetHref ? assetHref(assetId) : null
+    if (href) attrs.push(`src="${escapeHtml(href)}"`)
+    attrs.push(`alt="${escapeHtml(node.text ?? '')}"`, 'loading="lazy"')
+    return `${pad}<img ${attrs.join(' ')} />`
+  }
   const text = node.text ? escapeHtml(node.text) : ''
   if ((node.children?.length ?? 0) === 0) {
     return `${pad}<${tag} ${attrs.join(' ')}>${text}</${tag}>`
   }
-  const inner = node.children!.map((child) => renderNode(doc, child, depth + 1)).join('\n')
+  const inner = node
+    .children!.map((child) => renderNode(doc, child, depth + 1, assetHref))
+    .join('\n')
   return `${pad}<${tag} ${attrs.join(' ')}>\n${text ? `${pad}  ${text}\n` : ''}${inner}\n${pad}</${tag}>`
 }
 
@@ -81,8 +97,12 @@ function renderRules(doc: DesignDocument, node: DesignNode): string[] {
   }
   if (node.type === 'stack') rules.push('  display: flex;', '  flex-direction: column;')
   if (node.type === 'grid') rules.push('  display: grid;')
+  if (node.type === 'image') {
+    rules.push('  display: block;', '  width: 100%;', '  height: auto;', '  object-fit: cover;')
+  }
   for (const [key, raw] of Object.entries(style)) {
-    if (key === 'x' || key === 'y') continue
+    // assetId 是资产引用，不是 CSS 属性
+    if (key === 'x' || key === 'y' || key === 'assetId') continue
     if (key === 'w') {
       const w = Number(resolveValue(doc, raw))
       if (Number.isFinite(w)) rules.push(`  width: ${((w / doc.frame.width) * 100).toFixed(3)}%;`)
@@ -106,8 +126,11 @@ export interface StaticSite {
   css: string
 }
 
-export function renderStaticSite(doc: DesignDocument): StaticSite {
-  const body = renderNode(doc, doc.root, 2)
+export function renderStaticSite(
+  doc: DesignDocument,
+  options: { assetHref?: AssetHref } = {}
+): StaticSite {
+  const body = renderNode(doc, doc.root, 2, options.assetHref)
   const html = `<!doctype html>
 <html lang="zh-CN">
 <head>

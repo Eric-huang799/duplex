@@ -168,3 +168,20 @@ describe('静态站点导出（可交付）', () => {
     }
   })
 })
+
+describe('静态导出：图片资产', () => {
+  it('图片节点按 assetHref 输出本地相对路径', () => {
+    const doc = emptyDocument('t', 'img')
+    doc.root.children = [
+      { id: 'hero-img', type: 'image', text: '封面', style: { assetId: 'a-1234567890abcdef' } }
+    ]
+    const site = renderStaticSite(doc, {
+      assetHref: (id) => (id === 'a-1234567890abcdef' ? 'assets/a-1234567890abcdef.png' : null)
+    })
+    expect(site.html).toContain('<img')
+    expect(site.html).toContain('src="assets/a-1234567890abcdef.png"')
+    expect(site.html).toContain('alt="封面"')
+    expect(site.css).toContain('object-fit: cover')
+    expect(site.css).not.toContain('assetId')
+  })
+})

@@ -200,6 +200,7 @@ function defaultDeclarations(doc: DesignDocument, type: NodeType): Array<[string
       put('border-radius', radius('md'))
       out.push(['display', 'flex'], ['align-items', 'center'], ['justify-content', 'center'])
       out.push(['min-height', '160px'], ['overflow', 'hidden'])
+      out.push(['object-fit', 'cover'])
       break
     case 'spacer':
       put('height', space('5'))
@@ -277,7 +278,8 @@ function applyNodeStyles(
   }
 
   for (const [property, raw] of Object.entries(node.style ?? {})) {
-    if (PLACEMENT_KEYS.has(property)) continue
+    // placement 与资产引用都不是 CSS 属性
+    if (PLACEMENT_KEYS.has(property) || property === 'assetId') continue
     const value = resolveStyleValue(doc.tokens, raw)
     if (value !== null) add(property, value)
   }
@@ -336,6 +338,14 @@ function createNodeElement(node: DesignNode): HTMLElement {
   element.dataset.did = node.id
   element.dataset.type = node.type
   setNodeTabBehavior(element)
+  // 图片节点只认本地资产协议：绝不接受 style 里的 URL（避免把画布变成网络出口）
+  if (element instanceof HTMLImageElement) {
+    const assetId = typeof node.style?.['assetId'] === 'string' ? node.style['assetId'].trim() : ''
+    element.alt = node.text ?? ''
+    element.draggable = false
+    element.decoding = 'async'
+    if (assetId) element.src = `duplex-asset://asset/${encodeURIComponent(assetId)}`
+  }
   return element
 }
 

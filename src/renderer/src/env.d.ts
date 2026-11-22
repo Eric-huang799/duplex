@@ -153,6 +153,27 @@ interface CobrowseApi {
   agentNewSession(): Promise<{ ok: boolean; error?: string }>
   agentSessions(): Promise<Array<{ id: string; title: string; updatedAt: number; current: boolean }>>
   designOpenCanvas(): Promise<{ ok: boolean; tabId?: number; error?: string }>
+  designState(): Promise<{
+    ok: boolean
+    state?: { projectId: string; version: number; dirty: boolean; canUndo: boolean; canRedo: boolean }
+    name?: string
+  }>
+  designInsertImage(assetId: string): Promise<{ ok: boolean; id?: string; error?: string }>
+  designUndo(): Promise<{ ok: boolean; error?: string }>
+  designCommit(summary: string): Promise<{ ok: boolean; error?: string; skipped?: boolean }>
+  assetsList(): Promise<{
+    assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
+  }>
+  assetsImport(
+    paths: string[]
+  ): Promise<{ ok: boolean; imported: string[]; errors?: string[]; assets: Array<{ id: string; name: string }> }>
+  assetsImportDialog(): Promise<{
+    ok: boolean
+    canceled?: boolean
+    imported: string[]
+    errors?: string[]
+    assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
+  }>
   /** 并行内置会话：启动一个后台会话（不打断当前对话）。 */
   agentParallelStart(
     text: string,

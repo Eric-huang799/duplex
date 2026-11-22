@@ -548,16 +548,35 @@ export class DesignService {
    * 导出最近一轮（HEAD）为 zip。注意：导出的是**已提交**的内容，
    * 未 commit 的 applyOps 不在 zip 里（需要最新内容请先 commitRound）。
    */
-  exportZip(targetPath: string): ExportOutcome {
+  /**
+   * 导出最近一轮为 zip。
+   *
+   * 传入 assets 时会把图片资产复制进 site/assets 并写成相对路径；
+   * 未传时图片节点保留空 src（导出仍是可打开的页面，只是缺图）。
+   */
+  exportZip(
+    targetPath: string,
+    assets?: { copy(id: string, targetDir: string): string | null }
+  ): ExportOutcome {
     if (!this.projectId) return { ok: false, error: '尚未打开设计项目' }
     const dir = projectDir(this.root, this.projectId)
     // 导出必须包含"当前看到的这一版"：先生成真实 HTML/CSS，再提交一次构建，
     // 最后用 git archive 打包——否则 zip 里只有 design.json，用户拿到手里无法直接打开。
     try {
       const doc = this.requireDocument()
-      const site = renderStaticSite(doc)
       const siteDir = path.join(dir, 'site')
       fs.mkdirSync(siteDir, { recursive: true })
+      const copied = new Map<string, string | null>()
+      const assetHref = assets
+        ? (assetId: string): string | null => {
+            if (!copied.has(assetId)) {
+              const name = assets.copy(assetId, path.join(siteDir, 'assets'))
+              copied.set(assetId, name ? `assets/${name}` : null)
+            }
+            return copied.get(assetId) ?? null
+          }
+        : undefined
+      const site = renderStaticSite(doc, assetHref ? { assetHref } : {})
       fs.writeFileSync(path.join(siteDir, 'index.html'), site.html, 'utf8')
       fs.writeFileSync(path.join(siteDir, 'styles.css'), site.css, 'utf8')
       const committed = this.commitRound(`构建静态站点（导出 v${doc.version}）`)

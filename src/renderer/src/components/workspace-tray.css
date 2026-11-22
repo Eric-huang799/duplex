@@ -1,0 +1,123 @@
+.ws-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--line-soft, #e5e7eb);
+  background: var(--surface-alt, #f8fafc);
+}
+
+.ws-card {
+  border: 1px solid var(--line-soft, #e5e7eb);
+  border-radius: 10px;
+  background: var(--surface-base, #fff);
+  padding: 8px 10px;
+}
+
+.ws-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ws-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.ws-dot.dirty { background: #f59e0b; }
+.ws-dot.clean { background: #10b981; }
+
+.ws-card-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+}
+
+.ws-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ws-card-actions button,
+.ws-import {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line-soft, #e5e7eb);
+  background: var(--surface-base, #fff);
+  color: var(--text-primary, #111827);
+  cursor: pointer;
+}
+
+.ws-card-actions button:disabled,
+.ws-import:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ws-assets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+}
+
+.ws-assets-empty {
+  font-size: 11px;
+  color: var(--text-faint, #9aa4b2);
+  padding: 2px 0;
+}
+
+.ws-asset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.ws-asset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  max-width: 150px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft, #e5e7eb);
+  background: var(--surface-base, #fff);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ws-asset-name {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 132px;
+}
+
+.ws-asset-meta {
+  font-size: 10px;
+  color: var(--text-faint, #9aa4b2);
+}
+
+.ws-note {
+  font-size: 11px;
+  color: var(--text-muted, #6b7280);
+  margin-top: 2px;
+}
