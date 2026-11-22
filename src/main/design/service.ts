@@ -419,10 +419,24 @@ export class DesignService {
     if (!Number.isInteger(index) || index < 0 || index >= variant.options.length) {
       throw new Error(`变体下标越界：${String(index)}（共 ${variant.options.length} 个候选）`)
     }
-    const next = structuredClone(doc)
+    // 选择变体 = 用候选节点替换该区块。只记录 chosenIndex 会出现
+    // "选完了但页面没变"的假成功，所以替换走 applyOps（顺带拿到撤销栈与事件）。
+    const option = structuredClone(variant.options[index])
+    // 区块 id 是权威的：候选写成别的 id（甚至缺 id）也归一化到 blockId，
+    // 否则 replace 会因 id 不一致失败，用户看到的是"选不了"。
+    option.id = blockId
+    const blockExists = findNode(doc.root, blockId) !== null
+    if (blockExists) {
+      const applied = this.applyOps('user', [{ op: 'replace', targetId: blockId, node: option }], {
+        allowLocked: true
+      })
+      if (applied.applied === 0) {
+        throw new Error(applied.rejected.map((entry) => entry.reason).join('；') || '变体替换失败')
+      }
+    }
+    const next = structuredClone(this.requireDocument())
     const target = next.variants.find((entry) => entry.blockId === blockId)!
     target.chosenIndex = index
-    next.version += 1
     next.updatedAt = this.now()
     this.doc = next
     this.dirty = true

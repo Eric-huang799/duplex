@@ -410,3 +410,25 @@ describeGit('DesignService：提交与导出（需要 git）', () => {
     expect(service.history()).toEqual([])
   })
 })
+
+describe('变体选择会真正替换区块', () => {
+  it('chooseVariant 用候选节点替换区块并记录 chosenIndex', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-variant-apply-'))
+    try {
+      const service = new DesignService({ root })
+      service.open('v')
+      service.applyOps('user', [
+        { op: 'insert', parentId: 'root', node: { id: 'hero', type: 'box', children: [{ id: 'hero-title', type: 'text', text: '旧标题' }] } }
+      ])
+      service.setVariants('hero', [
+        { id: 'hero', type: 'box', children: [{ id: 'hero-title', type: 'text', text: '新标题' }] },
+        { id: 'hero', type: 'box', children: [{ id: 'hero-title', type: 'text', text: '另一个' }] }
+      ])
+      const doc = service.chooseVariant('hero', 0)
+      expect(findNode(doc.root, 'hero-title')?.text).toBe('新标题')
+      expect(doc.variants.find((entry) => entry.blockId === 'hero')?.chosenIndex).toBe(0)
+    } finally {
+      removeTestDir(root)
+    }
+  })
+})

@@ -370,6 +370,25 @@ export function createInteract(deps: InteractDeps): InteractHandle {
   }
 
   // ── 拖拽 ────────────────────────────────────────────────────────────
+  /**
+   * 拖拽目标：如果点中的是"自由摆放"容器里的文字/子元素，应该移动**整个容器**，
+   * 而不是把文字单独拽出来变成绝对定位。返回可移动的节点 id（自身或最近的绝对定位祖先）。
+   */
+  function movableNodeIdFor(doc: DesignDocument, id: string): string {
+    const hasPlacement = (node: DesignNode): boolean =>
+      node.style?.['x'] !== undefined || node.style?.['y'] !== undefined
+    const node = findNode(doc.root, id)
+    if (!node) return id
+    if (hasPlacement(node)) return id
+    let current = id
+    for (let depth = 0; depth < 12; depth++) {
+      const parent = findParent(doc.root, current)
+      if (!parent) break
+      if (hasPlacement(parent.parent)) return parent.parent.id
+      current = parent.parent.id
+    }
+    return id
+  }
   function beginPointerDrag(event: PointerEvent): void {
     const doc = deps.getDoc()
     if (!doc) return
@@ -378,8 +397,10 @@ export function createInteract(deps: InteractDeps): InteractHandle {
       select(null)
       return
     }
-    const id = nodeElement.dataset.did
-    if (!id) return
+    const pickedId = nodeElement.dataset.did
+    if (!pickedId) return
+    // 自由摆放容器里的文字：拖拽移动整个容器，而不是把文字单独拽出来
+    const id = movableNodeIdFor(doc, pickedId)
     select(id)
     if (isLocked(doc.root, id)) {
       deps.toast('该节点已锁定，不能拖动')
@@ -566,7 +587,8 @@ export function createInteract(deps: InteractDeps): InteractHandle {
     const doc = deps.getDoc()
     if (!doc) return
     const nodeElement = sourceElementOf(event)
-    const targetId = nodeElement?.dataset.did ?? doc.root.id
+    // 已选定目标元素时，移动鼠标只更新落点，不换目标
+    const targetId = locate?.targetId ?? nodeElement?.dataset.did ?? doc.root.id
     setHover(targetId)
     const rect = rectOf(targetId)
     if (!rect) return
@@ -583,7 +605,8 @@ export function createInteract(deps: InteractDeps): InteractHandle {
     const doc = deps.getDoc()
     if (!doc) return
     const nodeElement = sourceElementOf(event)
-    const targetId = nodeElement?.dataset.did ?? doc.root.id
+    // 第一次点击选定要移动的元素；之后点击只更新落点，目标保持不变
+    const targetId = locate?.targetId ?? nodeElement?.dataset.did ?? doc.root.id
     const rect = rectOf(targetId)
     if (!rect) return
     const desired = clientToLayout({ x: event.clientX, y: event.clientY })
