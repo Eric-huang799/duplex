@@ -32,6 +32,16 @@
 
 验收数据：节点 16→17 粘贴→16 撤销→17 重做→18 再制→17 删除；槽位交换 true 且无 absolute；自由卡片从内部文字拖拽后子元素无 absolute；定位 toast 目标为 `card-b-title`；变体标题变为「方案 A 已选」；急停拒绝并出现「恢复 AI」，恢复后工具可用；导出 zip 可离线渲染。
 
+
+## 对话内 artifact 与本地资产（bccb629）
+
+- **对话内**：SidePanel 顶部 WorkspaceTray 显示设计状态（第 N 轮/脏标记）与 打开/撤销/提交；画布仍是独立标签，不复制渲染器。
+- **资产库**：`<cobrowseDir>/assets`，sha256 命名 + 原子索引；元数据 mime/字节/尺寸/时间/来源；同内容去重；单文件 64 MB、单次 50 个上限；只存本地、不上传。导入走原生文件对话框或 `assetsImport(paths)`。
+- **画布图片**：`image` 节点用 `style.assetId`，通过 `duplex-asset://`（注册在 persist:cobrowse session）加载；渲染器不接受 style 里的 URL。
+- **导出**：引用到的资产复制进 `site/assets/`，HTML 改成相对 `src`，zip 可离线打开；构建提交失败则不打包。
+- **验证**：导入 2097×1200 PNG → tray chip → 插入 → 画布 `naturalWidth=2097` → 导出 zip 含 `site/assets/<id>.png` 且 HTML 有相对 src。
+
+未做（下一轮）：资产删除/重命名/标签、EXIF/来源展示、agent 的 `asset_*` 工具、SVG 额外清洗。
 ## 门禁与证据
 
 ```
