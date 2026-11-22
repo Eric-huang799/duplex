@@ -161,6 +161,7 @@ interface CobrowseApi {
   designInsertImage(assetId: string): Promise<{ ok: boolean; id?: string; error?: string }>
   designUndo(): Promise<{ ok: boolean; error?: string }>
   designCommit(summary: string): Promise<{ ok: boolean; error?: string; skipped?: boolean }>
+  designExport(): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>
   assetsList(): Promise<{
     assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
   }>

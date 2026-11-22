@@ -48,6 +48,23 @@ function boot(): void {
   const inspectorEl = must<HTMLElement>('#inspector')
   const variantsEl = must<HTMLElement>('#variants')
   const toastEl = must<HTMLElement>('#toast')
+
+// 首次打开画布时给一句人话说明；关闭后记住选择
+const onboardingEl = document.getElementById('onboarding')
+const ONBOARDING_KEY = 'duplex.canvas.onboarding.v1'
+try {
+  if (onboardingEl && window.localStorage.getItem(ONBOARDING_KEY) !== '1') onboardingEl.hidden = false
+} catch {
+  /* 隐私模式下 localStorage 可能不可用，忽略即可 */
+}
+document.getElementById('onboarding-close')?.addEventListener('click', () => {
+  if (onboardingEl) onboardingEl.hidden = true
+  try {
+    window.localStorage.setItem(ONBOARDING_KEY, '1')
+  } catch {
+    /* 同上 */
+  }
+})
   const waitingEl = must<HTMLElement>('#canvas-waiting')
 
   let doc: DesignDocument = emptyDocument('等待设计文档', 'pending-doc')

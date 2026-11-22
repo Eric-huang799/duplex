@@ -1441,3 +1441,37 @@ input {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 新用户引导：不遮挡画布操作，可关闭并记住 */
+.canvas-onboarding {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(720px, calc(100% - 32px));
+}
+.canvas-onboarding__body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line, #e5e7eb);
+  background: var(--surface, #fff);
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+  font-size: 12px;
+  color: var(--text, #111827);
+}
+.canvas-onboarding__body strong { white-space: nowrap; }
+.canvas-onboarding__body span { color: var(--text-muted, #6b7280); }
+.canvas-onboarding__body button {
+  flex: none;
+  margin-left: auto;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line, #e5e7eb);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}

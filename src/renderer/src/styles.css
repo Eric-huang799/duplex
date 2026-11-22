@@ -912,6 +912,9 @@ body {
 }
 
 .tb-btn { transition: background 150ms ease, color 150ms ease, transform 150ms ease; }
+
+/* 设计入口不能被挤成两行：它是“做网页”的主入口 */
+.design-btn { white-space: nowrap; min-width: 64px; }
 .tb-btn:hover:not(:disabled) { transform: translateY(-1px); }
 .tb-btn:active:not(:disabled) { transform: scale(.94); }
 

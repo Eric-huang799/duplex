@@ -41,6 +41,8 @@ import {
 } from './validate'
 
 export interface DesignIpcDeps {
+  /** 本地资产库（可选）；导出时把图片复制进 site/assets。 */
+  assets?: { copy(id: string, targetDir: string): string | null }
   service: DesignService
   /** 设计画布窗口（事件走 design:canvas-event）。 */
   canvasWindow?: BrowserWindow | null
@@ -251,7 +253,8 @@ export function registerDesignIpc(deps: DesignIpcDeps): () => void {
           return { ok: false, error: '已取消导出', canceled: true }
         }
         const target = /\.zip$/i.test(picked.filePath) ? picked.filePath : `${picked.filePath}.zip`
-        return { ...service.exportZip(target), state: service.state() }
+        // 导出 UI 也要带上资产：否则图片节点会指向画布专用协议，导出页缺图。
+  return { ...service.exportZip(target, deps.assets), state: service.state() }
       }
     ]
   ]

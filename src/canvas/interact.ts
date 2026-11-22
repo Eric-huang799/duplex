@@ -283,13 +283,13 @@ export function createInteract(deps: InteractDeps): InteractHandle {
   function updateHint(): void {
     const parts: string[] = []
     if (mode === 'select') {
-      parts.push('选择：点击元素 · 拖动移动（吸附 9 点锚点 / 容器边缘 / 8px 网格）')
+      parts.push('选择：点元素选中 · 拖动移动（自动吸附）')
     } else if (mode === 'locate') {
       parts.push('定位：点击页面元素取锚点，确认后发送给宿主（Esc 退出）')
     } else {
       parts.push('测量：点击两点量距离与水平/垂直分量（Esc 退出）')
     }
-    parts.push(`M 放大镜${loupeOn ? '（开）' : ''}`, 'Z 缩放', 'R 测量', `当前视图 ${Math.round(scale() * 100)}%`)
+    parts.push(`M 放大镜${loupeOn ? '（开）' : ''}`, 'Z 缩放', 'R 测量', 'Ctrl+Z 撤销', `视图 ${Math.round(scale() * 100)}%`)
     setText(hint, parts.join(' · '))
   }
 
@@ -567,7 +567,7 @@ export function createInteract(deps: InteractDeps): InteractHandle {
         rect: frameRect
       })
       deps.toast(
-        `已发送移动意图：${drag.id} → (${target.x}, ${target.y})，由宿主转成约束/patch`
+        `已发送移动意图：${drag.id} → (${target.x}, ${target.y})，正在应用…`
       )
     }
     endDrag()
@@ -680,7 +680,7 @@ export function createInteract(deps: InteractDeps): InteractHandle {
       frameWidth: deps.getDoc()?.frame.width ?? deps.getViewportWidth()
     })
     deps.toast(
-      `已发送定位意图：${pending.targetId} · ${pending.anchor} · (${Math.round(pending.point.x)}, ${Math.round(pending.point.y)})`
+      `已定位：${pending.targetId} · ${pending.anchor} · (${Math.round(pending.point.x)}, ${Math.round(pending.point.y)})`
     )
     clearLocate()
     setMode('select')

@@ -100,6 +100,22 @@ export function WorkspaceTray(): React.JSX.Element {
     }
   }
 
+  const exportSite = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await window.cobrowse.designExport()
+      if (result.canceled) return
+      setNote(
+        result.ok
+          ? `已导出：${result.path ?? ''}（请把整个 site 文件夹一起发）`
+          : result.error ?? '导出失败'
+      )
+      await refresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const insertImage = async (asset: AssetView): Promise<void> => {
     setBusy(true)
     try {
@@ -130,7 +146,8 @@ export function WorkspaceTray(): React.JSX.Element {
           <div className="ws-card-actions">
             <button disabled={busy} onClick={() => void openCanvas()}>打开画布</button>
             <button disabled={busy || !design.canUndo} onClick={() => void undo()}>撤销</button>
-            <button disabled={busy} onClick={() => void commit()}>提交</button>
+            <button disabled={busy} onClick={() => void commit()}>保存</button>
+            <button disabled={busy} onClick={() => void exportSite()}>导出</button>
           </div>
         </div>
       ) : (
@@ -159,10 +176,11 @@ export function WorkspaceTray(): React.JSX.Element {
                 key={asset.id}
                 className="ws-asset"
                 disabled={busy}
-                title={`${asset.name} · ${sizeLabel(asset.bytes)}`}
+                title={`点击把「${asset.name}」插入到画布`}
                 onClick={() => void insertImage(asset)}
               >
                 <span className="ws-asset-name">{asset.name}</span>
+                <span className="ws-asset-action">插入到画布 →</span>
                 {asset.width && asset.height ? (
                   <span className="ws-asset-meta">{asset.width}×{asset.height}</span>
                 ) : (

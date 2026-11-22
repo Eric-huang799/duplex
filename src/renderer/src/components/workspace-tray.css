@@ -111,6 +111,11 @@
   max-width: 132px;
 }
 
+.ws-asset-action {
+  font-size: 10px;
+  color: var(--accent, #2f6fed);
+}
+
 .ws-asset-meta {
   font-size: 10px;
   color: var(--text-faint, #9aa4b2);

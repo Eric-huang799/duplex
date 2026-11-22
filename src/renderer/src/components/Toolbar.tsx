@@ -596,8 +596,8 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
         ><Icon name="more" /></button>
       </div>
       <button
-        className="tb-btn"
-        title={t('toolbar.design')}
+        className="tb-btn design-btn"
+        title="打开设计画布（做网页）"
         onClick={() => {
           void window.cobrowse.designOpenCanvas()
         }}

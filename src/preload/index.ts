@@ -306,6 +306,8 @@ const api = {
   designUndo: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('design:undo'),
   designCommit: (summary: string): Promise<{ ok: boolean; error?: string; skipped?: boolean }> =>
     ipcRenderer.invoke('design:commit', { summary }),
+  designExport: (): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }> =>
+    ipcRenderer.invoke('design:export'),
   assetsList: (): Promise<{ assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }> }> =>
     ipcRenderer.invoke('assets:list'),
   assetsImport: (paths: string[]): Promise<{ ok: boolean; imported: string[]; errors?: string[]; assets: Array<{ id: string; name: string }> }> =>

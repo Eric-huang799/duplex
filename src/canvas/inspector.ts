@@ -101,7 +101,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
     el('ul', {
       className: 'inspector__shortcuts',
       children: [
-        el('li', { text: 'M — 放大镜（坐标 / data-did / 尺寸 / 颜色）' }),
+        el('li', { text: 'M — 放大镜（坐标 / 尺寸 / 颜色）' }),
         el('li', { text: 'Z — 整体缩放 1:1 / 50% / 25%' }),
         el('li', { text: 'R — 测量尺，Esc 退出' }),
         el('li', { text: '定位 — 点页面元素取锚点' })
@@ -126,7 +126,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
   header.append(typeBadge, lockButton)
 
   const didRow = el('div', { className: 'inspector__row' })
-  didRow.append(el('span', { className: 'inspector__label', text: 'data-did' }), didValue)
+  didRow.append(el('span', { className: 'inspector__label', text: '元素 ID' }), didValue)
 
   const breadcrumb = el('div', { className: 'inspector__breadcrumb' })
 
@@ -361,7 +361,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
 
     const createdBy = node.meta?.createdBy
     const metaParts: string[] = []
-    if (createdBy) metaParts.push(`由 ${createdBy.actor} 创建（第 ${createdBy.step} 步）`)
+    if (createdBy) metaParts.push(`由 ${createdBy.actor} 创建`)
     if (node.meta?.editedByUser) metaParts.push('你改过')
     if (node.meta?.locked) metaParts.push('已锁定')
     setText(metaText, metaParts.join(' · ') || '没有来源信息')
@@ -369,7 +369,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
 
     // 数值字段
     const rect = deps.measureLayoutRect(id)
-    setText(fieldsHint, `frame ${deps.getViewportWidth()}px`)
+    setText(fieldsHint, `画布宽度 ${deps.getViewportWidth()}px`)
     for (const key of ['x', 'y', 'width', 'height'] as FieldKey[]) {
       const button = fieldButtons.get(key)!
       const valueEl = fieldValues.get(key)!

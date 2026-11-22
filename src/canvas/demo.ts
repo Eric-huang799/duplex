@@ -228,7 +228,7 @@ export function createDemoDocument(): DesignDocument {
             {
               id: 'hero-primary',
               type: 'button',
-              text: '开始设计',
+              text: '看看效果',
               style: { padding: '14px 22px', fontSize: '15px', borderRadius: '999px' }
             },
             {
@@ -354,7 +354,7 @@ function createHeroVariants(): DesignNode[] {
         text: '经典左对齐首屏：标题 + 说明 + 主按钮。',
         style: { fontSize: '18px', color: { token: 'color.text.muted' } }
       },
-      { id: 'variant-hero-a-cta', type: 'button', text: '开始设计', style: { borderRadius: '999px', padding: '14px 22px' } }
+      { id: 'variant-hero-a-cta', type: 'button', text: '看看效果', style: { borderRadius: '999px', padding: '14px 22px' } }
     ], { padding: '72px 48px', gap: '18px', background: { token: 'color.surface.alt' } }),
     base('variant-hero-b', [
       {

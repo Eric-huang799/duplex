@@ -130,8 +130,8 @@ export function createToolbar(deps: ToolbarDeps): ToolbarHandle {
   const measureButton = toolButton('测量', '测量模式：点两下量距离（R / Esc）')
   const loupeButton = toolButton('放大镜', '放大镜：跟随鼠标显示局部放大（M）')
   const zoomButton = toolButton('缩放 100%', '整体视图缩放 1:1 → 50% → 25%（Z）')
-  const undoButton = toolButton('撤销', '撤销（发送给宿主计算）')
-  const redoButton = toolButton('重做', '重做（发送给宿主计算）')
+  const undoButton = toolButton('撤销', '撤销上一步')
+  const redoButton = toolButton('重做', '重做上一步')
 
   disposers.push(
     on<MouseEvent>(locateButton, 'click', () => deps.onLocateToggle()),
@@ -140,7 +140,7 @@ export function createToolbar(deps: ToolbarDeps): ToolbarHandle {
     on<MouseEvent>(zoomButton, 'click', () => deps.onZoomCycle()),
     on<MouseEvent>(undoButton, 'click', () => {
       deps.send({ type: 'undo' })
-      deps.toast('已请求撤销（由宿主计算）')
+      deps.toast('已撤销上一步')
     }),
     on<MouseEvent>(redoButton, 'click', () => {
       deps.send({ type: 'redo' })
@@ -152,13 +152,13 @@ export function createToolbar(deps: ToolbarDeps): ToolbarHandle {
   const actionsGroup = el('div', { className: 'toolbar__group toolbar__group--actions' })
   const commitButton = el('button', {
     className: 'toolbar__btn toolbar__btn--primary',
-    text: '提交本轮',
-    attrs: { type: 'button', title: '提交这一轮的改动，并写一句话摘要', 'aria-expanded': 'false' }
+    text: '保存这一版',
+    attrs: { type: 'button', title: '保存当前版本，并写一句摘要', 'aria-expanded': 'false' }
   })
   const exportButton = el('button', {
     className: 'toolbar__btn',
     text: '导出',
-    attrs: { type: 'button', title: '导出设计文档（由宿主处理）' }
+    attrs: { type: 'button', title: '导出网页（可离线打开）' }
   })
   actionsGroup.append(commitButton, exportButton)
 
@@ -242,7 +242,7 @@ export function createToolbar(deps: ToolbarDeps): ToolbarHandle {
     }),
     on<MouseEvent>(exportButton, 'click', () => {
       deps.send({ type: 'export' })
-      deps.toast('已请求导出（由宿主处理）')
+      deps.toast('正在导出网页…')
     }),
     on<MouseEvent>(commitConfirm, 'click', () => submitCommit()),
     on<MouseEvent>(commitCancel, 'click', () => closeCommit()),
@@ -278,7 +278,7 @@ export function createToolbar(deps: ToolbarDeps): ToolbarHandle {
       status.title = ''
       return
     }
-    statusText.textContent = `第 ${state.round} 轮 · ${state.dirty ? '有未提交改动' : '已提交'}`
+    statusText.textContent = `第 ${state.round} 版 · ${state.dirty ? '有未保存改动' : '已保存'}`
     statusDot.classList.toggle('is-dirty', state.dirty)
     status.title = state.actor ? `最近编辑：${state.actor}` : ''
   }
