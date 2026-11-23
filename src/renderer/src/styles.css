@@ -2,52 +2,56 @@
 
 :root {
   color-scheme: dark;
-  /* surfaces (semi-transparent so the window acrylic shows through) */
-  --bg-app: #0f1216;
-  --bg-content: #0b0e12;
-  --bg-chrome: rgba(32, 34, 38, 0.94);
-  --bg-tab: rgba(255, 255, 255, 0.05);
-  --bg-tab-active: rgba(255, 255, 255, 0.13);
-  --bg-tab-close-hover: rgba(120, 140, 160, 0.45);
-  --bg-btn: rgba(255, 255, 255, 0.07);
-  --bg-btn-hover: rgba(255, 255, 255, 0.13);
-  --bg-input: rgba(13, 18, 23, 0.55);
-  --bg-input-focus: rgba(17, 23, 30, 0.72);
-  --bg-omnibox: rgba(255, 255, 255, 0.07);
-  --bg-omnibox-focus: rgba(255, 255, 255, 0.11);
-  --bg-panel: rgba(17, 21, 26, 0.66);
-  --bg-elev: rgba(24, 30, 38, 0.82);
-  --bg-elev-2: rgba(16, 21, 27, 0.75);
+  /* B · Quiet Graphite：冷灰分层，不靠纯黑 */
+  --bg-app: #141619;
+  --bg-content: #191c20;
+  --bg-chrome: rgba(22, 25, 30, 0.92);
+  --bg-tab: rgba(255, 255, 255, 0.035);
+  --bg-tab-active: #22262c;
+  --bg-tab-close-hover: rgba(120, 140, 160, 0.35);
+  --bg-btn: rgba(255, 255, 255, 0.05);
+  --bg-btn-hover: rgba(255, 255, 255, 0.09);
+  --bg-input: rgba(0, 0, 0, 0.30);
+  --bg-input-focus: rgba(0, 0, 0, 0.38);
+  --bg-omnibox: rgba(255, 255, 255, 0.045);
+  --bg-omnibox-focus: rgba(255, 255, 255, 0.08);
+  --bg-panel: rgba(24, 27, 32, 0.94);
+  --bg-elev: rgba(34, 38, 44, 0.90);
+  --bg-elev-2: rgba(28, 32, 38, 0.80);
   --line: rgba(255, 255, 255, 0.10);
-  --line-soft: rgba(255, 255, 255, 0.07);
+  --line-soft: rgba(255, 255, 255, 0.06);
   --line-strong: rgba(255, 255, 255, 0.16);
-  --text: #d7dde5;
-  --text-strong: #e8eef5;
-  --text-dim: #9fabb8;
-  --text-faint: #8a97a4;
-  --text-fainter: #7b8996;
-  --accent: #4da3ff;
-  --accent-soft: rgba(77, 163, 255, 0.25);
-  --accent-border: rgba(77, 163, 255, 0.6);
-  --btn-primary: #2b5c8f;
-  --btn-primary-hover: #35699f;
-  --btn-primary-text: #eaf2fb;
-  --bubble-user: #1d4a75;
-  --bubble-user-text: #eaf2fb;
-  --bubble-ai: rgba(26, 33, 42, 0.85);
-  --ok: #3fbf7f;
-  --busy: #e8b84b;
-  --err: #e06c6c;
+  --text: #e3e7ed;
+  --text-strong: #f1f4f8;
+  --text-dim: #a6afba;
+  --text-faint: #7f8895;
+  --text-fainter: #67717d;
+  --accent: #8fa6bb;
+  --accent-soft: rgba(143, 166, 187, 0.16);
+  --accent-border: rgba(143, 166, 187, 0.40);
+  --accent-warm: #e29a5c;
+  --accent-warm-strong: #f0b27c;
+  --accent-warm-soft: rgba(226, 154, 92, 0.16);
+  --accent-warm-text: #1a1a1a;
+  --btn-primary: #7e93a6;
+  --btn-primary-hover: #8fa6bb;
+  --btn-primary-text: #101418;
+  --bubble-user: #2f3a45;
+  --bubble-user-text: #dce5ee;
+  --bubble-ai: rgba(34, 38, 44, 0.95);
+  --ok: #8cae95;
+  --busy: #c9a05a;
+  --err: #c97a72;
   --scroll-thumb: rgba(255, 255, 255, 0.16);
-  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.4);
-  --start-grad-1: #182535;
-  --start-grad-2: #10151c;
-  --start-grad-3: #0b0e12;
-  --start-glow: 11, 14, 18;
-  --start-search-bg: rgba(22, 29, 38, 0.72);
-  --start-search-bg-focus: rgba(24, 32, 42, 0.85);
-  --start-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
-  --menu-bg: rgba(22, 28, 36, 0.96);
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.50);
+  --start-grad-1: #1b1f24;
+  --start-grad-2: #15181c;
+  --start-grad-3: #101317;
+  --start-glow: 16, 19, 23;
+  --start-search-bg: rgba(22, 26, 31, 0.72);
+  --start-search-bg-focus: rgba(26, 31, 37, 0.88);
+  --start-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  --menu-bg: rgba(26, 30, 36, 0.96);
 }
 
 @media (prefers-color-scheme: light) {
@@ -66,9 +70,9 @@
     --bg-input-focus: rgba(255, 253, 249, 0.94);
     --bg-omnibox: rgba(80, 65, 48, 0.055);
     --bg-omnibox-focus: rgba(255, 253, 249, 0.94);
-    --bg-panel: rgba(248, 243, 235, 0.72);
+    --bg-panel: rgba(248, 243, 235, 0.92);
     --bg-elev: rgba(255, 252, 246, 0.92);
-    --bg-elev-2: rgba(252, 247, 239, 0.78);
+    --bg-elev-2: rgba(252, 247, 239, 0.92);
     --line: rgba(70, 55, 40, 0.15);
     --line-soft: rgba(70, 55, 40, 0.09);
     --line-strong: rgba(70, 55, 40, 0.24);
@@ -80,6 +84,10 @@
     --accent: #a06f58;
     --accent-soft: rgba(160, 111, 88, 0.16);
     --accent-border: rgba(160, 111, 88, 0.45);
+    --accent-warm: #c4753a;
+    --accent-warm-strong: #a65f2c;
+    --accent-warm-soft: rgba(196, 117, 58, 0.16);
+    --accent-warm-text: #fff9f2;
     --btn-primary: #8e5f4c;
     --btn-primary-hover: #9c6b56;
     --btn-primary-text: #fff9f2;
@@ -3120,4 +3128,45 @@ button.start-engine:hover {
 @keyframes composer-progress-slide {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(300%); }
+}
+
+
+/* ============ 橙色反差色（关键动作 / 小部件） ============ */
+.send-btn:not(.stop) {
+  background: var(--accent-warm);
+  color: var(--accent-warm-text);
+}
+.send-btn:not(.stop):hover:not(:disabled) {
+  background: var(--accent-warm-strong);
+}
+.mode-bar button.on {
+  background: var(--accent-warm-soft);
+  border-color: var(--accent-warm);
+  color: var(--text-strong);
+}
+.design-btn {
+  color: var(--accent-warm);
+}
+.design-btn:hover {
+  background: var(--accent-warm-soft);
+}
+.composer-progress__bar::after {
+  background: var(--accent-warm);
+}
+.suggestion-btn:hover {
+  border-color: var(--accent-warm);
+  color: var(--text);
+}
+.ws-asset-action {
+  color: var(--accent-warm);
+}
+.ws-export-actions button:hover {
+  color: var(--accent-warm);
+  border-color: var(--accent-warm);
+}
+.ws-dot.dirty {
+  background: var(--accent-warm);
+}
+::selection {
+  background: var(--accent-warm-soft);
 }
