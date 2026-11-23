@@ -6,29 +6,53 @@
    ========================================================================== */
 
 :root {
-  --ui-bg: #0b0d12;
-  --ui-panel: #141821;
-  --ui-panel-2: #1a1f2a;
-  --ui-panel-3: #202634;
-  --ui-line: #2a3242;
-  --ui-line-strong: #3a465c;
-  --ui-text: #e8ecf4;
-  --ui-muted: #8b96a9;
-  --ui-faint: #5d6879;
-  --ui-accent: #5b8cff;
-  --ui-accent-soft: rgba(91, 140, 255, 0.16);
-  --ui-accent-strong: #7aa2ff;
-  --ui-ok: #37d399;
-  --ui-warn: #f7b955;
-  --ui-danger: #ff6b6b;
-  --canvas-bg: #0a0c11;
+  /* B · Quiet Graphite */
+  --ui-bg: #141619;
+  --ui-panel: #22262c;
+  --ui-panel-2: #282d34;
+  --ui-panel-3: #2e343c;
+  --ui-line: #343a43;
+  --ui-line-strong: #465060;
+  --ui-text: #e3e7ed;
+  --ui-muted: #8d97a3;
+  --ui-faint: #66707c;
+  --ui-accent: #8fa6bb;
+  --ui-accent-soft: rgba(143, 166, 187, 0.16);
+  --ui-accent-strong: #b7cadb;
+  --ui-ok: #8cae95;
+  --ui-warn: #c9a05a;
+  --ui-danger: #c97a72;
+  --canvas-bg: #101317;
   --canvas-shadow: 0 26px 90px rgba(0, 0, 0, 0.62);
-  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
     sans-serif;
-  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
     sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
   --radius-ui: 10px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* C · Sand Studio 暖卡片 + B 冷灰 */
+    --ui-bg: #f3eee6;
+    --ui-panel: #fffcf7;
+    --ui-panel-2: #fbf6ee;
+    --ui-panel-3: #f6efe5;
+    --ui-line: #e2d9cb;
+    --ui-line-strong: #cfc3b1;
+    --ui-text: #2e2a24;
+    --ui-muted: #7a7164;
+    --ui-faint: #9a9081;
+    --ui-accent: #a06f58;
+    --ui-accent-soft: rgba(160, 111, 88, 0.14);
+    --ui-accent-strong: #8e5f4c;
+    --ui-ok: #6f8b73;
+    --ui-warn: #b0823f;
+    --ui-danger: #b0524b;
+    --canvas-bg: #ede6db;
+    --canvas-shadow: 0 26px 90px rgba(90, 70, 50, 0.20);
+  }
 }
 
 * {

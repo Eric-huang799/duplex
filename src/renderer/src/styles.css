@@ -53,51 +53,52 @@
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
-    --bg-app: #eef1f5;
-    --bg-content: #eef1f5;
-    --bg-chrome: rgba(243, 245, 248, 0.94);
-    --bg-tab: rgba(30, 40, 55, 0.05);
-    --bg-tab-active: rgba(255, 255, 255, 0.98);
-    --bg-tab-close-hover: rgba(120, 140, 160, 0.3);
-    --bg-btn: rgba(30, 40, 55, 0.06);
-    --bg-btn-hover: rgba(30, 40, 55, 0.12);
-    --bg-input: rgba(255, 255, 255, 0.65);
-    --bg-input-focus: rgba(255, 255, 255, 0.92);
-    --bg-omnibox: rgba(30, 40, 55, 0.06);
-    --bg-omnibox-focus: rgba(255, 255, 255, 0.92);
-    --bg-panel: rgba(248, 250, 252, 0.70);
-    --bg-elev: rgba(255, 255, 255, 0.88);
-    --bg-elev-2: rgba(255, 255, 255, 0.72);
-    --line: rgba(20, 35, 55, 0.14);
-    --line-soft: rgba(20, 35, 55, 0.09);
-    --line-strong: rgba(20, 35, 55, 0.22);
-    --text: #2b3440;
-    --text-strong: #10161e;
-    --text-dim: #5a6673;
-    --text-faint: #7e8a97;
-    --text-fainter: #9aa5b1;
-    --accent: #2b7cd6;
-    --accent-soft: rgba(43, 124, 214, 0.18);
-    --accent-border: rgba(43, 124, 214, 0.55);
-    --btn-primary: #2b6cb8;
-    --btn-primary-hover: #3579c9;
-    --btn-primary-text: #f2f8ff;
-    --bubble-user: #d7e9fc;
-    --bubble-user-text: #14375c;
-    --bubble-ai: rgba(255, 255, 255, 0.92);
-    --ok: #2f9e63;
-    --busy: #c98f1f;
-    --err: #c44747;
-    --scroll-thumb: rgba(30, 40, 55, 0.22);
-    --shadow-pop: 0 12px 32px rgba(90, 110, 140, 0.25);
-    --start-grad-1: #dfe8f2;
-    --start-grad-2: #eef2f7;
-    --start-grad-3: #f4f7fa;
-    --start-glow: 244, 247, 250;
-    --start-search-bg: rgba(255, 255, 255, 0.55);
-    --start-search-bg-focus: rgba(255, 255, 255, 0.85);
-    --start-shadow: 0 18px 50px rgba(90, 110, 140, 0.22);
-    --menu-bg: rgba(255, 255, 255, 0.97);
+    /* C · Sand Studio 的暖卡片 + B 的冷灰中性：白天模式 */
+    --bg-app: #f1ece4;
+    --bg-content: #f4efe7;
+    --bg-chrome: rgba(250, 246, 239, 0.92);
+    --bg-tab: rgba(80, 65, 48, 0.05);
+    --bg-tab-active: #fffdf9;
+    --bg-tab-close-hover: rgba(130, 110, 88, 0.28);
+    --bg-btn: rgba(80, 65, 48, 0.06);
+    --bg-btn-hover: rgba(80, 65, 48, 0.12);
+    --bg-input: rgba(255, 252, 246, 0.68);
+    --bg-input-focus: rgba(255, 253, 249, 0.94);
+    --bg-omnibox: rgba(80, 65, 48, 0.055);
+    --bg-omnibox-focus: rgba(255, 253, 249, 0.94);
+    --bg-panel: rgba(248, 243, 235, 0.72);
+    --bg-elev: rgba(255, 252, 246, 0.92);
+    --bg-elev-2: rgba(252, 247, 239, 0.78);
+    --line: rgba(70, 55, 40, 0.15);
+    --line-soft: rgba(70, 55, 40, 0.09);
+    --line-strong: rgba(70, 55, 40, 0.24);
+    --text: #2e2a24;
+    --text-strong: #1d1a16;
+    --text-dim: #5f584d;
+    --text-faint: #857c6e;
+    --text-fainter: #a19684;
+    --accent: #a06f58;
+    --accent-soft: rgba(160, 111, 88, 0.16);
+    --accent-border: rgba(160, 111, 88, 0.45);
+    --btn-primary: #8e5f4c;
+    --btn-primary-hover: #9c6b56;
+    --btn-primary-text: #fff9f2;
+    --bubble-user: #eadfd2;
+    --bubble-user-text: #3d2f26;
+    --bubble-ai: rgba(255, 252, 246, 0.95);
+    --ok: #6f8b73;
+    --busy: #b0823f;
+    --err: #b0524b;
+    --scroll-thumb: rgba(80, 65, 50, 0.22);
+    --shadow-pop: 0 12px 32px rgba(80, 60, 40, 0.18);
+    --start-grad-1: #e8ded1;
+    --start-grad-2: #f1eae0;
+    --start-grad-3: #f7f3eb;
+    --start-glow: 247, 243, 235;
+    --start-search-bg: rgba(255, 252, 246, 0.62);
+    --start-search-bg-focus: rgba(255, 253, 249, 0.90);
+    --start-shadow: 0 18px 50px rgba(90, 70, 50, 0.20);
+    --menu-bg: rgba(255, 252, 246, 0.97);
   }
 }
 
@@ -113,7 +114,7 @@ body,
 }
 
 body {
-  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
   font-size: 13px;
   color: var(--text);
   background: transparent;
@@ -3058,4 +3059,65 @@ button.start-engine:hover {
   background: var(--hover, rgba(127, 140, 160, 0.16));
   border: 1px solid var(--line);
   color: var(--text-dim, inherit);
+}
+
+/* 新用户空态示例与生成进度 */
+.empty-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  width: min(320px, 90%);
+}
+
+.suggestion-btn {
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft, #e5e7eb);
+  background: var(--bg-elev, #fff);
+  color: var(--text-dim, #4b5563);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.suggestion-btn:hover {
+  border-color: var(--accent-border, #a06f58);
+  color: var(--text, #1f2937);
+}
+
+.composer-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 2px;
+  font-size: 11px;
+  color: var(--text-faint, #6b7280);
+}
+
+.composer-progress__bar {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--line-soft, #e5e7eb);
+}
+
+.composer-progress__bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 35%;
+  border-radius: 2px;
+  background: var(--accent, #a06f58);
+  animation: composer-progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes composer-progress-slide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
 }
