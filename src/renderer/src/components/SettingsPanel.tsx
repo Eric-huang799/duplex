@@ -349,8 +349,38 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
                   >
                     {builtinLabel}
                   </span>
+                  {feature.manifest.recommended && (
+
+                    <span
+
+                      style={{
+
+                        marginLeft: 6,
+
+                        fontSize: 10,
+
+                        padding: '1px 5px',
+
+                        borderRadius: 6,
+
+                        border: '1px solid var(--accent-warm)',
+
+                        color: 'var(--accent-warm)'
+
+                      }}
+
+                    >
+
+                      {t('settings.featureRecommended')}
+
+                    </span>
+
+                  )}
+
                   <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.6 }}>
+
                     v{feature.manifest.version}
+
                   </span>
                 </div>
                 <div className="setp-hint">{feature.manifest.description}</div>

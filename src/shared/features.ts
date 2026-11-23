@@ -34,6 +34,8 @@ export interface FeatureManifest {
   id: string
   name: string
   version: string
+  /** 是否在设置页标记为推荐安装（内置设计插件用）。 */
+  recommended?: boolean
   description: string
   contributes: FeatureContributions
 }
@@ -202,6 +204,11 @@ export function validateFeatureManifest(value: unknown): FeatureValidation<Featu
     return fail(`description 超过 ${MAX_DESCRIPTION} 个字符`)
   }
 
+  const recommendedRaw = value['recommended']
+  if (recommendedRaw !== undefined && typeof recommendedRaw !== 'boolean') {
+    return fail('recommended 必须是布尔值')
+  }
+
   const contributesRaw = value['contributes']
   if (!isPlainObject(contributesRaw)) return fail('contributes 必须是对象')
 
@@ -225,7 +232,7 @@ export function validateFeatureManifest(value: unknown): FeatureValidation<Featu
 
   return {
     ok: true,
-    value: { id, name, version, description, contributes }
+    value: { id, name, version, description, contributes, ...(recommendedRaw === true ? { recommended: true } : {}) }
   }
 }
 

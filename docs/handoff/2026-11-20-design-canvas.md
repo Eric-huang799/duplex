@@ -2,7 +2,7 @@
 
 > 交接时间：2026-11-20 · 分支 `feat/design-canvas` · HEAD `9a429c9`
 > PR #7（Draft，67 文件）：https://github.com/Eric-huang799/duplex/pull/7
-> 基线：`master` = 0.3.0-beta.2（不稳定调试版，v0.2.10 仍是 Latest）
+> 基线：`master` = v0.3.0 正式版（2026-11-23）
 
 ## 一句话状态
 

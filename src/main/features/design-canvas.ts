@@ -55,7 +55,8 @@ export function createDesignFeature(deps: DesignFeatureDeps = {}): BuiltinFeatur
       id: DESIGN_FEATURE_ID,
       name: mt('feature.design.name'),
       version: '1.0.0',
-      description: mt('feature.design.description'),
+      recommended: true,
+    description: mt('feature.design.description'),
       contributes: {
         toolbar: [
           {

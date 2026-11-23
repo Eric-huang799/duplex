@@ -2812,6 +2812,10 @@
     "安装文件夹…",
     "Install folder…"
   ],
+  "settings.featureRecommended": [
+    "推荐",
+    "Recommended"
+  ],
   "settings.featureInstalling": [
     "正在安装…",
     "Installing…"

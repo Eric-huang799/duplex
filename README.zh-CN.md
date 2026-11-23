@@ -1,7 +1,7 @@
 # Duplex
 
-> [!WARNING]
-> **不稳定调试版（0.3.0-beta.2）。** 这次合入的多 agent 能力——共用标签仲裁、按 agent 隔离的站点授权、按 agent 命名的元素 ref、以及并行的内置会话——**仍在调试中**。请预期粗糙的边角、随时变化的行为和尚未完成的界面，不要把它当作日常浏览器使用。日常可用版本仍是 **v0.2.10**。欢迎反馈 issue 与可复现的失败。
+> [!NOTE]
+> **0.3.0 正式版。** 设计画布已作为**独立功能插件**提供，内置并默认启用（设置页标记「推荐」），可在 **设置 → 功能插件** 启停；插件接口见 [0.3.0 发布说明](docs/release-0.3.0.md)。本版同时带来全新的亮/暗主题。
 
 [![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
 [![Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex/badges/score.svg)](https://glama.ai/mcp/servers/Eric-huang799/duplex)
@@ -34,6 +34,13 @@
 ![用 Duplex 操控网页版 Excel](docs/screenshots/excel-web-demo.png)
 
 *一次更难的、非脚本化测试：没有安装任何表格专用 skill，内置模型只靠原厂 API 和少量简单自动化 skill，把一整张成绩表写进了网页版 Excel。效果是有的，但过程很慢、消耗了大量 token——这是可行性演示，不是推荐用法。截图为当前界面中的结果表。*
+
+## 0.3.0：设计画布插件 + 新视觉
+
+- **设计画布（推荐插件）** —— 与 AI 共同编辑页面：补丁流、拖拽/槽位、定位器、放大镜、变体对比、每轮 git 与可离线打开的导出包；默认启用，可随时禁用。
+- **功能插件宿主** —— manifest + `index.mjs` 通用接口；外部插件可安装、启停，并贡献工具栏按钮、agent 工具与对话状态卡。
+- **C + B 视觉** —— 白天暖沙卡片配冷灰中性，夜间 Quiet Graphite；橙色只用于关键动作。
+- **本地资产库** —— 内容寻址、剪贴板/文件夹导入、导出自动打包图片。
 
 ## 0.2.10：面板驱动的 agent 浏览器控制
 

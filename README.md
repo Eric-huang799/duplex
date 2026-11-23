@@ -1,7 +1,7 @@
 # Duplex
 
-> [!WARNING]
-> **Unstable debugging build (0.3.0-beta.2).** The multi-agent work merged here — shared-tab arbitration, per-agent consent, per-agent element refs and parallel built-in sessions — is still under active debugging. Expect rough edges, changing behaviour and unfinished UI; do not use this build as your daily browser. The last release for everyday use is **v0.2.10**. Issues and reproducible failures are welcome.
+> [!NOTE]
+> **Stable 0.3.0.** The design canvas ships as an **optional feature plugin**, bundled and enabled by default (marked "Recommended"), and can be toggled under **Settings → Feature plugins**. Plugin contract: [0.3.0 release notes](docs/release-0.3.0.md). This release also brings the new light/dark theme.
 
 [![build](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml/badge.svg)](https://github.com/Eric-huang799/duplex/actions/workflows/build.yml)
 [![Glama](https://glama.ai/mcp/servers/Eric-huang799/duplex/badges/score.svg)](https://glama.ai/mcp/servers/Eric-huang799/duplex)
@@ -35,8 +35,11 @@
 
 *A harder, unscripted test: with no spreadsheet-specific skill installed, the built-in model used the stock API and a few simple automation skills to push a whole grade sheet into Excel for the web. It worked, but it was slow and token-heavy — a feasibility demo, not a recommended workflow. The screenshot shows the resulting sheet in the current UI.*
 
-## 0.3.0-beta.1: the governance release
+## 0.3.0: the plugin release
 
+0.3.0 turns "extensible" into structure: the design canvas is now a **feature plugin** (bundled, enabled by default, marked Recommended, and toggleable under Settings → Feature plugins), backed by a generic plugin host with a manifest + `index.mjs` contract, external install, command/tool/status-card contributions, and enable/disable without deleting data. It also ships the new C + B light/dark theme (warm sand cards cooled with graphite neutrals by day, Quiet Graphite by night) with orange reserved for key actions, plus a local asset library that bundles images into exports.
+
+Also in 0.3.0 — governance:
 0.3.0-beta.1 makes the boundary between an AI and your browser explicit **and enforced**: sensitive sites require your consent before the agent may enter, site permissions are revocable per origin, and the agent stops when a page asks for human verification instead of trying to get past it.
 
 Highlights: reads and clicks/typing moved in-process (no DevTools attachment needed for the action itself), ad blocking with EasyList rules actually injected, page DevTools (F12), printing and Save as PDF, spellcheck suggestions, ten preset tasks, chat export to Markdown, and a browser settings panel that also rolls back agent-made changes.
