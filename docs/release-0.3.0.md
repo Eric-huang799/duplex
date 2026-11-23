@@ -37,3 +37,11 @@ npm run build
 - 外部插件在主进程执行，**没有沙箱**；只安装可信来源
 - 插件卸载/升级/签名/市场尚未实现
 - 设计插件禁用时，外部 MCP bridge 的静态工具列表仍可能列出 `design_*`（调用会失败）
+
+## Windows 安装包（0.3.0）
+
+- **Duplex-Setup-0.3.0.exe** — NSIS x64，112.00 MB，可直接覆盖安装旧版本
+- **SHA256**: `F839FD0F218528290C1A6CB687CE79BE30C194FEC1D0B4A49D95E36E38B5EB08`
+- 未做代码签名：Windows SmartScreen 可能提示"未知发布者"，选择"仍要运行"即可
+- 自动更新元数据：`latest.yml`、`Duplex-Setup-0.3.0.exe.blockmap`
+- 源码包仍在本 Release 附件中

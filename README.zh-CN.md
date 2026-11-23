@@ -110,7 +110,7 @@ Duplex 是一个真正的桌面浏览器，同时为人和 AI 设计。AI 在你
 
 ### 安装包（Windows / macOS / Linux）
 
-1. 从 [Releases](../../releases) 下载最新安装包：`Duplex Setup x.y.z.exe`（Windows）、`.dmg`（macOS，Apple Silicon / Intel）或 `.AppImage`（Linux）。
+1. 从 [Releases](../../releases) 下载 Windows 安装包：`Duplex-Setup-0.3.0.exe`（NSIS x64，直接覆盖安装即可升级）。当前 Release 只提供 Windows 安装包；macOS / Linux 可从源码构建。
 2. 安装并启动 Duplex。
 
 ### 从源码构建

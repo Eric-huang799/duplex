@@ -110,7 +110,7 @@ It is not a browser wrapper around a remote agent. It is the browser.
 
 ### Installer (Windows / macOS / Linux)
 
-1. Download the latest installer from [Releases](../../releases): `Duplex Setup x.y.z.exe` (Windows), `.dmg` (macOS, Apple Silicon / Intel) or `.AppImage` (Linux).
+1. Download the Windows installer from [Releases](../../releases): `Duplex-Setup-0.3.0.exe` (NSIS x64; installing over an older version upgrades it in place). This release ships Windows only; build macOS/Linux from source.
 2. Run it and launch Duplex.
 
 ### Build from source
