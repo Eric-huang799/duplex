@@ -35,6 +35,7 @@ export function WorkspaceTray(): React.JSX.Element {
   const [design, setDesign] = useState<DesignView | null>(null)
   const [assets, setAssets] = useState<AssetView[]>([])
   const [note, setNote] = useState('')
+  const [lastExport, setLastExport] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -88,6 +89,17 @@ export function WorkspaceTray(): React.JSX.Element {
     }
   }
 
+  const pasteAsset = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      const result = await window.cobrowse.assetsPaste()
+      setAssets(result.assets ?? [])
+      setNote(result.ok ? '已从剪贴板导入' : result.error ?? '剪贴板里没有图片')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const importAssets = async (): Promise<void> => {
     setBusy(true)
     try {
@@ -105,9 +117,10 @@ export function WorkspaceTray(): React.JSX.Element {
     try {
       const result = await window.cobrowse.designExport()
       if (result.canceled) return
+      if (result.ok && result.path) setLastExport(result.path)
       setNote(
         result.ok
-          ? `已导出：${result.path ?? ''}（请把整个 site 文件夹一起发）`
+          ? '已导出（把整个 site 文件夹一起发，单发 index.html 会丢样式）'
           : result.error ?? '导出失败'
       )
       await refresh()
@@ -141,7 +154,7 @@ export function WorkspaceTray(): React.JSX.Element {
             <span className={`ws-dot ${design.dirty ? 'dirty' : 'clean'}`} title={design.dirty ? '有未提交改动' : '已提交'} />
           </div>
           <div className="ws-card-meta">
-            第 {design.round} 轮 · {design.dirty ? '有未提交改动' : '已提交'}
+            第 {design.round} 版 · {design.dirty ? '有未保存改动' : '已保存'}
           </div>
           <div className="ws-card-actions">
             <button disabled={busy} onClick={() => void openCanvas()}>打开画布</button>
@@ -165,7 +178,10 @@ export function WorkspaceTray(): React.JSX.Element {
       <div className="ws-assets">
         <div className="ws-assets-head">
           <span>本地资产</span>
-          <button className="ws-import" disabled={busy} onClick={() => void importAssets()}>+ 导入</button>
+          <span className="ws-assets-buttons">
+            <button className="ws-import" disabled={busy} onClick={() => void pasteAsset()}>粘贴图片</button>
+            <button className="ws-import" disabled={busy} onClick={() => void importAssets()}>+ 导入</button>
+          </span>
         </div>
         {assets.length === 0 ? (
           <div className="ws-assets-empty">导入图片或文件，用于设计、分析或溯源</div>
@@ -191,6 +207,15 @@ export function WorkspaceTray(): React.JSX.Element {
           </div>
         )}
         {note && <div className="ws-note">{note}</div>}
+        {lastExport && (
+          <div className="ws-export">
+            <div className="ws-export-path" title={lastExport}>{lastExport}</div>
+            <div className="ws-export-actions">
+              <button onClick={() => void window.cobrowse.showItemInFolder(lastExport)}>打开文件夹</button>
+              <button onClick={() => void window.cobrowse.copyText(lastExport)}>复制路径</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

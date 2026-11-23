@@ -319,6 +319,15 @@ const api = {
     errors?: string[]
     assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
   }> => ipcRenderer.invoke('assets:import-dialog'),
+  assetsPaste: (): Promise<{
+    ok: boolean
+    imported: string[]
+    error?: string
+    assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
+  }> => ipcRenderer.invoke('assets:paste'),
+  showItemInFolder: (target: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('shell:show-item', target),
+  copyText: (text: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('clipboard:write', text),
   agentSwitchSession: (id: string) =>
     ipcRenderer.invoke('agent:switch-session', id) as Promise<{ ok: boolean; error?: string }>,
   agentDeleteSession: (id: string) =>

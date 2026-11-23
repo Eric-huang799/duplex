@@ -175,6 +175,14 @@ interface CobrowseApi {
     errors?: string[]
     assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
   }>
+  assetsPaste(): Promise<{
+    ok: boolean
+    imported: string[]
+    error?: string
+    assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
+  }>
+  showItemInFolder(target: string): Promise<{ ok: boolean }>
+  copyText(text: string): Promise<{ ok: boolean }>
   /** 并行内置会话：启动一个后台会话（不打断当前对话）。 */
   agentParallelStart(
     text: string,

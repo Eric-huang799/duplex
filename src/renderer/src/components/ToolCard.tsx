@@ -12,6 +12,75 @@ const STATUS_ICON: Record<MirrorToolEvent['status'], string> = {
 const OUTPUT_LIMIT = 2500
 const ERROR_LIMIT = 1500
 
+const TOOL_LABEL: Record<string, string> = {
+  navigate: '打开网页',
+  search: '搜索',
+  snapshot: '查看页面',
+  get_html: '读取页面代码',
+  query: '查找元素',
+  screenshot: '截图',
+  click: '点击',
+  type: '输入',
+  press: '按键',
+  scroll: '滚动',
+  hover: '悬停',
+  dblclick: '双击',
+  drag: '拖拽',
+  select_option: '选择选项',
+  upload: '上传文件',
+  wait: '等待',
+  get_console: '读取控制台',
+  evaluate: '执行脚本',
+  read_skill: '读取技能',
+  list_skill_files: '查看技能文件',
+  read_skill_file: '读取技能文件',
+  run_skill_script: '运行技能脚本',
+  write_file: '写文件',
+  run_command: '运行命令',
+  design_open: '打开设计画布',
+  design_read: '读取设计',
+  design_patch: '修改设计',
+  design_variants: '生成备选方案',
+  design_commit: '保存设计版本',
+  design_export: '导出网页'
+}
+
+function humanSummary(ev: MirrorToolEvent): string {
+  const input = (ev.input ?? {}) as Record<string, unknown>
+  switch (ev.tool) {
+    case 'design_patch':
+      return Array.isArray(input['ops']) ? `修改 ${input['ops'].length} 处` : '修改设计'
+    case 'navigate':
+      return String(input['url'] ?? '')
+    case 'click':
+    case 'hover':
+    case 'dblclick':
+      return String(input['target'] ?? input['selector'] ?? '')
+    case 'type':
+      return [input['target'], String(input['text'] ?? '').slice(0, 26)].filter(Boolean).join(' · ')
+    case 'search':
+      return String(input['query'] ?? '')
+    case 'screenshot':
+      return '截图'
+    case 'run_command':
+      return String(input['command'] ?? '')
+    case 'write_file':
+      return String(input['path'] ?? input['filePath'] ?? '')
+    case 'design_export':
+    case 'design_commit':
+      return String(input['summary'] ?? '')
+    case 'design_open':
+      return ''
+    case 'design_read':
+      return typeof input['rootId'] === 'string' ? `区块 ${input['rootId']}` : '读取结构'
+    default: {
+      const text = summarizeInput(ev.input)
+      // 工具卡标题不展示原始 JSON：没有可读字段就留空
+      return /^\s*[\[{]/.test(text) ? '' : text
+    }
+  }
+}
+
 function summarizeInput(input: unknown): string {
   if (input == null) return ''
   if (typeof input === 'string') return input.slice(0, 80)
@@ -39,7 +108,9 @@ export function ToolCard({
   waiting?: boolean
 }): React.JSX.Element {
   const { t } = useI18n()
-  const summary = ev.title || summarizeInput(ev.input)
+  const titleIsJson = typeof ev.title === 'string' && /^\s*[{[]/.test(ev.title)
+  const summary = (!titleIsJson && ev.title) || humanSummary(ev)
+  const toolName = TOOL_LABEL[ev.tool] ?? ev.tool
   const outputTruncated = !!ev.output && ev.output.length > OUTPUT_LIMIT
   const errorTruncated = !!ev.error && ev.error.length > ERROR_LIMIT
   return (
@@ -52,7 +123,7 @@ export function ToolCard({
         ) : (
           <span className="tool-status">{STATUS_ICON[ev.status]}</span>
         )}
-        <span className="tool-name">{ev.tool}</span>
+        <span className="tool-name">{toolName}</span>
         {waiting ? (
           <span className="tool-title">{t('tool.waitingPermission')}</span>
         ) : (

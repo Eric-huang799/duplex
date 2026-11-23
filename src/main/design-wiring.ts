@@ -202,6 +202,11 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     const result = service.applyOps('system', ops, { allowLocked: false })
     if (result.applied > 0) {
       deps.log(`[design] 已创建初始画布：${result.applied} 个节点`)
+      // 新用户一进门就背"未保存"债会焦虑；初始示例自动保存成一版。
+      if (service.history(1).length === 0) {
+        const saved = service.commitRound('初始示例页面')
+        if (saved.ok) deps.log('[design] 初始示例已自动保存')
+      }
     }
   }
   ensureStarter()

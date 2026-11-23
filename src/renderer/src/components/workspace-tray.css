@@ -68,6 +68,35 @@
   cursor: default;
 }
 
+.ws-assets-buttons { display: flex; gap: 6px; }
+
+.ws-export {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-soft, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface-base, #fff);
+}
+
+.ws-export-path {
+  font-size: 10px;
+  color: var(--text-muted, #6b7280);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-export-actions { display: flex; gap: 6px; margin-top: 4px; }
+
+.ws-export-actions button {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: 1px solid var(--line-soft, #e5e7eb);
+  background: transparent;
+  cursor: pointer;
+}
+
 .ws-assets-head {
   display: flex;
   align-items: center;

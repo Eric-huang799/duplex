@@ -3024,6 +3024,39 @@ function setupIpc(): void {
     }
     return { ok: imported.length > 0, imported, errors, assets: assetStore.list() }
   })
+  ipcMain.handle('assets:paste', async () => {
+    if (!assetStore) return { ok: false, error: '资产库未就绪', imported: [], assets: [] }
+    try {
+      // Electron 44 的 clipboard 是新的异步 ClipboardItem API，没有 readImage
+      const items = await clipboard.read()
+      for (const item of items) {
+        const type = item.types.find((entry) => entry.startsWith('image/'))
+        if (!type) continue
+        const payload = await item.getType(type)
+        if (!(payload instanceof Blob)) continue
+        const buffer = Buffer.from(await payload.arrayBuffer())
+        const ext = type === 'image/jpeg' ? '.jpg' : type === 'image/gif' ? '.gif' : '.png'
+        const entry = assetStore.importBuffer(buffer, {
+          name: `clipboard-${Date.now().toString(36)}${ext}`,
+          mime: type,
+          source: 'clipboard'
+        })
+        return { ok: true, imported: [entry.id], assets: assetStore.list() }
+      }
+      return { ok: false, error: '剪贴板里没有图片', imported: [], assets: assetStore.list() }
+    } catch (error) {
+      return { ok: false, error: (error as Error).message, imported: [], assets: assetStore.list() }
+    }
+  })
+  ipcMain.handle('shell:show-item', (_event, target: unknown) => {
+    if (typeof target !== 'string' || !target.trim()) return { ok: false }
+    shell.showItemInFolder(target)
+    return { ok: true }
+  })
+  ipcMain.handle('clipboard:write', (_event, text: unknown) => {
+    if (typeof text === 'string') clipboard.writeText(text)
+    return { ok: true }
+  })
   ipcMain.handle('design:state-get', () => {
     if (!designWiring) return { ok: false }
     return { ok: true, state: designWiring.service.state(), name: designWiring.service.current().name }

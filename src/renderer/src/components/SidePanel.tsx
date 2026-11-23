@@ -1019,7 +1019,23 @@ export function SidePanel({
             {agentVisible.length === 0 && (
               <div className="empty">
                 {agentConfigured ? (
-                  t('panel.agentIntro')
+                  <>
+                    {t('panel.agentIntro')}
+                    <div className="empty-suggestions">
+                      {[t('panel.example1'), t('panel.example2'), t('panel.example3')].map((text) => (
+                        <button
+                          key={text}
+                          className="suggestion-btn"
+                          onClick={() => {
+                            updateDraft(text)
+                            composerRef.current?.focus()
+                          }}
+                        >
+                          {text}
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 ) : (
                   <>
                     {t('panel.noProviders')}
@@ -1165,6 +1181,16 @@ export function SidePanel({
         </div>
       )}
 
+      {isAgent && agentSessionState === 'busy' && (
+        <div className="composer-progress" role="status">
+          <span className="composer-progress__bar" />
+          <span className="composer-progress__label">
+            {t('panel.generating')} · {t('panel.generatingHint')}
+          </span>
+        </div>
+      )}
+
+
       <div className="composer">
         <textarea
           ref={composerRef}
@@ -1196,7 +1222,13 @@ export function SidePanel({
         />
         {isAgent && agentSessionState === 'busy' ? (
           <div className="composer-actions">
-            <button className="send-btn stop" onClick={() => void window.cobrowse.agentAbort()}>{t('panel.stop')}</button>
+            <button
+              className="send-btn stop"
+              title={t('panel.generatingHint')}
+              onClick={() => void window.cobrowse.agentAbort()}
+            >
+              {t('panel.stop')}
+            </button>
             <button className="send-btn" onClick={() => {
               setModifyNextSend(true)
               void window.cobrowse.agentAbort()

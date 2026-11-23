@@ -118,7 +118,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
     attrs: { type: 'button', role: 'switch', 'aria-checked': 'false', title: '锁定后 agent 的 patch 不会改动该节点（含子树）' }
   })
   const lockIcon = el('span', { className: 'inspector__lock-icon', text: '🔓' })
-  const lockLabel = el('span', { className: 'inspector__lock-label', text: '未锁定' })
+  const lockLabel = el('span', { className: 'inspector__lock-label', text: '可编辑' })
   lockButton.append(lockIcon, lockLabel)
 
   const didValue = el('code', { className: 'inspector__id-value', text: '—' })
@@ -333,7 +333,7 @@ export function createInspector(deps: InspectorDeps): InspectorHandle {
     lockButton.setAttribute('aria-disabled', inheritedLock ? 'true' : 'false')
     lockButton.classList.toggle('is-inherited', inheritedLock)
     setText(lockIcon, locked ? '🔒' : '🔓')
-    setText(lockLabel, locked ? '已锁定' : '未锁定')
+    setText(lockLabel, locked ? '已锁定' : '可编辑')
     setText(lockNote, inheritedLock ? '父级容器已锁定：agent 的 patch 不会触碰该子树。' : '')
     lockNote.hidden = !inheritedLock
 

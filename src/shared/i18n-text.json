@@ -1123,20 +1123,40 @@
     "Message the AI (Enter to send, Shift+Enter for a newline)"
   ],
   "panel.stop": [
-    "停止",
-    "Stop"
+    "取消生成",
+    "Cancel"
   ],
   "panel.pauseModify": [
-    "暂停并修改",
+    "暂停并修改指令",
     "Pause & edit"
   ],
   "panel.queueFollowup": [
-    "补充排队",
-    "Queue follow-up"
+    "继续补充要求（排队）",
+    "Queue a follow-up"
   ],
   "panel.emergencyStopTitle": [
     "紧急停止：终止从面板发起的任务进程",
     "Emergency stop: terminate task processes started from the panel"
+  ],
+  "panel.generating": [
+    "正在生成…",
+    "Generating…"
+  ],
+  "panel.generatingHint": [
+    "已完成的步骤会保留，可随时撤销",
+    "Completed steps are kept and can be undone"
+  ],
+  "panel.example1": [
+    "做一个简单的产品落地页，三栏卡片",
+    "Build a simple product landing page with three cards"
+  ],
+  "panel.example2": [
+    "把这张图放进页面，并调整版式",
+    "Put this image on the page and adjust the layout"
+  ],
+  "panel.example3": [
+    "把这个页面的配色改清爽一点",
+    "Make the colors on this page cleaner"
   ],
   "panel.sending": [
     "发送中…",
@@ -2749,8 +2769,8 @@
     "Human verification detected: the AI paused, please complete it and continue"
   ],
   "settings.consents": [
-    "AI 已获准访问的站点",
-    "Sites the AI is allowed to visit"
+    "AI 站点授权（含本会话全部放行）",
+    "AI site approvals (including allow-all this session)"
   ],
   "settings.trustMode": ["本会话：站点访问仍会逐次确认", "This session: site visits ask each time"],
   "settings.trustModeOn": ["本会话：站点访问已全部放行", "This session: site visits are all allowed"],
@@ -2761,8 +2781,8 @@
     "Requires explicit confirmation; only skips asking, never overrides denied sites; resets on restart"
   ],
   "settings.consentsHint": [
-    "AI 第一次进入敏感站点前会问你；授权按「agent + 站点」分别记录，可随时撤销。",
-    "The AI asks before entering a sensitive site; approvals are kept per agent and site, and can be revoked at any time."
+    "AI 第一次进入敏感站点前会问你；授权按「agent + 站点」分别记录，可随时撤销。需要少点确认时，用下方的「本会话全部放行」（需二次确认，重启失效）。",
+    "The AI asks before entering a sensitive site; approvals are kept per agent and site and can be revoked anytime. To avoid repeated prompts, use “Allow all this session” below (explicit confirmation, resets on restart)."
   ],
   "settings.consentsEmpty": [
     "还没有授权任何站点",
