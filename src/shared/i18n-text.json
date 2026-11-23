@@ -2799,5 +2799,153 @@
   "settings.revoke": [
     "撤销",
     "Revoke"
+  ],
+  "settings.features": [
+    "功能插件",
+    "Feature plugins"
+  ],
+  "settings.featuresHint": [
+    "内置与本地插件都可以单独启用/禁用；禁用后工具栏、对话卡片和 AI 工具一起消失，数据保留。外部插件从 features/<id>/ 加载，默认禁用。",
+    "Built-in and local plugins can be enabled or disabled independently. Disabling removes its toolbar button, chat card, and AI tools; data stays. External plugins load from features/<id>/ and are disabled by default."
+  ],
+  "settings.featureInstall": [
+    "安装文件夹…",
+    "Install folder…"
+  ],
+  "settings.featureInstalling": [
+    "正在安装…",
+    "Installing…"
+  ],
+  "settings.featureInstalled": [
+    "已安装并启用：{name}",
+    "Installed and enabled: {name}"
+  ],
+  "settings.featureInstallFailed": [
+    "安装失败：{err}",
+    "Install failed: {err}"
+  ],
+  "settings.featureEmpty": [
+    "还没有功能插件",
+    "No feature plugins yet"
+  ],
+  "settings.featureBuiltin": [
+    "内置",
+    "Built-in"
+  ],
+  "settings.featureExternal": [
+    "外部",
+    "External"
+  ],
+  "settings.featureTools": [
+    "工具：{tools}",
+    "Tools: {tools}"
+  ],
+  "settings.featureStatusCard": [
+    "对话状态卡",
+    "Chat status card"
+  ],
+  "settings.featureDir": [
+    "目录",
+    "Directory"
+  ],
+  "settings.featureToggleFailed": [
+    "切换失败：{err}",
+    "Toggle failed: {err}"
+  ],
+  "settings.featureEnabledCount": [
+    "已启用 {enabled}/{total}",
+    "{enabled}/{total} enabled"
+  ],
+  "feature.design.name": [
+    "设计画布",
+    "Design canvas"
+  ],
+  "feature.design.label": [
+    "设计",
+    "Design"
+  ],
+  "feature.design.description": [
+    "画布式页面设计：拖拽、锁定、patch 流、导出网页。",
+    "Canvas-based page design: drag, lock, patch streams, and export."
+  ],
+  "feature.design.statusClean": [
+    "第 {version} 版 · 已保存",
+    "Revision {version} · saved"
+  ],
+  "feature.design.statusDirty": [
+    "第 {version} 版 · 有未保存改动",
+    "Revision {version} · unsaved changes"
+  ],
+  "feature.design.project": [
+    "项目 {id}",
+    "Project {id}"
+  ],
+  "feature.design.actionOpen": [
+    "打开画布",
+    "Open canvas"
+  ],
+  "feature.design.actionUndo": [
+    "撤销",
+    "Undo"
+  ],
+  "feature.design.actionCommit": [
+    "保存版本",
+    "Commit"
+  ],
+  "feature.design.actionExport": [
+    "导出",
+    "Export"
+  ],
+  "feature.design.round": [
+    "设计轮次",
+    "Design round"
+  ],
+  "feature.design.unavailable": [
+    "设计插件尚未启动",
+    "Design plugin is not running"
+  ],
+  "feature.design.canvasMissing": [
+    "画布资源缺失：请先 npm run build",
+    "Canvas assets are missing: run npm run build first"
+  ],
+  "feature.design.commitFailed": [
+    "提交失败",
+    "Commit failed"
+  ],
+  "feature.design.exportTitle": [
+    "导出设计",
+    "Export design"
+  ],
+  "feature.design.exportCanceled": [
+    "已取消导出",
+    "Export canceled"
+  ],
+  "feature.design.exportFailed": [
+    "导出失败",
+    "Export failed"
+  ],
+  "feature.design.imageMissingId": [
+    "缺少资产 id",
+    "Missing asset id"
+  ],
+  "feature.design.imageMissing": [
+    "资产不存在",
+    "Asset not found"
+  ],
+  "feature.design.insertFailed": [
+    "插入失败",
+    "Insert failed"
+  ],
+  "feature.invokeFailed": [
+    "操作失败：{err}",
+    "Action failed: {err}"
+  ],
+  "feature.done": [
+    "完成",
+    "Done"
+  ],
+  "feature.noPlugins": [
+    "还没有可用的功能插件",
+    "No feature plugins are available"
   ]
 }

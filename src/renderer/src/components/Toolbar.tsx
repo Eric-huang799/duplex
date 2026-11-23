@@ -6,6 +6,7 @@ import { comboFromEvent, displayParts, isModifierKey, normalizeBinding, sameBind
 import { DEFAULT_SHORTCUTS, SHORTCUT_DEFS, validateShortcuts, type ShortcutAction } from '../../../shared/shortcuts'
 import { useI18n } from '../i18n'
 import type { I18nKey } from '../../../shared/i18n'
+import type { FeatureInfo } from '../../../shared/features'
 
 type ThemeSetting = 'system' | 'light' | 'dark'
 type EngineMenuState = 'closed' | 'open' | 'closing'
@@ -82,6 +83,58 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
   const [shortcutError, setShortcutError] = useState('')
   const [recordingAction, setRecordingAction] = useState<ShortcutAction | null>(null)
   const [recordingMods, setRecordingMods] = useState('')
+  /** 工具栏按钮完全由 features 列表驱动（不在渲染层保留任何硬编码入口）。 */
+  const [featureButtons, setFeatureButtons] = useState<
+    Array<{
+      key: string
+      featureId: string
+      label: string
+      icon?: string
+      command: string
+      title: string
+    }>
+  >([])
+  const [featureError, setFeatureError] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    const apply = (features: FeatureInfo[]): void => {
+      if (!alive) return
+      const buttons: typeof featureButtons = []
+      for (const feature of features) {
+        if (!feature.enabled) continue
+        for (const item of feature.manifest.contributes.toolbar ?? []) {
+          buttons.push({
+            key: `${feature.manifest.id}:${item.id}`,
+            featureId: feature.manifest.id,
+            label: item.label,
+            ...(item.icon ? { icon: item.icon } : {}),
+            command: item.command,
+            title: `${feature.manifest.name} v${feature.manifest.version} — ${feature.manifest.description}`
+          })
+        }
+      }
+      setFeatureButtons(buttons)
+    }
+    void window.cobrowse
+      .featuresList()
+      .then((result) => apply(result.features))
+      .catch(() => undefined)
+    const off = window.cobrowse.onFeaturesChanged((payload) => apply(payload.features))
+    return () => {
+      alive = false
+      off()
+    }
+  }, [])
+
+  const invokeFeature = async (featureId: string, command: string): Promise<void> => {
+    try {
+      const result = await window.cobrowse.featuresInvoke(command, undefined, featureId)
+      setFeatureError(result.ok ? '' : result.error ?? t('feature.invokeFailed', { err: command }))
+    } catch (error) {
+      setFeatureError((error as Error)?.message ?? t('feature.invokeFailed', { err: command }))
+    }
+  }
 
   useEffect(() => {
     onChromeOverlayChange?.('toolbar-stop-keys', stopKeysOpen)
@@ -595,15 +648,32 @@ export function Toolbar({ active, onAction, onStopKeysChanged, bookmarked = fals
           }}
         ><Icon name="more" /></button>
       </div>
-      <button
-        className="tb-btn design-btn"
-        title="打开设计画布（做网页）"
-        onClick={() => {
-          void window.cobrowse.designOpenCanvas()
-        }}
-      >
-        ✦ {t('toolbar.design')}
-      </button>
+      {featureButtons.map((button) => (
+        <button
+          key={button.key}
+          className="tb-btn design-btn"
+          title={button.title}
+          onClick={() => void invokeFeature(button.featureId, button.command)}
+        >
+          {button.icon ? `${button.icon} ` : ''}
+          {button.label}
+        </button>
+      ))}
+      {featureError && (
+        <span
+          title={featureError}
+          style={{
+            alignSelf: 'center',
+            flex: '0 0 auto',
+            padding: '0 6px',
+            fontSize: 14,
+            color: 'var(--danger, #e5484d)',
+            cursor: 'help'
+          }}
+        >
+          ⚠
+        </span>
+      )}
       {showAnnotationToggle && (
         <button
           className={`tb-btn annotation-toggle ${annotationActive ? 'selected' : ''}`}

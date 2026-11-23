@@ -13,7 +13,7 @@
  */
 import path from 'node:path'
 import { dialog, ipcMain, type BrowserWindow, type WebContents } from 'electron'
-import { DesignService, registerDesignIpc } from './design'
+import { DesignService, registerDesignIpc, type DesignServiceEvent } from './design'
 import {
   applyPatch,
   findNode,
@@ -45,6 +45,11 @@ export interface DesignWiringDeps {
   openCanvas: () => WebContents | null
   /** 本地资产库：导出时把图片复制进 site/assets（可选）。 */
   assets?: { copy(id: string, targetDir: string): string | null }
+  /**
+   * 服务事件旁路观察者（功能宿主用它刷新状态卡）。
+   * 不改变事件适配/发布路径，只是额外通知一次。
+   */
+  onEvent?: (event: DesignServiceEvent) => void
 }
 
 const DEFAULT_PROJECT = 'design-1'
@@ -101,6 +106,7 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
     } else if (event.type === 'rejected') {
       deps.log(`[design] ${event.actor} 的 patch 被拒绝：${event.rejected.map((r) => r.reason).join('；')}`)
     }
+    deps.onEvent?.(event)
   })
 
   service.open(projectId)
@@ -527,6 +533,9 @@ export function createDesignWiring(deps: DesignWiringDeps): DesignWiring {
       disposeIpc()
       ipcMain.removeAllListeners('design:canvas-ready')
       ipcMain.removeAllListeners('design:canvas-msg')
+      // registerDesignIpc 不管这个通道（它由本文件自己 handle）；不删的话插件
+      // 禁用后重新启用会因"second handler"直接抛错。
+      ipcMain.removeHandler('design:open-canvas')
       service.close()
     }
   }

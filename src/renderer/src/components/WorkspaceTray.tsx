@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { FeatureInfo, FeatureStatusEntry } from '../../../shared/features'
+import { useI18n } from '../i18n'
 import './workspace-tray.css'
 
 interface AssetView {
@@ -10,13 +12,6 @@ interface AssetView {
   height?: number
 }
 
-interface DesignView {
-  name: string
-  round: number
-  dirty: boolean
-  canUndo: boolean
-}
-
 function sizeLabel(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
@@ -24,15 +19,19 @@ function sizeLabel(bytes: number): string {
 }
 
 /**
- * 对话里的"工作区"卡片：设计画布状态 + 本地资产。
+ * 对话里的“工作区”卡片：
+ *  - 状态卡完全由 features 列表驱动（声明 contributes.statusCard 的已启用插件）；
+ *  - 卡片的按钮来自插件发布的 status.actions，点击统一走 features:invoke；
+ *  - 本地资产库仍然通用；插入图片由设计插件的 design.insert-image 命令完成。
  *
- * 这是把设计能力接进对话的入口，而不是把画布塞进气泡：
- *  - 卡片只显示状态和动作，编辑仍在画布标签里完成；
- *  - 资产是本地库（内容寻址），点一下插入为图片节点；
- *  - 不重复实现渲染，不复制设计文档状态。
+ * 这里刻意不出现任何 `design*` 入口判断：设计插件被禁用后，它的状态卡与按钮
+ * 自然从列表里消失，而资产库本身不受影响。
  */
 export function WorkspaceTray(): React.JSX.Element {
-  const [design, setDesign] = useState<DesignView | null>(null)
+  const { t } = useI18n()
+  const [features, setFeatures] = useState<FeatureInfo[]>([])
+  const [statuses, setStatuses] = useState<FeatureStatusEntry[]>([])
+  const [featureErrors, setFeatureErrors] = useState<string[]>([])
   const [assets, setAssets] = useState<AssetView[]>([])
   const [note, setNote] = useState('')
   const [lastExport, setLastExport] = useState<string | null>(null)
@@ -40,52 +39,50 @@ export function WorkspaceTray(): React.JSX.Element {
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
-      const [state, list] = await Promise.all([window.cobrowse.designState(), window.cobrowse.assetsList()])
-      setDesign(
-        state.ok && state.state
-          ? {
-              name: state.name ?? state.state.projectId,
-              round: state.state.version,
-              dirty: state.state.dirty,
-              canUndo: state.state.canUndo
-            }
-          : null
-      )
-      setAssets(list.assets ?? [])
+      const [featureList, featureStatus, assetList] = await Promise.all([
+        window.cobrowse.featuresList(),
+        window.cobrowse.featuresStatus(),
+        window.cobrowse.assetsList()
+      ])
+      setFeatures(featureList.features)
+      setFeatureErrors(featureList.errors ?? [])
+      setStatuses(featureStatus.statuses ?? [])
+      setAssets(assetList.assets ?? [])
     } catch {
-      /* 面板刚启动时 IPC 可能还没就绪，下一次轮询会补上 */
+      /* 面板刚启动时 IPC 可能还没就绪，下一次 features:changed 会补上 */
     }
   }, [])
 
   useEffect(() => {
     void refresh()
-    const timer = window.setInterval(() => void refresh(), 3000)
-    return () => window.clearInterval(timer)
+    const off = window.cobrowse.onFeaturesChanged((payload) => {
+      setFeatures(payload.features)
+      setStatuses(payload.statuses)
+      setFeatureErrors(payload.errors ?? [])
+    })
+    return off
   }, [refresh])
 
-  const openCanvas = async (): Promise<void> => {
-    await window.cobrowse.designOpenCanvas()
-  }
+  const statusOf = (featureId: string): FeatureStatusEntry['status'] | null =>
+    statuses.find((entry) => entry.id === featureId)?.status ?? null
 
-  const undo = async (): Promise<void> => {
+  const invoke = async (featureId: string, command: string): Promise<void> => {
     setBusy(true)
     try {
-      const result = await window.cobrowse.designUndo()
-      setNote(result && 'ok' in result && result.ok ? '已撤销一步' : '没有可撤销的操作')
-      await refresh()
+      const result = await window.cobrowse.featuresInvoke(command, undefined, featureId)
+      if (!result.ok) {
+        const payload = result.result as { canceled?: boolean } | undefined
+        if (!payload?.canceled) setNote(result.error ?? t('feature.invokeFailed', { err: command }))
+        return
+      }
+      const payload = result.result as { path?: string } | undefined
+      if (payload?.path) setLastExport(payload.path)
+      setNote('')
+    } catch (error) {
+      setNote((error as Error)?.message ?? t('feature.invokeFailed', { err: command }))
     } finally {
       setBusy(false)
-    }
-  }
-
-  const commit = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      const result = await window.cobrowse.designCommit('从对话提交')
-      setNote(result?.ok ? '已提交一轮' : result?.error ?? '提交失败')
       await refresh()
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -112,68 +109,63 @@ export function WorkspaceTray(): React.JSX.Element {
     }
   }
 
-  const exportSite = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      const result = await window.cobrowse.designExport()
-      if (result.canceled) return
-      if (result.ok && result.path) setLastExport(result.path)
-      setNote(
-        result.ok
-          ? '已导出（把整个 site 文件夹一起发，单发 index.html 会丢样式）'
-          : result.error ?? '导出失败'
-      )
-      await refresh()
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const insertImage = async (asset: AssetView): Promise<void> => {
     setBusy(true)
     try {
       const result = await window.cobrowse.designInsertImage(asset.id)
-      if (result.ok) {
-        await window.cobrowse.designOpenCanvas()
-        setNote(`已插入 ${asset.name}`)
-      } else {
-        setNote(result.error ?? '插入失败')
-      }
+      setNote(result.ok ? `已插入 ${asset.name}（从上方状态卡打开画布）` : result.error ?? '插入失败')
       await refresh()
     } finally {
       setBusy(false)
     }
   }
 
+  const cards = features.filter(
+    (feature) => feature.enabled && feature.manifest.contributes.statusCard
+  )
+
   return (
     <div className="ws-tray">
-      {design ? (
-        <div className="ws-card">
-          <div className="ws-card-head">
-            <span className="ws-card-title">设计画布 · {design.name}</span>
-            <span className={`ws-dot ${design.dirty ? 'dirty' : 'clean'}`} title={design.dirty ? '有未提交改动' : '已提交'} />
+      {cards.map((feature) => {
+        const status = statusOf(feature.manifest.id)
+        const actions =
+          status?.actions ??
+          (feature.manifest.contributes.toolbar ?? []).map((item) => ({
+            id: item.id,
+            label: item.label,
+            command: item.command
+          }))
+        const tone = status?.tone ?? 'info'
+        return (
+          <div className="ws-card" key={feature.manifest.id}>
+            <div className="ws-card-head">
+              <span className="ws-card-title">{feature.manifest.name}</span>
+              {status && (
+                <span
+                  className={`ws-dot ${tone === 'warn' || tone === 'error' ? 'dirty' : 'clean'}`}
+                  title={status.text}
+                />
+              )}
+            </div>
+            <div className="ws-card-meta">{status?.text ?? feature.manifest.description}</div>
+            {status?.detail && <div className="ws-card-meta">{status.detail}</div>}
+            {actions.length > 0 && (
+              <div className="ws-card-actions">
+                {actions.map((action) => (
+                  <button
+                    key={action.id}
+                    disabled={busy}
+                    title={action.command}
+                    onClick={() => void invoke(feature.manifest.id, action.command)}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-          <div className="ws-card-meta">
-            第 {design.round} 版 · {design.dirty ? '有未保存改动' : '已保存'}
-          </div>
-          <div className="ws-card-actions">
-            <button disabled={busy} onClick={() => void openCanvas()}>打开画布</button>
-            <button disabled={busy || !design.canUndo} onClick={() => void undo()}>撤销</button>
-            <button disabled={busy} onClick={() => void commit()}>保存</button>
-            <button disabled={busy} onClick={() => void exportSite()}>导出</button>
-          </div>
-        </div>
-      ) : (
-        <div className="ws-card">
-          <div className="ws-card-head">
-            <span className="ws-card-title">设计画布</span>
-          </div>
-          <div className="ws-card-meta">还没有打开设计项目</div>
-          <div className="ws-card-actions">
-            <button disabled={busy} onClick={() => void openCanvas()}>打开画布</button>
-          </div>
-        </div>
-      )}
+        )
+      })}
 
       <div className="ws-assets">
         <div className="ws-assets-head">
@@ -217,6 +209,11 @@ export function WorkspaceTray(): React.JSX.Element {
           </div>
         )}
       </div>
+      {featureErrors.length > 0 && (
+        <div className="ws-note" title={featureErrors.join('\n')}>
+          {featureErrors[featureErrors.length - 1]}
+        </div>
+      )}
     </div>
   )
 }

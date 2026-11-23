@@ -35,6 +35,8 @@ export interface SessionRunnerOptions {
   chatFn?: SessionChatFn
   load?: () => AgentSession[]
   save?: (sessions: AgentSession[]) => void
+  /** 功能插件禁用后过滤 tools schema。 */
+  isToolAvailable?: (name: string) => boolean
 }
 
 interface RunningSession {
@@ -130,6 +132,7 @@ export class BackgroundSessionRunner {
       (this.options.chatFn ?? chatStream) as never,
       {
         getActiveTabId: this.options.getActiveTabId,
+        isToolAvailable: this.options.isToolAvailable,
         // 把这次运行绑定到标签：协作锁按 caller 记账，后台会话也要有自己的绑定
         onRunStart: (tabId) => this.options.onStart?.(sessionCallerId(id), tabId),
         onRunEnd: () => this.options.onEnd?.(sessionCallerId(id)),

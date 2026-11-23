@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { FeatureInfo } from '../../../shared/features'
 import { useI18n } from '../i18n'
 import './settings-panel.css'
 
@@ -28,6 +29,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
     state: 'idle'
   })
   const [updating, setUpdating] = useState(false)
+  const [features, setFeatures] = useState<FeatureInfo[]>([])
+  const [featureErrors, setFeatureErrors] = useState<string[]>([])
+  const [featureNote, setFeatureNote] = useState('')
+  const [installingFeature, setInstallingFeature] = useState(false)
 
   useEffect(() => {
     void window.cobrowse.appVersion().then((info) => setVersion(info.version))
@@ -68,9 +73,67 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
     }
   }, [])
 
+  const refreshFeatures = useCallback(async (): Promise<void> => {
+    try {
+      const result = await window.cobrowse.featuresList()
+      setFeatures(result.features)
+      setFeatureErrors(result.errors ?? [])
+    } catch {
+      setFeatures([])
+    }
+  }, [])
+
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    void refreshFeatures()
+  }, [refreshFeatures])
+
+  const toggleFeature = async (feature: FeatureInfo): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    try {
+      const result = await window.cobrowse.featuresSetEnabled(
+        feature.manifest.id,
+        !feature.enabled
+      )
+      setFeatures(result.features ?? [])
+      setFeatureNote(
+        result.ok ? '' : result.error ?? t('settings.featureToggleFailed', { err: '?' })
+      )
+      await refreshFeatures()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const installFeature = async (): Promise<void> => {
+    if (installingFeature) return
+    setInstallingFeature(true)
+    try {
+      const result = await window.cobrowse.featuresInstallFolder()
+      if (result.canceled) return
+      setFeatures(result.features ?? [])
+      if (result.ok && result.feature) {
+        setFeatureNote(
+          t('settings.featureInstalled', { name: result.feature.manifest.name })
+        )
+      } else {
+        setFeatureNote(
+          t('settings.featureInstallFailed', { err: result.error ?? '?' })
+        )
+      }
+      await refreshFeatures()
+    } catch (error) {
+      setFeatureNote(
+        t('settings.featureInstallFailed', { err: (error as Error)?.message ?? '?' })
+      )
+    } finally {
+      setInstallingFeature(false)
+    }
+  }
 
   const toggleAdblock = async (): Promise<void> => {
     if (!adblock || busy) return
@@ -230,6 +293,95 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
 
       <div className="setp-row">
         <div className="setp-main">
+          <div className="setp-label">{t('settings.features')}</div>
+          <div className="setp-hint">{t('settings.featuresHint')}</div>
+          <div className="setp-hint">
+            {t('settings.featureEnabledCount', {
+              enabled: features.filter((feature) => feature.enabled).length,
+              total: features.length
+            })}
+          </div>
+          <div className="setp-inline">
+            <button
+              className="setp-btn"
+              disabled={installingFeature}
+              onClick={() => void installFeature()}
+            >
+              {installingFeature
+                ? t('settings.featureInstalling')
+                : t('settings.featureInstall')}
+            </button>
+          </div>
+          {featureErrors.length > 0 && (
+            <div className="setp-hint" title={featureErrors.join('\n')}>
+              {featureErrors.slice(-3).join(' · ')}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {features.length === 0 ? (
+        <div className="setp-row">
+          <div className="setp-main">
+            <div className="setp-hint">{t('settings.featureEmpty')}</div>
+          </div>
+        </div>
+      ) : (
+        features.map((feature) => {
+          const builtinLabel = feature.builtin
+            ? t('settings.featureBuiltin')
+            : t('settings.featureExternal')
+          const tools = feature.manifest.contributes.tools ?? []
+          return (
+            <div className="setp-row" key={feature.manifest.id}>
+              <div className="setp-main">
+                <div className="setp-label">
+                  {feature.manifest.name}
+                  <span
+                    style={{
+                      marginLeft: 6,
+                      fontSize: 10,
+                      padding: '1px 5px',
+                      borderRadius: 6,
+                      border: '1px solid var(--line-soft)',
+                      opacity: 0.8
+                    }}
+                  >
+                    {builtinLabel}
+                  </span>
+                  <span style={{ marginLeft: 6, fontSize: 10, opacity: 0.6 }}>
+                    v{feature.manifest.version}
+                  </span>
+                </div>
+                <div className="setp-hint">{feature.manifest.description}</div>
+                {tools.length > 0 && (
+                  <div className="setp-hint">
+                    {t('settings.featureTools', { tools: tools.join(', ') })}
+                  </div>
+                )}
+                {feature.manifest.contributes.statusCard && (
+                  <div className="setp-hint">{t('settings.featureStatusCard')}</div>
+                )}
+                {feature.dir && (
+                  <div className="setp-hint" style={{ wordBreak: 'break-all' }}>
+                    {t('settings.featureDir')}: {feature.dir}
+                  </div>
+                )}
+              </div>
+              <button
+                className={`setp-switch ${feature.enabled ? 'on' : ''}`}
+                disabled={busy}
+                onClick={() => void toggleFeature(feature)}
+              >
+                {feature.enabled ? t('settings.on') : t('settings.off')}
+              </button>
+            </div>
+          )
+        })
+      )}
+
+      <div className="setp-row">
+        <div className="setp-main">
           <div className="setp-label">{t('settings.about')}</div>
           <div className="setp-hint">
             {t('settings.version', { version: version || '—' })} ·{' '}
@@ -259,6 +411,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }): React.JSX.E
       </div>
 
       {note && <div className="setp-note">{note}</div>}
+      {featureNote && <div className="setp-note">{featureNote}</div>}
     </div>
   )
 }

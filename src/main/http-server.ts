@@ -17,6 +17,8 @@ export interface HttpServerDeps {
   mirror: MirrorStore
   tabs: TabManager
   executeTool: ToolExecutor
+  /** 功能插件被禁用时，其声明工具不再注册到本次 MCP server（内置 agent 也走同一过滤）。 */
+  isToolAvailable?: (name: string) => boolean
   /** Abort in-flight operations owned by a caller (client disconnected). */
   abortCaller?: (caller: string) => void
   sessionBus: SessionBus
@@ -559,6 +561,7 @@ async function handleMcpPost(
   const server = new McpServer({ name: 'duplex', version: deps.version })
   for (const def of toolDefs) {
     if (def.internal) continue
+    if (deps.isToolAvailable && !deps.isToolAvailable(def.name)) continue
     server.registerTool(
       def.name,
       { description: def.description, inputSchema: def.input },

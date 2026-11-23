@@ -147,6 +147,8 @@ export interface AgentDeps {
   save?: (sessions: AgentSession[]) => void
   /** Extra full rounds after the 60-step cap (0 = off, clamped to 0..5). */
   getAutoContinueRounds?: () => number
+  /** 功能插件禁用后过滤 tools schema；未提供 = 全部可用。 */
+  isToolAvailable?: (name: string) => boolean
 }
 
 /** Constant partID so the one-time truncation notice is never duplicated. */
@@ -659,7 +661,7 @@ export class AgentRuntime {
     }
     let sessionError = false
     try {
-      const tools = buildOpenAiTools()
+      const tools = buildOpenAiTools(this.deps?.isToolAvailable)
       const MAX_STEPS = 60
       const extraRounds = Math.max(0, Math.min(5, Math.floor(this.getAutoContinueRounds?.() ?? 0)))
       let parseFailures = 0

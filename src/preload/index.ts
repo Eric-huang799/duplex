@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { BrowserDataSnapshot, ChatSendResult, CollaborationState, ContentBounds, DownloadRecord, ExternalSessionState, LoadErrorInfo } from '../shared/protocol'
 import type { PermissionAnswer, PermissionAskRequest } from '../shared/permissions'
+import type { FeatureInfo, FeatureStatusEntry } from '../shared/features'
 
 type TabAction = { type: string; url?: string; tabId?: number; value?: number }
 
@@ -308,6 +309,39 @@ const api = {
     ipcRenderer.invoke('design:commit', { summary }),
   designExport: (): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }> =>
     ipcRenderer.invoke('design:export'),
+  // ── 功能插件（通用宿主）───────────────────────────────────────────────
+  featuresList: (): Promise<{ features: FeatureInfo[]; errors: string[] }> =>
+    ipcRenderer.invoke('features:list'),
+  featuresSetEnabled: (
+    id: string,
+    enabled: boolean
+  ): Promise<{ ok: boolean; error?: string; features: FeatureInfo[] }> =>
+    ipcRenderer.invoke('features:set-enabled', { id, enabled }),
+  featuresInstallFolder: (): Promise<{
+    ok: boolean
+    canceled?: boolean
+    error?: string
+    feature?: FeatureInfo
+    features: FeatureInfo[]
+  }> => ipcRenderer.invoke('features:install-folder'),
+  featuresInvoke: (
+    command: string,
+    args?: Record<string, unknown>,
+    featureId?: string
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }> =>
+    ipcRenderer.invoke('features:invoke', { command, args, featureId }),
+  featuresStatus: (): Promise<{ statuses: FeatureStatusEntry[] }> =>
+    ipcRenderer.invoke('features:status'),
+  onFeaturesChanged: (
+    cb: (payload: { features: FeatureInfo[]; statuses: FeatureStatusEntry[]; errors?: string[] }) => void
+  ): (() => void) => {
+    const listener = (
+      _e: unknown,
+      payload: { features: FeatureInfo[]; statuses: FeatureStatusEntry[]; errors?: string[] }
+    ): void => cb(payload)
+    ipcRenderer.on('features:changed', listener)
+    return () => ipcRenderer.removeListener('features:changed', listener)
+  },
   assetsList: (): Promise<{ assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }> }> =>
     ipcRenderer.invoke('assets:list'),
   assetsImport: (paths: string[]): Promise<{ ok: boolean; imported: string[]; errors?: string[]; assets: Array<{ id: string; name: string }> }> =>

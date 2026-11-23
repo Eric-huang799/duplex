@@ -1,6 +1,7 @@
 import type { BrowserDataSnapshot, ChatSendResult, CollaborationState, ContentBounds, DownloadRecord, ExternalSessionState, LoadErrorInfo, MirrorEvent, SessionSummary, TabInfo } from '../../shared/protocol'
 import type { PermissionAnswer, PermissionAskRequest } from '../../shared/permissions'
 import type { LlmProtocol } from '../../shared/llm'
+import type { FeatureInfo, FeatureStatusEntry } from '../../shared/features'
 
 interface CobrowseApi {
   ready(): Promise<{ tabs: TabInfo[]; activeTabId: number | null; mirror: MirrorEvent[] }>
@@ -162,6 +163,27 @@ interface CobrowseApi {
   designUndo(): Promise<{ ok: boolean; error?: string }>
   designCommit(summary: string): Promise<{ ok: boolean; error?: string; skipped?: boolean }>
   designExport(): Promise<{ ok: boolean; path?: string; canceled?: boolean; error?: string }>
+  featuresList(): Promise<{ features: FeatureInfo[]; errors: string[] }>
+  featuresSetEnabled(
+    id: string,
+    enabled: boolean
+  ): Promise<{ ok: boolean; error?: string; features: FeatureInfo[] }>
+  featuresInstallFolder(): Promise<{
+    ok: boolean
+    canceled?: boolean
+    error?: string
+    feature?: FeatureInfo
+    features: FeatureInfo[]
+  }>
+  featuresInvoke(
+    command: string,
+    args?: Record<string, unknown>,
+    featureId?: string
+  ): Promise<{ ok: boolean; result?: unknown; error?: string }>
+  featuresStatus(): Promise<{ statuses: FeatureStatusEntry[] }>
+  onFeaturesChanged(
+    cb: (payload: { features: FeatureInfo[]; statuses: FeatureStatusEntry[]; errors?: string[] }) => void
+  ): () => void
   assetsList(): Promise<{
     assets: Array<{ id: string; name: string; mime: string; bytes: number; width?: number; height?: number }>
   }>

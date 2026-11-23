@@ -79,8 +79,9 @@ import {
 import { SessionBus } from './session-bus'
 import { AgentRuntime } from './agent/runtime'
 import { BackgroundSessionRunner, sessionCallerId } from './agent/session-runner'
-import { createDesignWiring } from './design-wiring'
 import { createSkillToolHandlers } from './agent/skill-tools'
+import { FeatureHost } from './features/host'
+import { createDesignFeature } from './features/design-canvas'
 import { createFsToolHandlers } from './agent/fs-tools'
 import { createSitePermissionHandlers } from './agent/permission-tools'
 import { createSettingToolHandlers } from './agent/setting-tools'
@@ -647,6 +648,9 @@ function logLine(msg: string): void {
 let win: BrowserWindow | null = null
 let tabs: TabManager | null = null
 let httpServer: RunningHttpServer | null = null
+/** 通用功能插件宿主（start 时装配；macOS 窗口重建后重新激活）。 */
+let featureHost: FeatureHost | null = null
+let featureChangeTimer: ReturnType<typeof setTimeout> | null = null
 let annotationSubmitHandler: AnnotationSubmitHandler | null = null
 let browserData: BrowserDataStore
 let downloads: DownloadManager
@@ -656,6 +660,38 @@ let timeline: TimelineStore | null = null
 let restoringBrowserSession = false
 const collaboration = new CollaborationCoordinator()
 collaboration.onChanged = (state) => { if (win && !win.isDestroyed()) win.webContents.send('collaboration:state', state) }
+
+/** 功能插件列表/状态快照：`features:list|status` 与推送事件共用。 */
+function featuresPayload(): {
+  features: ReturnType<FeatureHost['list']>
+  statuses: ReturnType<FeatureHost['statuses']>
+  errors: string[]
+} {
+  if (!featureHost) return { features: [], statuses: [], errors: [] }
+  return {
+    features: featureHost.list(),
+    statuses: featureHost.statuses(),
+    errors: featureHost.errorList()
+  }
+}
+
+function sendFeaturesChanged(): void {
+  try {
+    if (!win || win.isDestroyed()) return
+    win.webContents.send('features:changed', featuresPayload())
+  } catch {
+    /* window is going away */
+  }
+}
+
+/** 宿主可能在拖拽时连续 setStatus（每帧一次）；合并成一次 IPC 推送。 */
+function scheduleFeaturesChanged(): void {
+  if (featureChangeTimer) return
+  featureChangeTimer = setTimeout(() => {
+    featureChangeTimer = null
+    sendFeaturesChanged()
+  }, 80)
+}
 
 /** Which panel is on screen — decides where annotations are delivered. */
 let currentPanelMode: 'opencode' | 'agent' | 'external' = 'agent'
@@ -1389,8 +1425,6 @@ let acrylicWindow = false
 let agentRuntime: AgentRuntime | null = null
 /** 并行内置会话的运行器（窗口创建时装配，演示脚本在 ready-to-show 里用）。 */
 let parallelRunnerRef: BackgroundSessionRunner | null = null
-/** 设计画布的接线（窗口创建时装配；窗口关闭时释放）。 */
-let designWiring: ReturnType<typeof createDesignWiring> | null = null
 /** 本地资产库（start 时创建）。 */
 let assetStore: AssetStore | null = null
 
@@ -1569,13 +1603,15 @@ async function start(): Promise<void> {
       }
     }
     const caller = currentCaller()
-    // 设计画布工具：不需要标签，直接走 DesignService
-    if (name.startsWith('design_') && designWiring) {
-      const designAc = beginOperation({ owner: caller, mutates: true })
+    // 功能插件工具（含 design_*）：不需要标签，直接走宿主路由。
+    // 插件被禁用时宿主返回明确的 isError，而不是落到 unknown tool。
+    const featureTool = featureHost?.resolveToolOwner(name)
+    if (featureTool) {
+      const featureAc = beginOperation({ owner: caller, mutates: true })
       try {
-        return await runInOperation(designAc, () => designWiring!.runTool(name, args))
+        return await runInOperation(featureAc, () => featureHost!.runTool(name, args))
       } finally {
-        endOperation(designAc)
+        endOperation(featureAc)
       }
     }
     if (name === 'resume_tab') {
@@ -1774,7 +1810,9 @@ async function start(): Promise<void> {
         if (tabId != null) { collaboration.bind('builtin', tabId); if (!opts?.fromQueue && !annotationTabState.get(tabId)) collaboration.resume(tabId, false) }
       },
       onRunEnd: () => collaboration.release('builtin'),
-      cancelTools: () => { abortOperation({ owner: 'builtin' }); denyAllPendingConfirms('builtin') }
+      cancelTools: () => { abortOperation({ owner: 'builtin' }); denyAllPendingConfirms('builtin') },
+      // 插件禁用后，内置 agent 的 tools schema 里不再出现它的工具
+      isToolAvailable: (name) => featureHost?.isToolAvailable(name) ?? true
     }
   )
 
@@ -1785,6 +1823,7 @@ async function start(): Promise<void> {
       withCaller(sessionCallerId(sessionId), () => executeWithSkills(name, args)),
     getConfig: requireAgentConfig,
     getActiveTabId: () => tabs?.activeId ?? null,
+    isToolAvailable: (name) => featureHost?.isToolAvailable(name) ?? true,
     onStart: (callerId, tabId) => {
       collaboration.release(callerId)
       if (tabId != null) collaboration.bind(callerId, tabId)
@@ -1827,24 +1866,30 @@ async function start(): Promise<void> {
     }
   })
 
-  // 设计画布：接线集中到 design-wiring（服务/IPC/画布消息/agent 工具）
-  designWiring = createDesignWiring({
+  // 功能插件宿主：内置设计画布 + 外部 features/<id>/，启用状态持久化到 features.json。
+  featureHost = new FeatureHost({
+    dir: cobrowseDir(),
     win: () => win,
     log: logLine,
     caller: () => currentCaller(),
     assets: assetStore ?? undefined,
-    openCanvas: () => {
+    openCanvasTab: () => {
       if (!tabs) return null
-      // 画布标签的 Ctrl+Z / Shift+Z / Y 由主进程拦截并交给设计服务。
-      // 必须在这里注入：createDesignWiring 执行时 tabs 还没创建（httpServer 早于 TabManager）。
-      tabs.setCanvasShortcutHandler((action) => designWiring?.shortcut(action))
       tabs.setCanvasSource(
         path.join(app.getAppPath(), 'out', 'preload', 'canvas.cjs'),
         path.join(app.getAppPath(), 'out', 'canvas', 'index.html')
       )
       return tabs.createCanvasTab()?.view.webContents ?? null
-    }
+    },
+    onChange: () => scheduleFeaturesChanged()
   })
+  featureHost.registerBuiltin(
+    createDesignFeature({
+      // 画布标签的 Ctrl+Z / Shift+Z / Y 由主进程拦截并交给当前插件实例。
+      setCanvasShortcutHandler: (handler) => tabs?.setCanvasShortcutHandler(handler)
+    })
+  )
+  await featureHost.start()
 
   httpServer = await startHttpServer({
     token: TOKEN,
@@ -1852,6 +1897,7 @@ async function start(): Promise<void> {
     mirror,
     tabs: tabs!,
     executeTool: executeWithWake,
+    isToolAvailable: (name) => featureHost?.isToolAvailable(name) ?? true,
     abortCaller: (caller: string) => {
       abortOperation({ owner: caller })
     },
@@ -2152,8 +2198,12 @@ function createWindow(): void {
   win.on('closed', () => {
     // macOS keeps the app resident after the window closes; drop the window and
     // its tab manager so a later `activate` can rebuild both cleanly.
-    designWiring?.dispose()
-    designWiring = null
+    // 插件先停用（移除 IPC/快捷键处理器），下次 activate 时 featureHost.start() 重新激活。
+    void featureHost?.deactivateAll()
+    if (featureChangeTimer) {
+      clearTimeout(featureChangeTimer)
+      featureChangeTimer = null
+    }
     const oldTabs = tabs
     win = null
     tabs = null
@@ -3057,37 +3107,73 @@ function setupIpc(): void {
     if (typeof text === 'string') clipboard.writeText(text)
     return { ok: true }
   })
-  ipcMain.handle('design:state-get', () => {
-    if (!designWiring) return { ok: false }
-    return { ok: true, state: designWiring.service.state(), name: designWiring.service.current().name }
+  // 设计专用 IPC 保留兼容（资产托盘仍会调用），但实际逻辑已经收进设计插件的命令；
+  // 插件被禁用时返回明确错误，不会因为"handler 未注册"变成 rejected promise。
+  ipcMain.handle('design:state-get', async () => {
+    const reply = await featureHost?.invokeCommand('design.state')
+    if (!reply || !reply.ok) return { ok: false, error: reply?.error ?? '设计插件未启用' }
+    return reply.result
   })
-  ipcMain.handle('design:insert-image', (_event, payload: { assetId?: unknown }) => {
+  ipcMain.handle('design:insert-image', async (_event, payload: { assetId?: unknown }) => {
     const assetId = typeof payload?.assetId === 'string' ? payload.assetId.trim() : ''
-    if (!designWiring || !assetId) return { ok: false, error: '缺少资产或画布' }
-    const entry = assetStore?.get(assetId)
-    if (!entry) return { ok: false, error: '资产不存在' }
-    const id = `image-${Date.now().toString(36)}`
-    const result = designWiring.service.applyOps(
-      'user',
-      [
-        {
-          op: 'insert',
-          parentId: designWiring.service.current().root.id,
-          node: {
-            id,
-            type: 'image',
-            text: entry.name,
-            style: { assetId, minHeight: '220px', width: '100%' }
-          }
-        }
-      ],
-      { allowLocked: true }
-    )
-    if (result.applied === 0) {
-      return { ok: false, error: result.rejected.map((item) => item.reason).join('；') || '插入失败' }
-    }
-    return { ok: true, id }
+    if (!assetId) return { ok: false, error: '缺少资产 id' }
+    const reply = await featureHost?.invokeCommand('design.insert-image', { assetId })
+    if (!reply || !reply.ok) return { ok: false, error: reply?.error ?? '设计插件未启用' }
+    return reply.result
   })
+  // ── 通用功能插件 ───────────────────────────────────────────────────────
+  ipcMain.handle('features:list', () => featuresPayload())
+  ipcMain.handle('features:status', () => ({ statuses: featureHost?.statuses() ?? [] }))
+  ipcMain.handle('features:set-enabled', async (_event, payload: { id?: unknown; enabled?: unknown }) => {
+    if (!featureHost) return { ok: false, error: '功能宿主未启动', features: [] }
+    const id = typeof payload?.id === 'string' ? payload.id.trim() : ''
+    if (!id) return { ok: false, error: '缺少功能 id', features: featureHost.list() }
+    return await featureHost.setEnabled(id, payload?.enabled === true)
+  })
+  ipcMain.handle('features:install-folder', async () => {
+    if (!featureHost) return { ok: false, error: '功能宿主未启动', features: [] }
+    const options: Electron.OpenDialogOptions = {
+      title: mt('settings.featureInstall'),
+      properties: ['openDirectory']
+    }
+    const parent = win && !win.isDestroyed() ? win : undefined
+    const picked = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    if (picked.canceled || !picked.filePaths[0]) {
+      return { ok: false, canceled: true, features: featureHost.list() }
+    }
+    return await featureHost.installFolder(picked.filePaths[0])
+  })
+  ipcMain.handle(
+    'features:invoke',
+    async (_event, payload: { command?: unknown; args?: unknown; featureId?: unknown }) => {
+      if (!featureHost) return { ok: false, error: '功能宿主未启动' }
+      const command = typeof payload?.command === 'string' ? payload.command : ''
+      const featureId =
+        typeof payload?.featureId === 'string' && payload.featureId.trim()
+          ? payload.featureId.trim()
+          : undefined
+      const args =
+        payload?.args && typeof payload.args === 'object' && !Array.isArray(payload.args)
+          ? (payload.args as Record<string, unknown>)
+          : {}
+      const reply = await featureHost.invokeCommand(command, args, featureId)
+      if (!reply.ok) return { ok: false, error: reply.error }
+      // 插件命令约定返回 { ok, error? }：把内层失败提升成 IPC 失败，
+      // 渲染层只需要看一个 ok，不会把"导出取消/画布打不开"当成功。
+      const result = reply.result
+      if (result && typeof result === 'object' && (result as { ok?: unknown }).ok === false) {
+        const error = (result as { error?: unknown }).error
+        return {
+          ok: false,
+          error: typeof error === 'string' ? error : '命令执行失败',
+          result
+        }
+      }
+      return { ok: true, result }
+    }
+  )
   ipcMain.handle('settings:consents', () => ({ consents: siteConsent?.list() ?? [] }))
   ipcMain.handle('settings:consent-revoke', (_e, actor: unknown, origin: unknown) => {
     if (typeof actor !== 'string' || typeof origin !== 'string' || !siteConsent) {
@@ -4351,6 +4437,8 @@ app.on('activate', () => {
     win.focus()
     return
   }
+  // 窗口重建后重新激活已启用插件（design 的 IPC/画布快捷键随之恢复）。
+  void featureHost?.start()
   createWindow()
 })
 
