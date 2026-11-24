@@ -1,3 +1,5 @@
+> 已被 `docs/handoff/2026-11-24-v0.3.0.md` 取代（v0.3.0 已发布；本文保留为设计画布历史细节）。
+
 # HANDOFF：设计画布（feat/design-canvas）
 
 > 交接时间：2026-11-20 · 分支 `feat/design-canvas` · HEAD `9a429c9`
